@@ -168,6 +168,16 @@ export type SetDocsLineItem = {
 
 export type SetDocsParams = {
   custcode: string;
+  /**
+   * Document series CODE — required by the Telmaco setDocs WS. Per
+   * Web_Services_Documentation_Telmaco (§4.1.4 Εισαγωγή Παραστατικών):
+   *   8999 = ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΠΕΛΑΤΗ  (customer pre-order — products)
+   *   9011 = ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΥΠΗΡΕΣΙΩΝ (services pre-order)
+   * Omitting it leaves SoftOne unable to resolve the series/numbering and the save
+   * fails with "S1:ESoftOneError:Πρέπει να δοθεί ο αριθμός του παραστατικού".
+   * NOTE: this is the WS series CODE, not the internal FINDOC.SERIES id (e.g. 9001).
+   */
+  series?: string;
   salesmancode?: string;
   shipkind?: string;
   projectcode?: string;

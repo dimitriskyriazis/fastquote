@@ -2110,7 +2110,7 @@ async function handleExecute(
       businessUnit: ctx.businessUnit,
       trdr: erpCustomerId,
       integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-      series: 9001,
+      series: 8999, // WS series code — ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΠΕΛΑΤΗ (customer pre-order), per Telmaco WS §4.1.4
       createdByUser: 1011,
       lines: orderLines,
     });
@@ -3244,7 +3244,7 @@ export async function POST(
             businessUnit,
             trdr: erpCustomerId,
             integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-            series: 9001,
+            series: 8999, // WS series code — ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΠΕΛΑΤΗ (customer pre-order), per Telmaco WS §4.1.4
             createdByUser: 1011,
             lines: orderLines,
           });
@@ -3716,7 +3716,7 @@ export async function POST(
           businessUnit,
           trdr: erpCustomerId,
           integrationKey: 'FASTQUOTE_CREATE_FINDOC',
-          series: 9001,
+          series: 8999, // WS series code — ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΠΕΛΑΤΗ (customer pre-order), per Telmaco WS §4.1.4
           createdByUser: 1011,
           lines: orderLines,
         });

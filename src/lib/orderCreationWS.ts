@@ -8,8 +8,10 @@ import { logger } from './logger';
  *
  * setDocs creates the document header and all lines atomically in one call.
  *
- * Field mapping (per Web_Services_Documentation_Telmaco_V6):
+ * Field mapping (per Web_Services_Documentation_Telmaco §4.1.4):
  *   custcode    = customer CODE string (from dbo.TRDR.CODE, NOT numeric TRDR)
+ *   series      = document series CODE (8999 = customer pre-order). REQUIRED — without it
+ *                 SoftOne cannot resolve the numbering and rejects the save.
  *   projectcode = PRJC CODE (e.g. COV.0239)
  *   date        = today (YYYY-MM-DD)
  *   status      = '10' (Εκκρεμούν Παραγγελίες σε Προμηθευτή)
@@ -58,6 +60,7 @@ export async function createOrderViaWebService(
 
   const result = await client.setDocs({
     custcode: params.customerCode,
+    series: String(params.series),
     salesmancode: params.salesmanCode ?? undefined,
     shipkind: '1',
     projectcode: params.projectCode ?? undefined,
