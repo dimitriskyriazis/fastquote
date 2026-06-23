@@ -787,7 +787,7 @@ export default function OfferCreateClient({
   const fieldDefinitions: FieldConfig[] = useMemo(
     () => [
       { id: 'title', label: 'Title', section: 'general', required: true },
-      { id: 'description', label: 'Description', section: 'general', required: true },
+      { id: 'description', label: 'Telmaco Description', section: 'general', required: true, type: 'textarea' },
       { id: 'paymentTerms', label: 'Payment Terms', section: 'general', required: true, type: 'textarea' },
       { id: 'installationSchedule', label: 'Installation Schedule', section: 'general', type: 'textarea' },
       { id: 'closingNote', label: 'Closing Note', section: 'general', type: 'textarea' },
@@ -797,9 +797,8 @@ export default function OfferCreateClient({
       { id: 'customerId', label: 'Customer', section: 'general', required: true, type: 'select', options: localCustomers },
       { id: 'statusId', label: 'Status', section: 'general', required: true, type: 'select', options: localStatuses, hideEmptyOption: true },
 
-      { id: 'contactId', label: 'Contact', section: 'info', required: true, type: 'select', options: contactOptions, fullWidth: true, dependsOnCustomer: true },
-      { id: 'telmacoNote', label: 'Telmaco Note', section: 'info', type: 'textarea' },
-      { id: 'offerLanguage', label: 'Offer Language', section: 'info', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), fullWidth: true, hideEmptyOption: true },
+      { id: 'contactId', label: 'Contact', section: 'general', required: true, type: 'select', options: contactOptions, dependsOnCustomer: true },
+      { id: 'telmacoNote', label: 'Telmaco Note', section: 'general', type: 'textarea' },
 
       { id: 'pricingPolicyId', label: 'Pricing Policy', section: 'commercial', required: true, type: 'select', options: localPricingPolicies },
       { id: 'currencyId', label: 'Currency', section: 'commercial', type: 'select', options: localCurrencies, hideEmptyOption: true },
@@ -811,11 +810,12 @@ export default function OfferCreateClient({
       { id: 'salesCreationPersonId', label: 'Sales Creation Person', section: 'commercial', required: true, type: 'select', options: salesUsers, readOnly: true },
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', required: true, type: 'select', options: approvalUsers },
+      { id: 'offerLanguage', label: 'Offer Language', section: 'commercial', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), hideEmptyOption: true },
 
       { id: 'projectCode', label: 'ERP Project Code', section: 'code' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },
       { id: 'customerRef', label: 'Customer Ref', section: 'code' },
-      { id: 'probability', label: 'Probability', section: 'code', inputType: 'number' },
+      { id: 'probability', label: 'Probability (%)', section: 'general', inputType: 'number' },
       { id: 'protocolNo', label: 'Protocol No', section: 'code', inputType: 'number' },
 
       { id: 'initialRequest', label: 'Draft Request', section: 'dates', type: 'date' },
@@ -844,11 +844,11 @@ export default function OfferCreateClient({
   );
 
   const generalLayout: Array<Array<keyof FormValues>> = [
-    ['title', 'description', 'customerId', 'offerValidity', 'statusId'],
-    ['deliveryTime', 'paymentTerms', 'installationSchedule', 'introNote', 'closingNote'],
+    ['title', 'customerId', 'contactId', 'deliveryTime', 'offerValidity', 'statusId', 'probability'],
+    ['description', 'telmacoNote', 'paymentTerms', 'installationSchedule', 'introNote', 'closingNote'],
   ];
 
-  const renderLabel = (field: FieldConfig) => (
+  const renderLabel = (field: FieldConfig, compact = false) => (
     <label className={panelStyles.fieldLabel} htmlFor={`offer-create-${field.id}`}>
       <div className={styles.lookupLabelRow}>
         <div className={styles.labelText}>
@@ -858,7 +858,7 @@ export default function OfferCreateClient({
         {field.id === 'contactId' ? (
           <button
             type="button"
-            className={lookupButtonStyles.lookupAddButton}
+            className={`${lookupButtonStyles.lookupAddButton} ${compact ? panelStyles.compactAddButton : ''}`}
             onClick={() => setIsAddContactOpen(true)}
             disabled={!values.customerId.trim()}
             title={!values.customerId.trim() ? 'Select a customer first' : 'Add a new contact for this customer'}
@@ -1161,10 +1161,14 @@ export default function OfferCreateClient({
             <div className={panelStyles.sectionHeading}>{SECTION_METADATA.general.title}</div>
             <div className={panelStyles.generalRows}>
               {generalRows.map((row, rowIdx) => (
-                <div key={rowIdx} className={panelStyles.generalRow}>
+                <div
+                  key={rowIdx}
+                  className={panelStyles.generalRow}
+                  style={{ gridTemplateColumns: `repeat(${row.length}, minmax(140px, 1fr))` }}
+                >
                   {row.map((field) => (
                     <div key={field.id} className={panelStyles.field}>
-                      {renderLabel(field)}
+                      {renderLabel(field, true)}
                       {renderFieldControl(field)}
                     </div>
                   ))}
@@ -1173,7 +1177,7 @@ export default function OfferCreateClient({
             </div>
           </div>
           <div className={panelStyles.sectionsGrid}>
-            {(['info', 'commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
+            {(['commercial', 'code', 'dates'] as SectionKey[]).map((sectionKey) =>
               renderSection(sectionKey),
             )}
           </div>
