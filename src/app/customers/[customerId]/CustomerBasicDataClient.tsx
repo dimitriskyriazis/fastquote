@@ -226,7 +226,8 @@ const buildFieldDefinitions = (
     section: 'contact',
     recordKey: 'Email',
     updateField: 'Email',
-    inputType: 'email',
+    // Plain text (no type="email"): DisableAutofill's type→text swap resets the caret,
+    // which makes typing appear reversed. See CustomerCreateClient for the full note.
   },
   {
     id: 'website',

@@ -333,6 +333,11 @@ export default function OfferCreateClient({
   const [values, setValues] = useState<FormValues>(initialValues);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
   const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<FormValues>('offer-create', initialValues, userId);
+  // Always points at the latest initialValues (with async-resolved defaults: status,
+  // pricing policy, suggested user, currency). The restore effect runs once, so its closure
+  // can't see later updates — discard reads from this ref to reset to the real defaults.
+  const initialValuesRef = useRef(initialValues);
+  initialValuesRef.current = initialValues;
 
   // Restore draft if available
   useEffect(() => {
@@ -342,7 +347,7 @@ export default function OfferCreateClient({
         label: 'Discard',
         onClick: () => {
           clearDraft();
-          setValues(initialValues);
+          setValues(initialValuesRef.current);
         },
       });
     }

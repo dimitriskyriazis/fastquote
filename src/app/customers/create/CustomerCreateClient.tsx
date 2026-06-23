@@ -13,6 +13,8 @@ import { showToastMessage } from '../../../lib/toast';
 import { useDuplicateCheck } from '../../lib/useDuplicateCheck';
 import DuplicateWarning from '../../components/DuplicateWarning';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
+import { useFormDraft } from '../../hooks/useFormDraft';
+import { useAuditUser } from '../../components/AuditUserProvider';
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
 
@@ -156,19 +158,21 @@ const buildFieldDefinitions = (
     section: 'location',
     type: 'text',
   },
+  // Render phone/email as plain text — do NOT set type="tel"/"email". DisableAutofill
+  // rewrites those input types to "text" at runtime to defeat browser autofill, and that
+  // attribute swap resets the caret to position 0, making typing appear reversed. Plain
+  // text avoids the swap entirely (matches the working AddContactModal email/phone fields).
   {
     id: 'phone',
     label: 'Phone',
     section: 'contact',
     type: 'text',
-    inputType: 'tel',
   },
   {
     id: 'email',
     label: 'Email',
     section: 'contact',
     type: 'text',
-    inputType: 'email',
   },
   {
     id: 'website',
@@ -370,6 +374,17 @@ export default function CustomerCreateClient({
 
   const [values, setValues] = useState(initialValues);
   const { warnings: duplicateWarnings, check: checkDuplicates } = useDuplicateCheck('customer');
+  const { userId } = useAuditUser();
+  const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<Record<string, string>>(
+    'customer-create',
+    initialValues,
+    userId,
+  );
+  // Always points at the latest initialValues (with the async-resolved default pricing
+  // policy). The draft-restore effect runs once, so its closure can't see later updates —
+  // discard reads from this ref so it resets to the real defaults, not the empty mount-time copy.
+  const initialValuesRef = useRef(initialValues);
+  initialValuesRef.current = initialValues;
 
   useEffect(() => {
     if (!initialValuesSyncedRef.current) {
@@ -382,6 +397,27 @@ export default function CustomerCreateClient({
       return { ...prev, pricingPolicy: initialValues.pricingPolicy };
     });
   }, [initialValues]);
+
+  // Restore a saved draft on mount (mirrors the create-offer form).
+  useEffect(() => {
+    if (hasDraft && restoredValues) {
+      setValues(restoredValues);
+      showToastMessage('Draft restored', 'info', 5500, {
+        label: 'Discard',
+        onClick: () => {
+          clearDraft();
+          setValues(initialValuesRef.current);
+          setParentCustomerText('');
+          setCountryText('');
+        },
+      });
+    }
+  }, [hasDraft, restoredValues]); // eslint-disable-line react-hooks/exhaustive-deps -- run once on restore
+
+  // Auto-save the form as a draft whenever values change.
+  useEffect(() => {
+    saveDraftValues(values);
+  }, [values, saveDraftValues]);
 
   useEffect(() => {
     checkDuplicates({ name: values.name, taxId: values.taxId });
@@ -480,6 +516,15 @@ export default function CustomerCreateClient({
     const nextText = selectedOption?.label ?? selectedValue;
     setParentCustomerText((prev) => (prev === nextText ? prev : nextText));
   }, [isParentCustomerEditing, localParentCustomers, values.parentCustomer]);
+
+  // Keep the country combobox label in sync with the selected id (e.g. after a draft
+  // restore, where only the country id is persisted). Skipped while the user is typing.
+  useEffect(() => {
+    if (showCountryList) return;
+    const selected = countryOptions.find((option) => option.value === values.country);
+    const nextText = selected?.label ?? '';
+    setCountryText((prev) => (prev === nextText ? prev : nextText));
+  }, [showCountryList, countryOptions, values.country]);
 
   const filteredParentCustomers = useMemo(() => {
     const search = parentCustomerText.trim().toLowerCase();
@@ -679,6 +724,7 @@ export default function CustomerCreateClient({
         if (!response.ok || !data?.ok || !data.customerId) {
           throw new Error(data?.error ?? 'Unable to add customer');
         }
+        clearDraft();
         showToastMessage('Customer added', 'success');
         router.push(`/customers/${encodeURIComponent(String(data.customerId))}/contacts`);
       } catch (err) {
@@ -688,7 +734,7 @@ export default function CustomerCreateClient({
         setSubmitting(false);
       }
     },
-    [router, values],
+    [router, values, clearDraft],
   );
 
   const openCountryModal = useCallback(() => {
