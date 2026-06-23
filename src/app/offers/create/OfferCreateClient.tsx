@@ -262,10 +262,10 @@ export default function OfferCreateClient({
     [localUsers],
   );
 
-  // Prefer the server-resolved suggestion; fall back to the current client user id
-  // (from useAuditUser, populated via /api/me). The server-side resolveAuditUserId can
-  // come back empty in production, so without this fallback the salesperson/creation-person
-  // wasn't being auto-selected on prod.
+  // Salesperson / creation-person default: prefer the server-resolved suggestion, fall back
+  // to the current client user id (from useAuditUser, populated via /api/me). The server-side
+  // resolveAuditUserId can come back empty in production, so without this fallback the
+  // salesperson/creation-person wasn't being auto-selected on prod.
   const suggestedUserId = useMemo(
     () => (defaultValues.suggestedUserId ?? '').trim() || (userId ?? '').trim(),
     [defaultValues.suggestedUserId, userId],
@@ -276,10 +276,8 @@ export default function OfferCreateClient({
     return salesUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
   }, [suggestedUserId, salesUsers]);
 
-  const defaultApprovalUserId = useMemo(() => {
-    if (!suggestedUserId) return '';
-    return approvalUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
-  }, [suggestedUserId, approvalUsers]);
+  // NOTE: the Approval User must NOT default to the current user. It starts empty (AVS) and is
+  // forced to TVS_APPROVAL_USER_ID for TVS-division offers by the division effect below.
 
   const eurCurrencyId = useMemo(() => {
     const match = localCurrencies.find(isEurOption);
@@ -306,7 +304,7 @@ export default function OfferCreateClient({
       salesDivisionId: '',
       salesCreationPersonId: defaultSuggestedUserId,
       salesPersonId: defaultSuggestedUserId,
-      approvalUserId: defaultApprovalUserId,
+      approvalUserId: '',
       projectCode: '',
       erpFwcProjectId: '',
       customerRef: '',
@@ -329,7 +327,6 @@ export default function OfferCreateClient({
     defaultPricingPolicyId,
     defaultStatusId,
     defaultSuggestedUserId,
-    defaultApprovalUserId,
     eurCurrencyId,
   ]);
 
@@ -473,13 +470,27 @@ export default function OfferCreateClient({
     const defaultDivision = marketId ? marketDivisionMap.get(marketId) ?? '' : '';
     setValues((prev) => {
       if (prev.salesDivisionId === defaultDivision) return prev;
-      const next = { ...prev, salesDivisionId: defaultDivision };
-      if (defaultDivision === String(TVS_SALES_DIVISION_ID)) {
-        next.approvalUserId = TVS_APPROVAL_USER_ID;
-      }
-      return next;
+      return { ...prev, salesDivisionId: defaultDivision };
     });
   }, [marketDivisionMap, values.marketId]);
+
+  // Approval user rule, keyed on the sales division (set directly via the dropdown or derived
+  // from the selected market): TVS offers ALWAYS get TVS_APPROVAL_USER_ID; AVS/others default
+  // to empty. Runs regardless of selection order so "TVS always = 6" holds. A manually chosen
+  // non-TVS approver is preserved; only the forced TVS value is cleared when leaving TVS.
+  useEffect(() => {
+    const isTvs = values.salesDivisionId === String(TVS_SALES_DIVISION_ID);
+    setValues((prev) => {
+      if (isTvs) {
+        return prev.approvalUserId === TVS_APPROVAL_USER_ID
+          ? prev
+          : { ...prev, approvalUserId: TVS_APPROVAL_USER_ID };
+      }
+      return prev.approvalUserId === TVS_APPROVAL_USER_ID
+        ? { ...prev, approvalUserId: '' }
+        : prev;
+    });
+  }, [values.salesDivisionId]);
 
   useEffect(() => {
     const divisionId = values.salesDivisionId;
