@@ -262,17 +262,24 @@ export default function OfferCreateClient({
     [localUsers],
   );
 
+  // Prefer the server-resolved suggestion; fall back to the current client user id
+  // (from useAuditUser, populated via /api/me). The server-side resolveAuditUserId can
+  // come back empty in production, so without this fallback the salesperson/creation-person
+  // wasn't being auto-selected on prod.
+  const suggestedUserId = useMemo(
+    () => (defaultValues.suggestedUserId ?? '').trim() || (userId ?? '').trim(),
+    [defaultValues.suggestedUserId, userId],
+  );
+
   const defaultSuggestedUserId = useMemo(() => {
-    const suggestedUserId = (defaultValues.suggestedUserId ?? '').trim();
     if (!suggestedUserId) return '';
     return salesUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
-  }, [defaultValues.suggestedUserId, salesUsers]);
+  }, [suggestedUserId, salesUsers]);
 
   const defaultApprovalUserId = useMemo(() => {
-    const suggestedUserId = (defaultValues.suggestedUserId ?? '').trim();
     if (!suggestedUserId) return '';
     return approvalUsers.some((user) => user.value === suggestedUserId) ? suggestedUserId : '';
-  }, [defaultValues.suggestedUserId, approvalUsers]);
+  }, [suggestedUserId, approvalUsers]);
 
   const eurCurrencyId = useMemo(() => {
     const match = localCurrencies.find(isEurOption);
