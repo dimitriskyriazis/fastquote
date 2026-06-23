@@ -461,6 +461,7 @@ import {
   type PricingInput,
   type ResolvedPricing,
 } from '../../../../../lib/pricing';
+import { isNonPrintableOfferProductRow } from '../../../../../lib/offerProductRows';
 
 const normalizeCreateRowType = (value: unknown): CreateRowType | null => {
   if (typeof value !== 'string') return null;
@@ -2297,6 +2298,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         IsPrintable: number | null;
+        IsService: number | boolean | null;
         PartNumber: string | null;
         ModelNumber: string | null;
         ProductDescription: string | null;
@@ -2322,6 +2324,7 @@ export async function PATCH(
         od.ProductID,
         od.IsComment,
         od.IsPrintable,
+        od.IsService,
         od.PartNumber,
         od.ModelNumber,
         od.ProductDescription,
@@ -2349,6 +2352,7 @@ export async function PATCH(
         ProductID: number | null;
         IsComment: number | null;
         IsPrintable: number | null;
+        IsService: number | boolean | null;
         PartNumber: string | null;
         ModelNumber: string | null;
         ProductDescription: string | null;
@@ -2492,10 +2496,38 @@ export async function PATCH(
           || entry.hasTelmacoDiscount || entry.hasNetUnitPrice || entry.hasNetCost || entry.hasMargin
           || costFieldsProvided;
         const isCommentRow = Boolean(current.IsComment);
+        // Non-printable services & comments are cost-only lines: they carry a
+        // Net Cost (optionally via a foreign-currency source) and nothing else.
+        // They must never auto-derive Net Unit Price / List Price / Margin /
+        // discounts. Resolve their flags from the entry overrides when present,
+        // otherwise the stored row, so a row being toggled to non-printable in
+        // the same PATCH is treated correctly.
+        const isNonPrintableRow = isNonPrintableOfferProductRow({
+          IsService: entry.hasIsService ? entry.IsService : current.IsService,
+          IsComment: entry.hasIsComment ? entry.IsComment : current.IsComment,
+          IsPrintable: entry.hasIsPrintable ? entry.IsPrintable : current.IsPrintable,
+        });
 
         let resolvedPricing: ResolvedPricing | null = null;
 
-        if (pricingProvided) {
+        if (isNonPrintableRow) {
+          // Cost-only: keep Net Cost (or its foreign-currency conversion),
+          // force everything else null. Bypasses the product-identifier guard
+          // below — a non-printable service has no ProductID and isn't a comment.
+          const nextNetCost = entry.hasNetCost
+            ? entry.netCost
+            : costFieldsProvided && computedNetCostFromOther != null
+              ? computedNetCostFromOther
+              : normalizeMoneyValue(current.NetCost ?? null, { allowNegative: true });
+          resolvedPricing = {
+            customerDiscount: null,
+            additionalCustomerDiscount: null,
+            telmacoDiscount: null,
+            netUnitPrice: null,
+            netCost: nextNetCost,
+            margin: null,
+          };
+        } else if (pricingProvided) {
           const hasProductIdentifier = current.ProductID != null
             || (current.PartNumber != null && current.PartNumber.trim() !== '')
             || (current.ModelNumber != null && current.ModelNumber.trim() !== '');
@@ -2640,12 +2672,16 @@ export async function PATCH(
         // using it here is what makes "Total List Price" (TotalPrice) show the cost on a
         // product row that has no real/derived list price. Drop that fallback for product
         // rows so List Price / Total List Price stay blank; comment cost lines keep it.
-        const listPriceForTotals = listPriceCandidate ?? derivedListPrice ?? (isCommentRow ? fallbackListPrice : null);
-        // Non-printable comments are single cost lines with no real quantity
-        // (they default to 0). Treat a blank/zero quantity as 1 so per-unit
-        // values (e.g. Net Cost) flow through to their totals (e.g. Total Cost).
-        const isNonPrintableComment = isCommentRow && !current.IsPrintable;
-        const totalsQuantity = isNonPrintableComment && safeQuantity === 0 ? 1 : safeQuantity;
+        // Non-printable rows are cost-only: never let a list price (real,
+        // derived, or the foreign-cost fallback) leak into their totals.
+        const listPriceForTotals = isNonPrintableRow
+          ? null
+          : (listPriceCandidate ?? derivedListPrice ?? (isCommentRow ? fallbackListPrice : null));
+        // Non-printable services/comments are single cost lines with no real
+        // quantity (they default to 0). Treat a blank/zero quantity as 1 so
+        // per-unit values (e.g. Net Cost) flow through to their totals (e.g.
+        // Total Cost).
+        const totalsQuantity = isNonPrintableRow && safeQuantity === 0 ? 1 : safeQuantity;
         const totalPrice = listPriceForTotals != null ? roundTo(listPriceForTotals * totalsQuantity) : null;
         const totalNet = netPrice != null ? roundTo(netPrice * totalsQuantity) : null;
         const totalCost = telmacoCost != null ? roundTo(telmacoCost * totalsQuantity) : null;
@@ -2681,8 +2717,10 @@ export async function PATCH(
           TotalNet: totalNet,
           TotalCost: totalCost,
           GrossProfit: grossProfit,
-          ListPrice: entry.hasListPrice ? entry.listPrice ?? null : (derivedListPrice ?? null),
-          HasListPrice: entry.hasListPrice || derivedListPrice != null,
+          // Force List Price null on non-printable rows (HasListPrice = 1 so a
+          // stale stored value is actively cleared).
+          ListPrice: isNonPrintableRow ? null : (entry.hasListPrice ? entry.listPrice ?? null : (derivedListPrice ?? null)),
+          HasListPrice: isNonPrintableRow ? true : (entry.hasListPrice || derivedListPrice != null),
           EffectiveListPrice: listPriceForTotals ?? null,
           RequestedItemNo: entry.requestedItemNo,
           HasRequestedItemNo: entry.hasRequestedItemNo,

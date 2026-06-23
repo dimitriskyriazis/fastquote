@@ -166,16 +166,6 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     if (windowsAuthAttemptedRef.value) return;
     windowsAuthAttemptedRef.value = true;
 
-    // Dev shortcut: auto-login as a fixed user when NEXT_PUBLIC_DEV_AUTO_USER_ID is set.
-    // This env var is only defined in .env.local and never in production.
-    const devAutoId = process.env.NEXT_PUBLIC_DEV_AUTO_USER_ID;
-    if (devAutoId) {
-      writeCookieValue(devAutoId);
-      setUserId(devAutoId);
-      setSessionEstablished(true);
-      return;
-    }
-
     // Always (re)establish the signed session via /api/me on load. The session cookie is
     // httpOnly (JS can't read it) and outlived by the non-httpOnly fastquote-user-id
     // cookie, so we can't tell from the client whether it's still valid — we just re-mint

@@ -814,7 +814,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
       // Display the stored discount, except surface a -100% flag on priced rows
       // that have a net price but no list price (see flagMissingListPriceDiscount).
@@ -851,7 +851,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
       valueFormatter: (params) => {
         if (!isOfferProductCommentOrProduct(params.data ?? null)) return '';
@@ -902,7 +902,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
       valueFormatter: percentageFormatter,
       cellClassRules: {
@@ -983,7 +983,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: percentageFormatter,
       cellClassRules: {
         'offer-products-grid__cell--negative-margin': (params) => {
@@ -1011,7 +1011,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !readOnly && !isUnassignedRequestedRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      editable: (params) => !readOnly && !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueGetter: (params: ValueGetterParams<Record<string, unknown>>) => {
         const data = params.data;
         if (!isOfferProductCommentOrProduct(data ?? null)) return null;
