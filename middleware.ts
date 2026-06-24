@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRequestId, setRequestIdHeader } from './src/lib/requestId';
 import { logger } from './src/lib/loggerEdge';
 import { categoryFromRequest } from './src/lib/logCategory';
-import { applyRateLimitEdge, isWriteOperation } from './src/lib/rateLimiterEdge';
+import { applyRateLimitEdge, isStrictOperation } from './src/lib/rateLimiterEdge';
 import { SESSION_COOKIE_NAME } from './src/lib/authConstants';
 import { verifySessionCookie } from './src/lib/sessionEdge';
 
@@ -50,9 +50,16 @@ export async function middleware(request: NextRequest) {
   if (isApi) {
     const method = request.method;
 
-    // Apply rate limiting (strict for write operations)
+    // Attribute the request to the verified session (null if unauthenticated/invalid).
+    // Behind the IIS reverse proxy every request can share one client IP (or collapse
+    // to 'unknown'), so IP-only rate limiting throttled the whole company on a single
+    // bucket. Keying by user isolates each user; anonymous requests fall back to IP.
+    const userId = sessionPayload?.uid ?? null;
+
+    // Apply rate limiting (strict only for destructive mutations: PUT/PATCH/DELETE).
     const rateLimitResponse = await applyRateLimitEdge(request, {
-      strict: isWriteOperation(method),
+      strict: isStrictOperation(method),
+      identifier: userId ? `user:${userId}` : undefined,
     });
 
     if (rateLimitResponse) {
@@ -60,9 +67,6 @@ export async function middleware(request: NextRequest) {
       setRequestIdHeader(rateLimitResponse, requestId);
       return rateLimitResponse;
     }
-
-    // Attribute the request to the verified session (null if unauthenticated/invalid).
-    const userId = sessionPayload?.uid ?? null;
 
     const category = categoryFromRequest(method, pathname);
 

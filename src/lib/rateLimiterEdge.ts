@@ -3,14 +3,35 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from './loggerEdge';
 import { getRequestId } from './requestId';
 
+// NOTE: no `blockDuration` is set on any limiter. With rate-limiter-flexible that
+// means there is no extended lock-out: once the rolling `duration` window frees up
+// points they become available again. Previously every limiter used
+// `blockDuration: duration`, so a brief burst locked the client out for the full
+// 15-minute window (the `retryAfter: 445` users saw was mid-block).
 const createRateLimiter = (points: number, duration: number) =>
-  new RateLimiterMemory({ points, duration, blockDuration: duration });
+  new RateLimiterMemory({ points, duration });
 
+// Coarse backstop for UNAUTHENTICATED traffic, keyed by client IP. Authenticated
+// requests are governed by `userLimiter` instead (see applyRateLimitEdge), so the
+// IIS reverse proxy collapsing every user onto one shared IP no longer throttles
+// the whole company on a single bucket.
 const ipLimiter = createRateLimiter(
   Number(process.env.RATE_LIMIT_IP_POINTS) || 5000,
   Number(process.env.RATE_LIMIT_IP_DURATION) || 900,
 );
 
+// Primary per-user budget. This is the previously-configured-but-never-wired
+// RATE_LIMIT_USER_* budget. It governs everything an authenticated user does,
+// including the high-volume server-side grid block fetches (which are POSTs).
+const userLimiter = createRateLimiter(
+  Number(process.env.RATE_LIMIT_USER_POINTS) || 15000,
+  Number(process.env.RATE_LIMIT_USER_DURATION) || 900,
+);
+
+// Extra throttle for genuine, destructive mutations only (PUT/PATCH/DELETE).
+// Read-only grid data fetches use POST and must NOT count against this bucket,
+// otherwise normal scrolling/filtering exhausts it (the original "offers don't
+// load in prod" 429). POST creates are still bounded by `userLimiter` above.
 const strictLimiter = createRateLimiter(
   Number(process.env.RATE_LIMIT_STRICT_POINTS) || 1000,
   Number(process.env.RATE_LIMIT_STRICT_DURATION) || 900,
@@ -48,6 +69,12 @@ function createRateLimitResponse(limiterRes: RateLimiterRes): NextResponse {
 
 export type RateLimitOptions = {
   strict?: boolean;
+  /**
+   * Stable per-principal key, e.g. `user:<uid>` for an authenticated request.
+   * When provided, the request is governed by the per-user budget; when omitted,
+   * it falls back to a per-IP budget. Pass this for every authenticated request
+   * so users are isolated from each other behind the reverse proxy.
+   */
   identifier?: string;
 };
 
@@ -58,24 +85,32 @@ export async function applyRateLimitEdge(
   const requestId = await getRequestId(req);
   const clientIp = getClientIp(req);
 
+  // Authenticated requests carry an `identifier` (e.g. `user:42`); fall back to
+  // the client IP for anonymous traffic.
+  const isAuthenticated = Boolean(options.identifier);
+  const principalKey = options.identifier || `ip:${clientIp}`;
+
   try {
-    const ipKey = options.identifier || `ip:${clientIp}`;
+    // General volume limit: per-user when authenticated, per-IP otherwise.
+    const generalLimiter = isAuthenticated ? userLimiter : ipLimiter;
     try {
-      await ipLimiter.consume(ipKey);
-    } catch (ipRejRes) {
-      const ipLimiterRes = ipRejRes as RateLimiterRes;
-      logger.warn('Rate limit exceeded (IP)', {
+      await generalLimiter.consume(principalKey);
+    } catch (generalRejRes) {
+      const generalLimiterRes = generalRejRes as RateLimiterRes;
+      logger.warn('Rate limit exceeded (General)', {
         requestId,
         ip: clientIp,
+        principal: principalKey,
+        authenticated: isAuthenticated,
         endpoint: req.nextUrl.pathname,
         method: req.method,
-        remaining: ipLimiterRes.remainingPoints,
+        remaining: generalLimiterRes.remainingPoints,
       });
-      return createRateLimitResponse(ipLimiterRes);
+      return createRateLimitResponse(generalLimiterRes);
     }
 
     if (options.strict) {
-      const strictKey = options.identifier ? `strict:${options.identifier}` : `strict:ip:${clientIp}`;
+      const strictKey = `strict:${principalKey}`;
       try {
         await strictLimiter.consume(strictKey);
       } catch (strictRejRes) {
@@ -83,6 +118,8 @@ export async function applyRateLimitEdge(
         logger.warn('Rate limit exceeded (Strict)', {
           requestId,
           ip: clientIp,
+          principal: principalKey,
+          authenticated: isAuthenticated,
           endpoint: req.nextUrl.pathname,
           method: req.method,
           remaining: strictLimiterRes.remainingPoints,
@@ -101,6 +138,20 @@ export async function applyRateLimitEdge(
   }
 }
 
+/**
+ * Whether a method mutates server state at all. Kept for callers/categorisation.
+ */
 export function isWriteOperation(method: string): boolean {
   return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
+}
+
+/**
+ * Whether a request should additionally consume the *strict* (destructive-write)
+ * budget. POST is deliberately excluded: server-side grids fetch their data with
+ * POST, and counting those reads as strict writes is what exhausted the bucket and
+ * caused widespread 429s. Genuine create endpoints remain bounded by the general
+ * per-user limiter.
+ */
+export function isStrictOperation(method: string): boolean {
+  return ['PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
 }
