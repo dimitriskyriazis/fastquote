@@ -88,32 +88,58 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
   /** Resolve current user via IIS Windows Auth: POST /api/me reads the
    *  IIS-injected X-Windows-User header (set by WindowsUserHeaderModule). */
   const tryResolveViaWindowsAuth = useCallback(async (): Promise<WindowsAuthResult> => {
-    try {
-      const meRes = await fetch('/api/me', {
-        method: 'POST',
-        credentials: 'include',
-        cache: 'no-store',
-      });
-      const me = (await meRes.json().catch(() => null)) as {
-        ok?: boolean;
-        reason?: string;
-        windowsUserName?: string;
-        user?: { id: number; userName?: string | null; windowsUserName?: string | null };
-      } | null;
+    // Retry transient failures (429 rate-limit, 5xx) with backoff instead of giving
+    // up after one shot. A throttled /api/me used to drop the user into a session-less
+    // app that 401s on every request with no recovery path; retrying re-mints the
+    // session once the limiter frees up. Honors Retry-After (capped) when present.
+    const MAX_ATTEMPTS = 4;
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const meRes = await fetch('/api/me', {
+          method: 'POST',
+          credentials: 'include',
+          cache: 'no-store',
+        });
 
-      if (meRes.status === 403 && (me?.reason === 'unrecognized_windows_user' || !me?.ok)) {
-        return {
-          userId: null,
-          accessDenied: true,
-          windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : null,
-        };
+        // Transient — wait and retry rather than rendering a broken, session-less app.
+        if ((meRes.status === 429 || meRes.status >= 500) && attempt < MAX_ATTEMPTS - 1) {
+          const retryAfter = Number(meRes.headers.get('Retry-After'));
+          const backoffMs =
+            Number.isFinite(retryAfter) && retryAfter > 0
+              ? Math.min(retryAfter * 1000, 15000)
+              : Math.min(1000 * 2 ** attempt, 8000);
+          await sleep(backoffMs);
+          continue;
+        }
+
+        const me = (await meRes.json().catch(() => null)) as {
+          ok?: boolean;
+          reason?: string;
+          windowsUserName?: string;
+          user?: { id: number; userName?: string | null; windowsUserName?: string | null };
+        } | null;
+
+        if (meRes.status === 403 && (me?.reason === 'unrecognized_windows_user' || !me?.ok)) {
+          return {
+            userId: null,
+            accessDenied: true,
+            windowsUserName: typeof me?.windowsUserName === 'string' ? me.windowsUserName : null,
+          };
+        }
+        if (!meRes.ok) return { userId: null };
+        if (!me?.ok || !me.user || typeof me.user.id !== 'number') return { userId: null };
+        return { userId: String(me.user.id) };
+      } catch {
+        // Network error — back off and retry a couple of times before giving up.
+        if (attempt < MAX_ATTEMPTS - 1) {
+          await sleep(Math.min(1000 * 2 ** attempt, 8000));
+          continue;
+        }
+        return { userId: null };
       }
-      if (!meRes.ok) return { userId: null };
-      if (!me?.ok || !me.user || typeof me.user.id !== 'number') return { userId: null };
-      return { userId: String(me.user.id) };
-    } catch {
-      return { userId: null };
     }
+    return { userId: null };
   }, []);
 
   const refreshUsers = useCallback(async () => {

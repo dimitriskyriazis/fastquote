@@ -139,18 +139,11 @@ export async function applyRateLimitEdge(
 }
 
 /**
- * Whether a method mutates server state at all. Kept for callers/categorisation.
- */
-export function isWriteOperation(method: string): boolean {
-  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());
-}
-
-/**
- * Whether a request should additionally consume the *strict* (destructive-write)
- * budget. POST is deliberately excluded: server-side grids fetch their data with
- * POST, and counting those reads as strict writes is what exhausted the bucket and
- * caused widespread 429s. Genuine create endpoints remain bounded by the general
- * per-user limiter.
+ * Whether a request should consume the *strict* (destructive-write) budget. POST is
+ * deliberately excluded: server-side grids fetch their data with POST, and counting
+ * those reads as strict writes is what exhausted the bucket and caused widespread
+ * 429s. Genuine create endpoints (also POST) remain bounded by the general per-user
+ * limiter. Do NOT widen this to include POST without separating grid-read POSTs first.
  */
 export function isStrictOperation(method: string): boolean {
   return ['PUT', 'PATCH', 'DELETE'].includes(method.toUpperCase());

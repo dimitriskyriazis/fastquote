@@ -6,16 +6,33 @@ import { applyRateLimitEdge, isStrictOperation } from './src/lib/rateLimiterEdge
 import { SESSION_COOKIE_NAME } from './src/lib/authConstants';
 import { verifySessionCookie } from './src/lib/sessionEdge';
 
+// Fail loud (once per worker at module load) if the session secret is missing.
+// Without it verifySessionCookie() returns null for EVERY request, silently
+// demoting all authenticated users onto the shared anonymous IP rate-limit bucket
+// — which behind the IIS reverse proxy re-creates the company-wide 429 outage that
+// per-user rate limiting was added to prevent. Loud beats silent-and-broken.
+if (!process.env.SESSION_SECRET) {
+  logger.error(
+    'SESSION_SECRET is not set — session cookies cannot be verified; all users will collapse onto the shared IP rate-limit bucket',
+  );
+}
+
 export async function middleware(request: NextRequest) {
   const requestId = await getRequestId(request);
   const pathname = request.nextUrl.pathname;
 
   const requireSession = process.env.AUTH_REQUIRE_SESSION === 'true';
   const isApi = pathname.startsWith('/api/');
+  // Infra liveness probe (IIS ARR / uptime monitor). It is anonymous, so it would
+  // otherwise land on the shared IP bucket and compete with the /api/me login
+  // bootstrap; a throttled or 401'd probe can make IIS mark the backend pool down.
+  // Exempt it from both the auth gate and rate limiting — probes must never be blocked.
+  const isHealthProbe = pathname === '/api/health';
   const allowUnauthedApi =
     pathname === '/api/sso' ||
     pathname === '/api/me' ||
     pathname === '/api/whoami' ||
+    pathname === '/api/health' ||
     pathname === '/api/debug-windows-user';
   const allowUnauthedPage =
     pathname === '/' ||
@@ -46,8 +63,8 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Apply rate limiting to all API routes
-  if (isApi) {
+  // Apply rate limiting to all API routes (except the infra health probe).
+  if (isApi && !isHealthProbe) {
     const method = request.method;
 
     // Attribute the request to the verified session (null if unauthenticated/invalid).
