@@ -21,6 +21,7 @@ import { useAuditUser } from "../components/AuditUserProvider";
 import { formatDateUK } from "../lib/formatDateTime";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
+import { resolvePriceListStatus } from "../../lib/priceListStatus";
 import { showToastMessage } from "../../lib/toast";
 import { useUndoStack } from "../hooks/useUndoStack";
 
@@ -66,6 +67,33 @@ const resolvePriceListRowLabel = (
   if (name) return name;
   if (supplier) return supplier;
   return fallback;
+};
+
+// Maps a Price Lists grid row (ValidFromDate / ValidToDate / Enabled) onto the
+// shape resolvePriceListStatus expects, so the Valid To cell can be coloured with
+// the same active/expiring/expired palette as the offer-products List Price cell.
+const resolvePriceListRowStatus = (data: Record<string, unknown> | null | undefined) =>
+  resolvePriceListStatus(
+    data
+      ? {
+          PriceListID: data.PriceListID,
+          PriceListEnabled: data.Enabled,
+          PriceListValidFromDate: data.ValidFromDate,
+          PriceListValidToDate: data.ValidToDate,
+        }
+      : null,
+  );
+
+// Toggles the validity-status classes on the Valid To cell. The colours live in
+// PriceListsClient.module.css (.pl-valid-to--*, scoped under .gridFrame), mirroring
+// the offer-products List Price cell palette.
+const validToStatusClassRules = {
+  "pl-valid-to--active": (params: { data?: Record<string, unknown> | null }) =>
+    resolvePriceListRowStatus(params.data) === "active",
+  "pl-valid-to--expiring": (params: { data?: Record<string, unknown> | null }) =>
+    resolvePriceListRowStatus(params.data) === "expiring",
+  "pl-valid-to--expired": (params: { data?: Record<string, unknown> | null }) =>
+    resolvePriceListRowStatus(params.data) === "expired",
 };
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list";
@@ -383,8 +411,9 @@ export default function PriceListsClient() {
         headerName: "Valid To",
         filter: "agDateColumnFilter",
         valueFormatter: (params: ValueFormatterParams) => formatDateUK(params.value),
-        filterParams: { 
-          browserDatePicker: false, 
+        cellClassRules: validToStatusClassRules,
+        filterParams: {
+          browserDatePicker: false,
           minValidYear: 2000,
         },
       },

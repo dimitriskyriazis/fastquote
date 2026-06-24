@@ -66,3 +66,19 @@
   transition: background-color 140ms ease;
 }
 
+/* Valid To cell coloured by price-list validity status, matching the
+   offer-products List Price cell (active green / expiring yellow / expired red).
+   The .pl-valid-to--* classes are toggled by validToStatusClassRules in
+   PriceListsClient.tsx. Specificity (0,5,0) — one notch above the zebra-stripe
+   rules above (0,4,0) — so the status colour wins at rest, on hover, and (via the
+   .pl-valid-to--* exclusions in AgGridAll.module.css) when the row is selected. */
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--active) {
+  background: #b7ffcf !important;
+}
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--expiring) {
+  background: #fff8a5 !important;
+}
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--expired) {
+  background: #ffcfcf !important;
+}
+
