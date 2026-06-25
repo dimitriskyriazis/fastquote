@@ -63,32 +63,6 @@ export function buildFuzzyTerms(customerName: string): string[] {
 }
 
 /**
- * Exact-match customer lookup on dbo.TRDR by tax ID (AFM).
- * SoftOne stores the Greek tax registration number in TRDR.AFM.
- * Inactive customers (ISACTIVE = 0) are excluded, and only the primary
- * company (COMPANY = 1) is searched.
- */
-export async function searchCustomerByTaxId(
-  erpPool: ConnectionPool,
-  taxId: string,
-): Promise<CustomerMatch[]> {
-  const trimmed = taxId.trim();
-  if (!trimmed) return [];
-
-  const result = await erpPool
-    .request()
-    .input('TaxID', sql.NVarChar(30), trimmed)
-    .query<CustomerMatch>(`
-      SELECT TOP (20) TRDR, CODE, NAME
-      FROM dbo.TRDR
-      WHERE AFM = @TaxID AND ISACTIVE = 1 AND COMPANY = 1
-      ORDER BY NAME
-    `);
-
-  return result.recordset ?? [];
-}
-
-/**
  * Drops inactive customers (TRDR.ISACTIVE = 0) and any rows outside the
  * primary company (COMPANY <> 1) from a set of matches. Used to post-filter
  * results returned by stored procedures that don't expose these columns.
@@ -107,6 +81,26 @@ export async function filterActiveCustomers(
   `);
   const active = new Set((res.recordset ?? []).map(r => r.TRDR));
   return matches.filter(m => active.has(m.TRDR));
+}
+
+/**
+ * Unified customer lookup via the ERP stored procedure tlm.FindCustomer.
+ * The procedure handles the matching (code / name / tax id); results are then
+ * filtered down to active customers in the primary company.
+ */
+export async function findCustomerViaProc(
+  erpPool: ConnectionPool,
+  searchValue: string,
+): Promise<CustomerMatch[]> {
+  const trimmed = searchValue.trim();
+  if (!trimmed) return [];
+
+  const result = await erpPool
+    .request()
+    .input('SearchValue', sql.NVarChar(200), trimmed)
+    .query<CustomerMatch>(`EXEC tlm.FindCustomer @SearchValue = @SearchValue`);
+
+  return filterActiveCustomers(erpPool, result.recordset ?? []);
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import LookupModal from '../../../components/LookupModal';
 import lookupStyles from '../../../components/LookupModal.module.css';
 import styles from './DraftOrderWizard.module.css';
@@ -158,9 +158,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [resolvedCustomer, setResolvedCustomer] = useState<CustomerMatch | null>(null);
   const [customerNeedsSelection, setCustomerNeedsSelection] = useState<CustomerMatch[]>([]);
   const [customerNeedsConfirmation, setCustomerNeedsConfirmation] = useState<CustomerMatch | null>(null);
-  const [customerNeedsCode, setCustomerNeedsCode] = useState(false);
-  const [customerCodeInput, setCustomerCodeInput] = useState('');
+  const [customerNeedsSearch, setCustomerNeedsSearch] = useState(false);
+  const [customerSearchInput, setCustomerSearchInput] = useState('');
+  const [customerSearchMessage, setCustomerSearchMessage] = useState<string | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerMatch | null>(null);
+  const customerSearchInputRef = useRef<HTMLInputElement>(null);
 
   // Step 2: Product categorization
   const [categorizedProducts, setCategorizedProducts] = useState<CategorizedProduct[]>([]);
@@ -359,25 +361,44 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const result = await callStep('resolve-customer', extra);
     if (!result) return;
 
+    // A fresh lookup invalidates any previously picked radio — clear it so a
+    // stale selection from an earlier search can't be confirmed off-screen.
+    setSelectedCustomer(null);
+    setCustomerSearchMessage(typeof result.message === 'string' ? result.message : null);
+
     if (result.resolved) {
       setResolvedCustomer(result.resolved);
       setCustomerNeedsSelection([]);
       setCustomerNeedsConfirmation(null);
-      setCustomerNeedsCode(false);
+      setCustomerNeedsSearch(false);
     } else if (result.needsSelection) {
       setCustomerNeedsSelection(result.needsSelection);
       setCustomerNeedsConfirmation(null);
-      setCustomerNeedsCode(false);
+      setCustomerNeedsSearch(false);
     } else if (result.needsConfirmation) {
       setCustomerNeedsConfirmation(result.needsConfirmation);
       setCustomerNeedsSelection([]);
-      setCustomerNeedsCode(false);
-    } else if (result.needsCode) {
-      setCustomerNeedsCode(true);
+      setCustomerNeedsSearch(false);
+    } else if (result.needsSearch) {
+      setCustomerNeedsSearch(true);
       setCustomerNeedsSelection([]);
       setCustomerNeedsConfirmation(null);
     }
   }, [callStep]);
+
+  // Drop focus into the search box when the step lands on the empty/no-results
+  // state (so the user can type immediately), without stealing focus while a
+  // selection list or confirmation card is the primary action.
+  useEffect(() => {
+    if (
+      currentStep.id === 'resolve-customer' &&
+      customerNeedsSearch &&
+      !customerNeedsConfirmation &&
+      customerNeedsSelection.length === 0
+    ) {
+      customerSearchInputRef.current?.focus();
+    }
+  }, [currentStep.id, customerNeedsSearch, customerNeedsConfirmation, customerNeedsSelection.length]);
 
   const runCategorizeProducts = useCallback(async () => {
     const matchResults = {
@@ -538,7 +559,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   useEffect(() => {
     if (!open) return;
     // Auto-run the step when we land on it (unless it already completed or needs user input)
-    if (currentStep.id === 'resolve-customer' && !resolvedCustomer && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsCode) {
+    if (currentStep.id === 'resolve-customer' && !resolvedCustomer && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsSearch) {
       runResolveCustomer();
     } else if (currentStep.id === 'check-brands' && !brandsCheckComplete) {
       runCheckBrands();
@@ -709,11 +730,55 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     </div>
   );
 
+  // Persistent free-text search box, shown above the results so the user can
+  // (re-)search the customer as many times as needed — by name, code, or VAT.
+  const runCustomerSearch = () => {
+    if (customerSearchInput.trim()) {
+      runResolveCustomer({ customerSearch: customerSearchInput.trim() });
+    }
+  };
+  const renderCustomerSearchBox = () => (
+    <div style={{ marginBottom: '16px' }}>
+      <p style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 6px' }}>
+        Search for the customer by name, code, or VAT (ΑΦΜ):
+      </p>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <input
+          ref={customerSearchInputRef}
+          type="text"
+          className={lookupStyles.fieldControl}
+          placeholder="Search by name, code, or VAT…"
+          value={customerSearchInput}
+          onChange={e => setCustomerSearchInput(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && customerSearchInput.trim()) {
+              e.preventDefault();
+              runCustomerSearch();
+            }
+          }}
+          style={{ flex: 1, padding: '8px 12px', fontSize: '0.9rem' }}
+        />
+        <button
+          type="button"
+          className={lookupStyles.confirmButton}
+          onClick={runCustomerSearch}
+          disabled={!customerSearchInput.trim() || isLoading}
+        >
+          {isLoading ? 'Searching…' : 'Search'}
+        </button>
+      </div>
+    </div>
+  );
+
   const renderCustomerStep = () => {
-    if (isLoading && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsCode) {
+    // Initial auto-resolve pending or in flight: nothing decided yet and no
+    // error. Show the spinner (not the empty "no match" state) until the first
+    // lookup lands. Skips once an error is set so the error + search box render.
+    if (!error && !resolvedCustomer && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsSearch) {
       return renderLoading('Searching for customer in Soft1...');
     }
 
+    // A customer has been chosen — terminal state for this step.
     if (resolvedCustomer) {
       return (
         <>
@@ -728,114 +793,77 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       );
     }
 
-    // Customer needs confirmation
-    if (customerNeedsConfirmation) {
-      return (
-        <>
-          <p className={styles.sectionTitle}>Is this the correct customer?</p>
-          <div className={styles.customerCard}>
-            <div className={styles.customerName}>{customerNeedsConfirmation.NAME ?? 'Unknown'}</div>
-            <div className={styles.customerMeta}>
-              <strong>Code:</strong> {customerNeedsConfirmation.CODE ?? 'N/A'} &bull; <strong>TRDR:</strong> {customerNeedsConfirmation.TRDR}
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-            <button
-              type="button"
-              className={lookupStyles.cancelButton}
-              onClick={() => {
-                setCustomerNeedsConfirmation(null);
-                setCustomerNeedsCode(true);
-              }}
-            >
-              No, Enter Different Code
-            </button>
-            <button
-              type="button"
-              className={lookupStyles.confirmButton}
-              onClick={() => {
-                runResolveCustomer({
-                  customerSelection: { TRDR: customerNeedsConfirmation.TRDR, CODE: customerNeedsConfirmation.CODE },
-                  customerConfirmed: true,
-                });
-              }}
-              disabled={isLoading}
-            >
-              {isLoading ? 'Confirming...' : 'Yes, This is Correct'}
-            </button>
-          </div>
-        </>
-      );
-    }
+    // Not resolved yet: always offer (re-)search, then show the latest result.
+    return (
+      <>
+        {renderCustomerSearchBox()}
 
-    // Customer needs selection
-    if (customerNeedsSelection.length > 0) {
-      return (
-        <>
-          <p className={styles.sectionTitle}>Multiple customers found. Please select:</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {customerNeedsSelection.map(c => (
-              <label
-                key={c.TRDR}
-                style={{
-                  display: 'flex', alignItems: 'center', padding: '12px',
-                  border: selectedCustomer?.TRDR === c.TRDR ? '2px solid #3b82f6' : '1px solid #e2e8f0',
-                  borderRadius: '8px', cursor: 'pointer',
-                  backgroundColor: selectedCustomer?.TRDR === c.TRDR ? '#eff6ff' : 'transparent',
+        {customerNeedsConfirmation ? (
+          <>
+            <p className={styles.sectionTitle}>Is this the correct customer?</p>
+            <div className={styles.customerCard}>
+              <div className={styles.customerName}>{customerNeedsConfirmation.NAME ?? 'Unknown'}</div>
+              <div className={styles.customerMeta}>
+                <strong>Code:</strong> {customerNeedsConfirmation.CODE ?? 'N/A'} &bull; <strong>TRDR:</strong> {customerNeedsConfirmation.TRDR}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                className={lookupStyles.cancelButton}
+                onClick={() => {
+                  setCustomerNeedsConfirmation(null);
+                  setCustomerNeedsSearch(true);
                 }}
               >
-                <input type="radio" name="wizardCustomer" value={c.TRDR} checked={selectedCustomer?.TRDR === c.TRDR}
-                  onChange={() => setSelectedCustomer(c)} style={{ marginRight: '12px' }} />
-                <div>
-                  <div style={{ fontWeight: 600 }}>{c.NAME}</div>
-                  <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Code: {c.CODE || 'N/A'} &bull; TRDR: {c.TRDR}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </>
-      );
-    }
-
-    // Customer needs code input
-    if (customerNeedsCode) {
-      return (
-        <>
-          <p className={styles.sectionTitle}>Enter Customer Code</p>
-          <p style={{ fontSize: '0.85rem', color: '#64748b' }}>No customer found by name. Please enter the customer code:</p>
-          <input
-            type="text"
-            className={lookupStyles.fieldControl}
-            placeholder="e.g., ΖΓ.1014"
-            value={customerCodeInput}
-            onChange={e => setCustomerCodeInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && customerCodeInput.trim()) {
-                e.preventDefault();
-                runResolveCustomer({ customerCode: customerCodeInput.trim() });
-              }
-            }}
-            style={{ width: '100%', padding: '8px 12px', fontSize: '0.9rem' }}
-            autoFocus
-          />
-          <button
-            type="button"
-            className={lookupStyles.confirmButton}
-            style={{ alignSelf: 'flex-end', marginTop: '8px' }}
-            onClick={() => {
-              if (customerCodeInput.trim()) {
-                runResolveCustomer({ customerCode: customerCodeInput.trim() });
-              }
-            }}
-            disabled={!customerCodeInput.trim() || isLoading}
-          >
-            {isLoading ? 'Searching...' : 'Search Customer'}
-          </button>
-        </>
-      );
-    }
-
-    return null;
+                No, Search Again
+              </button>
+              <button
+                type="button"
+                className={lookupStyles.confirmButton}
+                onClick={() => {
+                  runResolveCustomer({
+                    customerSelection: { TRDR: customerNeedsConfirmation.TRDR, CODE: customerNeedsConfirmation.CODE },
+                    customerConfirmed: true,
+                  });
+                }}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Confirming...' : 'Yes, This is Correct'}
+              </button>
+            </div>
+          </>
+        ) : customerNeedsSelection.length > 0 ? (
+          <>
+            <p className={styles.sectionTitle}>Multiple customers found. Select one or search again:</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {customerNeedsSelection.map(c => (
+                <label
+                  key={c.TRDR}
+                  style={{
+                    display: 'flex', alignItems: 'center', padding: '12px',
+                    border: selectedCustomer?.TRDR === c.TRDR ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                    borderRadius: '8px', cursor: 'pointer',
+                    backgroundColor: selectedCustomer?.TRDR === c.TRDR ? '#eff6ff' : 'transparent',
+                  }}
+                >
+                  <input type="radio" name="wizardCustomer" value={c.TRDR} checked={selectedCustomer?.TRDR === c.TRDR}
+                    onChange={() => setSelectedCustomer(c)} style={{ marginRight: '12px' }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{c.NAME}</div>
+                    <div style={{ fontSize: '0.85rem', color: '#64748b' }}>Code: {c.CODE || 'N/A'} &bull; TRDR: {c.TRDR}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </>
+        ) : customerNeedsSearch ? (
+          <p style={{ fontSize: '0.85rem', color: '#64748b' }}>
+            {customerSearchMessage ?? 'No customer matched. Use the search above to find the customer.'}
+          </p>
+        ) : null}
+      </>
+    );
   };
 
   const handleCategoryChange = useCallback(async (
@@ -1629,22 +1657,22 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     }
   };
 
-  // Footer Continue is disabled only when user has not yet provided the input
-  // the customer step needs. Once a customer is picked / a code is typed, the
-  // footer button drives resolution (no separate inline confirm button).
-  const waitingForCustomerInput = (
+  // Footer Continue acts only on a chosen customer: a radio selection that is
+  // still present in the current result list, or a pending confirmation.
+  // (Re-)searching is done via the inline search box, so until a customer is
+  // actually chosen the footer button stays disabled.
+  const customerInputReady = (
     currentStep.id === 'resolve-customer' && !resolvedCustomer && (
-      (customerNeedsSelection.length > 0 && !selectedCustomer) ||
-      (customerNeedsCode && !customerCodeInput.trim())
+      (customerNeedsSelection.length > 0 && !!selectedCustomer
+        && customerNeedsSelection.some(c => c.TRDR === selectedCustomer.TRDR)) ||
+      !!customerNeedsConfirmation
     )
   );
 
-  const customerInputReady = (
-    currentStep.id === 'resolve-customer' && !resolvedCustomer && (
-      (customerNeedsSelection.length > 0 && !!selectedCustomer) ||
-      !!customerNeedsConfirmation ||
-      (customerNeedsCode && !!customerCodeInput.trim())
-    )
+  // ...but never block the footer when there's an error — the button becomes
+  // "Retry" and must stay clickable.
+  const waitingForCustomerInput = (
+    currentStep.id === 'resolve-customer' && !resolvedCustomer && !error && !customerInputReady
   );
 
   // Determine if the confirm button should be disabled
@@ -1659,6 +1687,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       if (currentStep.id === 'categorize-products' && categorizeComplete && !isLoading && !error) {
         setShowCategorizeHint(true);
       }
+      return;
+    }
+    // When a step errored, the footer button is "Retry" — always retry, even if
+    // a (now-irrelevant) customer selection is still held in state.
+    if (error) {
+      handleConfirm();
       return;
     }
     // Footer Continue resolves customer input when actionable
@@ -1677,10 +1711,6 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         });
         return;
       }
-      if (customerNeedsCode && customerCodeInput.trim()) {
-        runResolveCustomer({ customerCode: customerCodeInput.trim() });
-        return;
-      }
     }
     setShowMatchHint(false);
     setShowCategorizeHint(false);
@@ -1688,7 +1718,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   }, [
     confirmDisabled, handleConfirm, currentStep.id, matchComplete, categorizeComplete, isLoading, error,
     resolvedCustomer, customerNeedsSelection, selectedCustomer,
-    customerNeedsConfirmation, customerNeedsCode, customerCodeInput,
+    customerNeedsConfirmation,
     runResolveCustomer,
   ]);
 
@@ -1702,6 +1732,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
         confirmLabel={getConfirmLabel()}
         cancelLabel={currentStep.id === 'execute' && executionResult ? 'Close' : 'Cancel'}
         saving={isLoading}
+        // Grey the footer button only on the customer step while waiting for a
+        // chosen customer — other steps keep it clickable to surface hints.
+        confirmDisabled={currentStep.id === 'resolve-customer' && confirmDisabled && !isLoading}
         footerHint={(() => {
           if (showMatchHint && needsSelection.filter(ns => !userSelections.has(ns.productId)).length > 0) {
             return `Confirm creation for the above (${needsSelection.filter(ns => !userSelections.has(ns.productId)).length}) products before continuing`;

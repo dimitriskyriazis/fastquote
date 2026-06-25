@@ -408,7 +408,9 @@ function formatCurrency(n: number | null | undefined): string {
 
 function formatPercent(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n === 0) return '';
-  return n.toFixed(1).replace('.', ',');
+  // Two decimals to match the grid's discount column (decimalFormatter), e.g.
+  // "11,39 %" rather than a rounded "11,4 %".
+  return n.toFixed(2).replace('.', ',');
 }
 
 function fixObviousTypos(text: string): string {
@@ -960,25 +962,17 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
     case 'delivery': return str(row.delivery);
     case 'listPrice': return row.listPrice != null ? formatCurrency(row.listPrice) : '';
     case 'totalList': {
-      if (row.listPrice != null && row.quantity != null) {
-        return formatCurrency(row.listPrice * row.quantity);
-      }
-      return row.listPrice != null ? formatCurrency(row.listPrice) : '';
+      // Stored line total (grid "Total List Price"), not a recomputed listPrice ×
+      // qty — the two can differ when the total was overridden. Blank when absent.
+      return row.totalPrice != null && Number.isFinite(row.totalPrice) ? formatCurrency(row.totalPrice) : '';
     }
     case 'discount': return row.customerDiscount != null ? formatPercent(row.customerDiscount) : '';
     case 'unitPrice': return row.unitPrice != null ? formatCurrency(row.unitPrice) : '';
     case 'total': {
-      const hasAmount = (
-        (row.totalPrice != null && Number.isFinite(row.totalPrice)) ||
-        (row.totalNet != null && Number.isFinite(row.totalNet)) ||
-        (
-          row.quantity != null &&
-          row.unitPrice != null &&
-          Number.isFinite(row.quantity) &&
-          Number.isFinite(row.unitPrice)
-        )
-      );
-      return hasAmount ? formatCurrency(lineNetAmount(row)) : '';
+      // Stored net line total (grid "Total Net"). Blank when no net was entered —
+      // matching the grid, which shows a blank net (counted as 0) rather than
+      // falling back to the list amount.
+      return row.totalNet != null && Number.isFinite(row.totalNet) ? formatCurrency(row.totalNet) : '';
     }
     case 'requestedBrand': return str(row.requestedBrand);
     case 'requestedPartNo': return str(row.requestedPartNo);
@@ -1003,22 +997,21 @@ function computeColumnWidths(selectedColumns: PdfProductColumn[], orientation: P
   return widths;
 }
 
+// The grid footer is the source of truth for the offer's totals. It sums the
+// stored per-line columns in SQL — SUM(COALESCE(od.TotalNet, 0)) and
+// SUM(COALESCE(od.TotalPrice, 0)) — so the PDF must read the SAME stored values
+// (treating a missing total as 0) rather than recomputing from per-unit prices.
+//
+// In particular we must NOT fall back to the list amount when the net is missing:
+// that previously made a line with a list price but no net (e.g. a service whose
+// net was never entered) print at full price in the PDF while the grid counted it
+// as 0 — the root cause of the PDF/grid totals mismatch.
 function lineNetAmount(row: OfferProductRow): number {
-  if (row.totalNet != null && Number.isFinite(row.totalNet)) return row.totalNet;
-  if (row.quantity != null && row.unitPrice != null && Number.isFinite(row.quantity) && Number.isFinite(row.unitPrice)) {
-    return row.quantity * row.unitPrice;
-  }
-  if (row.totalPrice != null && Number.isFinite(row.totalPrice)) return row.totalPrice;
-  return 0;
+  return row.totalNet != null && Number.isFinite(row.totalNet) ? row.totalNet : 0;
 }
 
 function lineListAmount(row: OfferProductRow): number {
-  if (row.totalPrice != null && Number.isFinite(row.totalPrice)) return row.totalPrice;
-  if (row.listPrice != null && row.quantity != null && Number.isFinite(row.listPrice) && Number.isFinite(row.quantity)) {
-    return row.listPrice * row.quantity;
-  }
-  if (row.listPrice != null && Number.isFinite(row.listPrice)) return row.listPrice;
-  return lineNetAmount(row);
+  return row.totalPrice != null && Number.isFinite(row.totalPrice) ? row.totalPrice : 0;
 }
 
 function buildCategoryTotalsMap(
@@ -1314,35 +1307,23 @@ function calculateDiscountSummary(data: OfferPdfData): {
   additionalDiscountEur: number;
   totalNet: number;
 } {
+  // Mirror the grid footer exactly: it sums the stored TotalPrice / TotalNet line
+  // columns (SUM(COALESCE(..., 0))) over non-category, non-option rows. Summing the
+  // same stored values via lineListAmount / lineNetAmount keeps the PDF's Grand
+  // Total / Discount / Final Price identical to the totals the salesperson reviews
+  // and approves in the grid, instead of re-deriving them from per-unit prices
+  // (which drifts whenever a line total was overridden or a net price is missing).
   const detailRows = data.products.filter((p) => !p.isCategory && !p.isOption);
 
   let listSubtotal = 0;
   let netBeforeExtra = 0;
-
   for (const row of detailRows) {
-    const lineTotal = lineNetAmount(row);
-    const qty = row.quantity ?? null;
-
-    // Net summary should follow the same source as the line Total column.
-    netBeforeExtra += lineTotal;
-
-    if (qty != null && row.listPrice != null) {
-      listSubtotal += row.listPrice * qty;
-      continue;
-    }
-
-    if (row.customerDiscount != null && row.customerDiscount > 0 && row.customerDiscount < 100 && lineTotal > 0) {
-      listSubtotal += lineTotal / (1 - (row.customerDiscount / 100));
-      continue;
-    }
-
-    listSubtotal += lineTotal;
+    listSubtotal += lineListAmount(row);
+    netBeforeExtra += lineNetAmount(row);
   }
 
-  if (listSubtotal <= 0) listSubtotal = netBeforeExtra;
-
-  // The main "Discount" line is the list→net gap from per-line customer discounts
-  // only — it deliberately EXCLUDES the offer-level additional discount.
+  // The main "Discount" line is the list→net gap; it deliberately EXCLUDES the
+  // offer-level additional discount.
   const discountEur = Math.max(0, listSubtotal - netBeforeExtra);
 
   // The offer-level additional discount is applied on top of the net subtotal and

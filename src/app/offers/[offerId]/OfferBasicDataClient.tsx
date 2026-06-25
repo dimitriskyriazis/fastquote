@@ -460,6 +460,9 @@ export default function OfferBasicDataClient({
   const [highlightOrderSignedMissing, setHighlightOrderSignedMissing] = useState(false);
   const [highlightOfferDateMissing, setHighlightOfferDateMissing] = useState(false);
   const [highlightedPdfTermFields, setHighlightedPdfTermFields] = useState<Set<string>>(() => new Set());
+  // Generic "this field is required and missing" highlight, driven by feature
+  // buttons (e.g. Fill Project Form) that need several Basic Data fields filled in.
+  const [highlightedMissingFields, setHighlightedMissingFields] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const handler = () => setHighlightOrderSignedMissing(true);
@@ -485,6 +488,20 @@ export default function OfferBasicDataClient({
     };
     window.addEventListener('fastquote:highlight-pdf-terms-missing', handler);
     return () => window.removeEventListener('fastquote:highlight-pdf-terms-missing', handler);
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<string[] | undefined>).detail;
+      if (!Array.isArray(detail) || detail.length === 0) return;
+      setHighlightedMissingFields((prev) => {
+        const next = new Set(prev);
+        for (const id of detail) next.add(id);
+        return next;
+      });
+    };
+    window.addEventListener('fastquote:highlight-fields-missing', handler);
+    return () => window.removeEventListener('fastquote:highlight-fields-missing', handler);
   }, []);
 
   const contactOptions = useMemo(() => {
@@ -1259,6 +1276,9 @@ export default function OfferBasicDataClient({
   const isEditable = Boolean(def.updateField && !def.readOnly);
   const controlId = `offer-field-${def.id}`;
   const value = isEditable ? (valueMap[def.id] ?? '') : resolveFieldValue(record, def);
+  // Required-and-missing highlight (set by feature buttons); clears once filled.
+  const missingHighlight =
+    highlightedMissingFields.has(def.id) && String(valueMap[def.id] ?? '').trim() === '';
   const readOnlyDisplayValue = typeof def.readOnlyDisplayValue === 'function'
     ? def.readOnlyDisplayValue(record)
     : null;
@@ -1294,7 +1314,7 @@ export default function OfferBasicDataClient({
             autoComplete="off"
             id={controlId}
             name={def.id}
-            className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+            className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${missingHighlight ? styles.fieldControlError : ''}`}
             value={customerText}
             placeholder="Type to filter customers"
             onChange={(event) => {
@@ -1340,7 +1360,7 @@ export default function OfferBasicDataClient({
       <select
         id={controlId}
         name={def.id}
-        className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
+        className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${missingHighlight ? styles.fieldControlError : ''}`}
         value={valueMap[def.id] ?? ''}
         onMouseDown={() => refreshFieldLookups(def.id)}
         onFocus={() => refreshFieldLookups(def.id)}
@@ -1390,7 +1410,7 @@ export default function OfferBasicDataClient({
           autoComplete="off"
           id={controlId}
           name={def.id}
-          className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing ? styles.fieldControlError : ''}`}
+          className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing || missingHighlight ? styles.fieldControlError : ''}`}
           value={currentValue}
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
@@ -1403,7 +1423,8 @@ export default function OfferBasicDataClient({
       const dateValue = values[def.id] ?? '';
       const isMissingRequired =
         (def.id === 'orderSigned' && highlightOrderSignedMissing && !dateValue) ||
-        (def.id === 'offerDate' && highlightOfferDateMissing && !dateValue);
+        (def.id === 'offerDate' && highlightOfferDateMissing && !dateValue) ||
+        missingHighlight;
       return (
         <UKDatePicker
           value={dateValue}
@@ -1422,7 +1443,7 @@ export default function OfferBasicDataClient({
           autoComplete="off"
           id={controlId}
           name={def.id}
-          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing ? styles.fieldControlError : ''}`}
+          className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing || missingHighlight ? styles.fieldControlError : ''}`}
           type={def.inputType ?? 'text'}
           min={def.id === 'probability' ? PROBABILITY_MIN : undefined}
           max={def.id === 'probability' ? PROBABILITY_MAX : undefined}

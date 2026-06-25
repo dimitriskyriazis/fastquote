@@ -11,7 +11,7 @@ import { createManufacturerInErp, findBrandInErp } from '../../../../../lib/item
 import { getRequestId } from '../../../../../lib/requestId';
 import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
-import { fuzzyCustomerSearch, searchCustomerByTaxId, filterActiveCustomers } from '../../../../../lib/customerSearch';
+import { findCustomerViaProc } from '../../../../../lib/customerSearch';
 import { clearPartModelNumberUpper } from '../../../../../lib/partModelNumber';
 import { sendDraftOrderCompletionEmail } from '../../../../../lib/draftOrderCompletionEmail';
 
@@ -60,7 +60,8 @@ type CreateDraftOfferRequestBody = {
   step?: WizardStep;
   selections?: ProductSelection[];
   customerSelection?: CustomerSelection;
-  customerCode?: string;
+  /** Free-text the user typed to find a customer (name / code / VAT). Passed to tlm.FindCustomer. */
+  customerSearch?: string;
   customerConfirmed?: boolean;
   brandCreationConfirmed?: boolean;
   categoryUpdate?: CategoryUpdate;
@@ -684,7 +685,7 @@ async function handleResolveCustomer(
   let erpCustomerCode: string | null = null;
 
   const customerSelection = body.customerSelection ?? null;
-  const customerCode = body.customerCode ?? null;
+  const customerSearch = body.customerSearch ?? null;
   const customerConfirmed = body.customerConfirmed ?? false;
 
   if (!erpCustomerId) {
@@ -696,16 +697,11 @@ async function handleResolveCustomer(
         ok: true, step: 'resolve-customer',
         needsConfirmation: customerSelection,
       });
-    } else if (customerCode) {
-      const searchReq = erpPool.request();
-      searchReq.input('SearchValue', sql.NVarChar(200), customerCode.trim());
-      const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
-        EXEC tlm.FindCustomer @SearchValue = @SearchValue
-      `);
-      const matches = await filterActiveCustomers(erpPool, searchRes.recordset ?? []);
+    } else if (customerSearch) {
+      const matches = await findCustomerViaProc(erpPool, customerSearch);
 
       if (matches.length === 0) {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found with code: ${customerCode}` });
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: `No customer found matching: ${customerSearch}` });
       } else if (matches.length === 1) {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
       } else {
@@ -715,32 +711,24 @@ async function handleResolveCustomer(
       let matches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
 
       if (ctx.customerTaxId) {
-        matches = await searchCustomerByTaxId(erpPool, ctx.customerTaxId);
+        matches = await findCustomerViaProc(erpPool, ctx.customerTaxId);
       }
 
       if (matches.length === 0 && ctx.customerName) {
-        const searchReq = erpPool.request();
-        searchReq.input('SearchValue', sql.NVarChar(200), ctx.customerName);
-        const searchRes = await searchReq.query<{ TRDR: number; CODE: string | null; NAME: string | null }>(`
-          EXEC tlm.FindCustomer @SearchValue = @SearchValue
-        `);
-        matches = await filterActiveCustomers(erpPool, searchRes.recordset ?? []);
-
-        if (matches.length === 0) {
-          matches = await fuzzyCustomerSearch(erpPool, ctx.customerName);
-        }
+        matches = await findCustomerViaProc(erpPool, ctx.customerName);
       }
 
       if (matches.length === 0) {
         const searched = ctx.customerName ?? `TaxID ${ctx.customerTaxId}`;
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsCode: true, message: `No customer found matching: ${searched}` });
+        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: `No customer found matching: ${searched}` });
       } else if (matches.length === 1) {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
       } else {
         return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
       }
     } else {
-      return NextResponse.json({ ok: false, error: 'No customer information available.' }, { status: 400 });
+      // No customer info on the offer at all — let the user search manually.
+      return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: 'No customer information on the offer. Search for the customer.' });
     }
 
     // Persist customer ERPID to FastQuote DB
@@ -2371,7 +2359,7 @@ export async function POST(
 
     // Customer finding logic: search for customer before searching for project
     const customerSelection = body?.customerSelection ?? null;
-    const customerCode = body?.customerCode ?? null;
+    const customerSearch = body?.customerSearch ?? null;
     const customerConfirmed = body?.customerConfirmed ?? false;
 
     if (!erpCustomerId) {
@@ -2393,24 +2381,15 @@ export async function POST(
           needsCustomerConfirmation: customerSelection,
           message: 'Please confirm the selected customer.',
         });
-      } else if (customerCode) {
-        // User provided customer code, search by code
-        const customerSearchRequest = erpPool.request();
-        customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerCode.trim());
-        const customerSearchResult = await customerSearchRequest.query<{
-          TRDR: number;
-          CODE: string | null;
-          NAME: string | null;
-        }>(`
-          EXEC tlm.FindCustomer @SearchValue = @SearchValue
-        `);
-        const customerMatches = await filterActiveCustomers(erpPool, customerSearchResult.recordset ?? []);
+      } else if (customerSearch) {
+        // User provided free-text search (name / code / VAT)
+        const customerMatches = await findCustomerViaProc(erpPool, customerSearch);
 
         if (customerMatches.length === 0) {
           return NextResponse.json({
             ok: false,
-            error: `No customer found with code: ${customerCode}`,
-            needsCustomerCode: true,
+            error: `No customer found matching: ${customerSearch}`,
+            needsCustomerSearch: true,
           });
         } else if (customerMatches.length === 1) {
           // Single match found, ask for confirmation
@@ -2424,42 +2403,28 @@ export async function POST(
           return NextResponse.json({
             ok: true,
             needsCustomerSelection: customerMatches,
-            message: `Multiple customers found with code: ${customerCode}. Please select one.`,
+            message: `Multiple customers found matching: ${customerSearch}. Please select one.`,
           });
         }
       } else if (customerName || customerTaxId) {
-        // Prefer tax ID exact match on TRDR.AFM, then fall back to name (SP + fuzzy)
+        // Look the customer up via tlm.FindCustomer: tax id first, then name.
         let customerMatches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
 
         if (customerTaxId) {
-          customerMatches = await searchCustomerByTaxId(erpPool, customerTaxId);
+          customerMatches = await findCustomerViaProc(erpPool, customerTaxId);
         }
 
         if (customerMatches.length === 0 && customerName) {
-          const customerSearchRequest = erpPool.request();
-          customerSearchRequest.input('SearchValue', sql.NVarChar(200), customerName);
-          const customerSearchResult = await customerSearchRequest.query<{
-            TRDR: number;
-            CODE: string | null;
-            NAME: string | null;
-          }>(`
-            EXEC tlm.FindCustomer @SearchValue = @SearchValue
-          `);
-          customerMatches = await filterActiveCustomers(erpPool, customerSearchResult.recordset ?? []);
-
-          // If FindCustomer returned 0 matches, try fuzzy search (Latin + Greek)
-          if (customerMatches.length === 0) {
-            customerMatches = await fuzzyCustomerSearch(erpPool, customerName);
-          }
+          customerMatches = await findCustomerViaProc(erpPool, customerName);
         }
 
         if (customerMatches.length === 0) {
-          // No matches even with fuzzy search, ask for customer code
+          // No matches — ask the user to search for the customer
           const searched = customerName ?? `TaxID ${customerTaxId}`;
           return NextResponse.json({
             ok: false,
-            error: `No customer found matching: ${searched}. Please provide customer code.`,
-            needsCustomerCode: true,
+            error: `No customer found matching: ${searched}. Please search for the customer.`,
+            needsCustomerSearch: true,
           });
         } else if (customerMatches.length === 1) {
           // Single match found, ask for confirmation
@@ -2487,7 +2452,7 @@ export async function POST(
       }
 
       // Persist the found customer ERP ID back to the Customers table
-      if (erpCustomerId && (customerSelection || customerCode || customerName)) {
+      if (erpCustomerId && (customerSelection || customerSearch || customerName)) {
         const updateCustomerRequest = pool.request();
         updateCustomerRequest.input('offerId', sql.Int, normalizedId);
         updateCustomerRequest.input('erpCustomerId', sql.Int, erpCustomerId);

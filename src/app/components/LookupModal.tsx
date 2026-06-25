@@ -12,6 +12,8 @@ type Props = {
   confirmLabel?: string;
   cancelLabel?: string;
   saving?: boolean;
+  /** Disable the confirm button without showing the "Saving…" state. */
+  confirmDisabled?: boolean;
   error?: string | null;
   children?: React.ReactNode;
   overlayClassName?: string;
@@ -36,6 +38,7 @@ export default function LookupModal({
   confirmLabel = 'Save',
   cancelLabel = 'Cancel',
   saving = false,
+  confirmDisabled = false,
   error = null,
   children,
   overlayClassName = '',
@@ -145,7 +148,7 @@ export default function LookupModal({
                 type="button"
                 className={styles.confirmButton}
                 onClick={handleConfirm}
-                disabled={saving}
+                disabled={saving || confirmDisabled}
               >
                 {saving ? 'Saving…' : confirmLabel}
               </button>
@@ -162,7 +165,7 @@ export default function LookupModal({
                 type="button"
                 className={styles.confirmButton}
                 onClick={handleConfirm}
-                disabled={saving}
+                disabled={saving || confirmDisabled}
               >
                 {saving ? 'Saving…' : confirmLabel}
               </button>

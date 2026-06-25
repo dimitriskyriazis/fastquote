@@ -268,6 +268,36 @@ const flagMissingListPriceDiscount = (
   return MISSING_LIST_PRICE_DISCOUNT_FLAG;
 };
 
+// The inverse of flagMissingListPriceDiscount: a priced row that HAS a list price
+// but no net price (net blank or 0) is a 100% discount — the line is being given
+// away for free. That is almost always a data-entry gap (no selling price entered),
+// and when there is a cost behind it, an outright loss the Margin cell cannot show
+// (its margin would be a division by zero, so it renders blank rather than red).
+// Surface an honest 100% so the cell formats and flags red. Display-only: returned
+// by the valueGetter, never written to the field, so it is not persisted or
+// exported as real data.
+const FULL_DISCOUNT_NO_NET_FLAG = 100;
+
+const flagFullDiscountNoNet = (
+  data: Record<string, unknown> | null | undefined,
+): number | null => {
+  if (!data) return null;
+  const isPricedRow = isOfferProductProduct(data) || resolveOfferProductRowType(data) === 'printable-service';
+  if (!isPricedRow) return null;
+  // Respect an explicitly entered discount — only flag rows that are otherwise blank.
+  const storedDiscount = coerceNumber((data as { CustomerDiscount?: unknown }).CustomerDiscount);
+  if (storedDiscount != null && storedDiscount !== 0) return null;
+  // There must be a list price to discount from.
+  const listPrice = coerceNumber((data as { ListPrice?: unknown }).ListPrice);
+  if (listPrice == null || listPrice <= 0) return null;
+  // ...and no net, neither per-unit nor as a stored line total.
+  const netUnitPrice = coerceNumber((data as { NetUnitPrice?: unknown }).NetUnitPrice);
+  if (netUnitPrice != null && netUnitPrice > 0) return null;
+  const totalNet = coerceNumber((data as { TotalNet?: unknown }).TotalNet);
+  if (totalNet != null && totalNet > 0) return null;
+  return FULL_DISCOUNT_NO_NET_FLAG;
+};
+
 // A zero (or blank) quantity on a line that should contribute to the offer
 // totals is almost always a mistake — the line prices out to nothing. Flag
 // products, services and priced comments. Non-printable comments are exempt:
@@ -819,8 +849,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       // Display the stored discount, except surface a -100% flag on priced rows
       // that have a net price but no list price (see flagMissingListPriceDiscount).
       valueGetter: (params) => {
-        const flagged = flagMissingListPriceDiscount(params.data ?? null);
-        if (flagged != null) return flagged;
+        const missingList = flagMissingListPriceDiscount(params.data ?? null);
+        if (missingList != null) return missingList;
+        // List price but no net → surface an honest 100% (full giveaway). Mutually
+        // exclusive with the flag above (that one requires no list price).
+        const fullDiscount = flagFullDiscountNoNet(params.data ?? null);
+        if (fullDiscount != null) return fullDiscount;
         return (params.data as { CustomerDiscount?: unknown } | null | undefined)?.CustomerDiscount ?? null;
       },
       // Pairing a valueGetter with editing requires an explicit setter to write
@@ -835,9 +869,11 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         return percentageFormatter(params);
       },
       cellClassRules: {
+        // Red for an anomalous discount: below 0 (selling above list / missing-list
+        // sentinel) OR a full 100%+ discount (the line is given away free).
         'offer-products-grid__cell--negative-margin': (params) => {
           const value = coerceNumber(params.value ?? (params.data as { CustomerDiscount?: unknown } | null | undefined)?.CustomerDiscount ?? null);
-          return value != null && value < 0;
+          return value != null && (value < 0 || value >= 100);
         },
       },
       cellStyle: actualNumericCellStyle,
