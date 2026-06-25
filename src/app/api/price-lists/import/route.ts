@@ -1355,6 +1355,7 @@ export async function POST(req: NextRequest) {
         matchedPart: string | null;
         matchedModel: string | null;
         kind: "fullSwap" | "partIsExistingModel" | "modelIsExistingPart";
+        alreadyExists: boolean;
       };
       const swapWarnings: SwapWarning[] = [];
 
@@ -1363,20 +1364,33 @@ export async function POST(req: NextRequest) {
         const modelKey = normalizeKey(row.modelNumber);
         const legacyKey = normalizeKey(row.legacyPartNumber);
         if (!partKey && !modelKey) return;
+        // Part == Model can't be "swapped" — skip (some accessories store them equal).
+        if (partKey && modelKey && partKey === modelKey) return;
 
-        // If the row matches an existing product the normal way, it is not a swap.
-        const sameBrandPartMatch = partKey ? byPartNumber.has(partKey) : false;
-        const legacyMatch = legacyKey ? byLegacyPartNumber.has(legacyKey) : false;
-        let modelMatch = false;
-        if (!sameBrandPartMatch && !legacyMatch && modelKey && byModelNumber.has(modelKey)) {
+        // The product this row would match the normal way (if any). Used to make
+        // the mirror a DIFFERENT product (so a clean re-import never warns about
+        // itself) and to know whether a reversed duplicate ALREADY exists.
+        let normalMatchId: number | null = null;
+        if (partKey && byPartNumber.has(partKey)) {
+          normalMatchId = byPartNumber.get(partKey)?.ID ?? null;
+        } else if (legacyKey && byLegacyPartNumber.has(legacyKey)) {
+          normalMatchId = byLegacyPartNumber.get(legacyKey)?.ID ?? null;
+        } else if (modelKey && byModelNumber.has(modelKey)) {
           const candidate = byModelNumber.get(modelKey);
           const candidatePartKey = normalizeKey(candidate?.PartNumber);
-          modelMatch = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
+          if (!partKey || (candidatePartKey != null && partKey === candidatePartKey)) {
+            normalMatchId = candidate?.ID ?? null;
+          }
         }
-        if (sameBrandPartMatch || legacyMatch || modelMatch) return;
 
-        const byPart = partKey ? existingModelToProduct.get(partKey) : undefined; // imported Part == existing Model
-        const byModel = modelKey ? existingPartToProduct.get(modelKey) : undefined; // imported Model == existing Part
+        // A DIFFERENT existing product whose columns mirror this row. Crucially
+        // this is evaluated even when the row matches a product normally — so a
+        // reversed duplicate that ALREADY exists is still flagged (the old early
+        // skip hid exactly the pair this is meant to catch on re-import).
+        const mByPart = partKey ? existingModelToProduct.get(partKey) : undefined; // existing Model == imported Part
+        const mByModel = modelKey ? existingPartToProduct.get(modelKey) : undefined; // existing Part == imported Model
+        const byPart = mByPart && mByPart.ID !== normalMatchId ? mByPart : undefined;
+        const byModel = mByModel && mByModel.ID !== normalMatchId ? mByModel : undefined;
         if (!byPart && !byModel) return;
 
         const matched = byPart ?? byModel!;
@@ -1395,6 +1409,10 @@ export async function POST(req: NextRequest) {
           matchedPart: matched.PartNumber,
           matchedModel: matched.ModelNumber,
           kind,
+          // Row already resolves to a (different) product the normal way → a
+          // reversed duplicate already exists; auto-swapping is ambiguous, so the
+          // client treats these as warn-only (no auto-fix offered).
+          alreadyExists: normalMatchId != null,
         });
       });
 

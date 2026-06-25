@@ -1325,6 +1325,7 @@ export default function PriceListImportClient({
           matchedPart: string | null;
           matchedModel: string | null;
           kind: "fullSwap" | "partIsExistingModel" | "modelIsExistingPart";
+          alreadyExists: boolean;
         }>;
         priceChanges?: Array<{
           partNumber: string | null;
@@ -1402,31 +1403,69 @@ export default function PriceListImportClient({
               : k === "partIsExistingModel"
                 ? "Part = existing Model"
                 : "Model = existing Part";
-          const selected = await showSelectableConfirmDialog({
-            title: "Possible Part / Model swap",
-            message:
-              `${swapWarnings.length} row${swapWarnings.length > 1 ? "s" : ""} look like the Part and Model columns are swapped versus existing products. ` +
-              "Checked rows are imported with Part and Model swapped back to match the existing product; unchecked rows import as-is. " +
-              "Select none to import everything as-is, or Cancel to fix the file and re-upload.",
-            confirmLabel: "Import — fix",
-            cancelLabel: "Cancel & fix file",
-            columns: ["Imported Part", "Imported Model", "Matches existing product", "Signal"],
-            columnWidths: ["23%", "23%", "34%", "20%"],
-            allowEmpty: true,
-            rows: swapWarnings.map((w) => [
-              w.importedPart || "-",
-              w.importedModel || "-",
-              `#${w.matchedProductId} · Part ${w.matchedPart || "-"} / Model ${w.matchedModel || "-"}`,
-              kindLabel(w.kind),
-            ]),
-          });
-          if (selected === false) {
-            setError(
-              "Import cancelled — Part/Model columns look swapped. Fix the file and re-upload, or re-run to auto-correct.",
-            );
-            return;
+          // Rows that would CREATE a new reversed duplicate can be auto-fixed
+          // (swap Part/Model so they match the existing product). Rows that
+          // already match an existing reversed duplicate are warn-only — swapping
+          // them is ambiguous, so we don't offer auto-fix for those.
+          const correctable = swapWarnings.filter((w) => !w.alreadyExists);
+          const existing = swapWarnings.filter((w) => w.alreadyExists);
+          let correctionRowIndices: number[] = [];
+
+          if (correctable.length > 0) {
+            const selected = await showSelectableConfirmDialog({
+              title: "Possible Part / Model swap",
+              message:
+                `${correctable.length} imported row${correctable.length > 1 ? "s" : ""} look like the Part and Model columns are swapped versus existing products. ` +
+                "Checked rows are imported with Part and Model swapped back to match the existing product; unchecked rows import as-is. " +
+                "Select none to import everything as-is, or Cancel to fix the file and re-upload." +
+                (existing.length > 0
+                  ? ` (${existing.length} more already exist as reversed duplicates and will import as-is.)`
+                  : ""),
+              confirmLabel: "Import — fix",
+              cancelLabel: "Cancel & fix file",
+              columns: ["Imported Part", "Imported Model", "Matches existing product", "Signal"],
+              columnWidths: ["23%", "23%", "34%", "20%"],
+              allowEmpty: true,
+              rows: correctable.map((w) => [
+                w.importedPart || "-",
+                w.importedModel || "-",
+                `#${w.matchedProductId} · Part ${w.matchedPart || "-"} / Model ${w.matchedModel || "-"}`,
+                kindLabel(w.kind),
+              ]),
+            });
+            if (selected === false) {
+              setError(
+                "Import cancelled — Part/Model columns look swapped. Fix the file and re-upload, or re-run to auto-correct.",
+              );
+              return;
+            }
+            correctionRowIndices = selected.map((i) => correctable[i].rowIndex);
+          } else {
+            // Only already-existing reversed duplicates — warn-only (auto-swap is
+            // ambiguous when both directions already exist in the catalog).
+            const proceed = await showConfirmDialog({
+              title: "Reversed-duplicate product detected",
+              message:
+                `${existing.length} imported product${existing.length > 1 ? "s are" : " is a"} reversed duplicate${existing.length > 1 ? "s" : ""} of existing product${existing.length > 1 ? "s" : ""} ` +
+                "— the imported Part matches an existing product's Model and/or vice-versa. They'll import as-is, matching the existing reversed product. Consider cleaning up the duplicate afterward.",
+              confirmLabel: "Import anyway",
+              cancelLabel: "Cancel",
+              tone: "danger",
+              details: {
+                columns: ["Imported Part", "Imported Model", "Mirrors existing product"],
+                rows: existing.map((w) => [
+                  w.importedPart || "-",
+                  w.importedModel || "-",
+                  `#${w.matchedProductId} · Part ${w.matchedPart || "-"} / Model ${w.matchedModel || "-"}`,
+                ]),
+              },
+            });
+            if (!proceed) {
+              setError("Import cancelled — reversed-duplicate products detected.");
+              return;
+            }
           }
-          const correctionRowIndices = selected.map((i) => swapWarnings[i].rowIndex);
+
           formData.set("acknowledgeSwapWarnings", "1");
           formData.set("swapCorrections", JSON.stringify(correctionRowIndices));
           swapAcknowledged = true;
