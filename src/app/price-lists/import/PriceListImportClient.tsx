@@ -1297,10 +1297,6 @@ export default function PriceListImportClient({
       }));
       formData.append("columnMappings", JSON.stringify(columnMappings));
 
-      const response = await fetch("/api/price-lists/import", {
-        method: "POST",
-        body: formData,
-      });
       type ImportResponse = {
         ok?: boolean;
         error?: string;
@@ -1320,6 +1316,16 @@ export default function PriceListImportClient({
         }>;
         descriptionMismatches?: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[];
         modelNumberMismatches?: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[];
+        partModelSwapWarnings?: Array<{
+          rowIndex: number;
+          importedPart: string | null;
+          importedModel: string | null;
+          description: string | null;
+          matchedProductId: number;
+          matchedPart: string | null;
+          matchedModel: string | null;
+          kind: "fullSwap" | "partIsExistingModel" | "modelIsExistingPart";
+        }>;
         priceChanges?: Array<{
           partNumber: string | null;
           description: string | null;
@@ -1344,36 +1350,90 @@ export default function PriceListImportClient({
         allCapsProductIds?: number[];
         allCapsDescriptionCount?: number;
       };
-      const raw = await response.text().catch(() => "");
-      const typedPayload: ImportResponse | null = (() => {
-        try {
-          return JSON.parse(raw) as ImportResponse;
-        } catch {
-          return null;
-        }
-      })();
-
-      if (response.status === 409 && typedPayload?.blockers && typedPayload.blockers.length > 0) {
-        const blockers = typedPayload.blockers;
-        await showConfirmDialog({
-          title: "Import cancelled — duplicate part numbers",
-          message: `${blockers.length} row${blockers.length > 1 ? "s" : ""} in the file have part numbers that already exist in the database under a different brand. Fix or remove these rows and re-upload.`,
-          confirmLabel: "OK",
-          cancelLabel: "Close",
-          tone: "danger",
-          details: {
-            columns: ["Row", "Part Number", "Description", "Existing Brand", "Existing Product ID"],
-            rows: blockers.map((b) => [
-              String(b.rowIndex + 1),
-              b.partNumber || "-",
-              b.description || "-",
-              b.conflictBrandName || (b.conflictBrandId != null ? `#${b.conflictBrandId}` : "-"),
-              String(b.conflictProductId),
-            ]),
-          },
+      let response!: Response;
+      let raw = "";
+      let typedPayload: ImportResponse | null = null;
+      let swapAcknowledged = false;
+      // The first POST can return Part/Model swap warnings (409) without
+      // committing. After the user decides (cancel / import as-is / auto-fix the
+      // selected rows) we re-submit ONCE with the acknowledgement + corrections.
+      for (;;) {
+        response = await fetch("/api/price-lists/import", {
+          method: "POST",
+          body: formData,
         });
-        setError(typedPayload.error ?? "Import cancelled: duplicate part numbers.");
-        return;
+        raw = await response.text().catch(() => "");
+        typedPayload = (() => {
+          try {
+            return JSON.parse(raw) as ImportResponse;
+          } catch {
+            return null;
+          }
+        })();
+
+        if (response.status === 409 && typedPayload?.blockers && typedPayload.blockers.length > 0) {
+          const blockers = typedPayload.blockers;
+          await showConfirmDialog({
+            title: "Import cancelled — duplicate part numbers",
+            message: `${blockers.length} row${blockers.length > 1 ? "s" : ""} in the file have part numbers that already exist in the database under a different brand. Fix or remove these rows and re-upload.`,
+            confirmLabel: "OK",
+            cancelLabel: "Close",
+            tone: "danger",
+            details: {
+              columns: ["Row", "Part Number", "Description", "Existing Brand", "Existing Product ID"],
+              rows: blockers.map((b) => [
+                String(b.rowIndex + 1),
+                b.partNumber || "-",
+                b.description || "-",
+                b.conflictBrandName || (b.conflictBrandId != null ? `#${b.conflictBrandId}` : "-"),
+                String(b.conflictProductId),
+              ]),
+            },
+          });
+          setError(typedPayload.error ?? "Import cancelled: duplicate part numbers.");
+          return;
+        }
+
+        const swapWarnings = typedPayload?.partModelSwapWarnings;
+        if (response.status === 409 && swapWarnings && swapWarnings.length > 0 && !swapAcknowledged) {
+          const kindLabel = (k: string) =>
+            k === "fullSwap"
+              ? "Part⇄Model both match"
+              : k === "partIsExistingModel"
+                ? "Part = existing Model"
+                : "Model = existing Part";
+          const selected = await showSelectableConfirmDialog({
+            title: "Possible Part / Model swap",
+            message:
+              `${swapWarnings.length} row${swapWarnings.length > 1 ? "s" : ""} look like the Part and Model columns are swapped versus existing products. ` +
+              "Checked rows are imported with Part and Model swapped back to match the existing product; unchecked rows import as-is. " +
+              "Select none to import everything as-is, or Cancel to fix the file and re-upload.",
+            confirmLabel: "Import — fix",
+            cancelLabel: "Cancel & fix file",
+            columns: ["Imported Part", "Imported Model", "Matches existing product", "Signal"],
+            columnWidths: ["23%", "23%", "34%", "20%"],
+            allowEmpty: true,
+            rows: swapWarnings.map((w) => [
+              w.importedPart || "-",
+              w.importedModel || "-",
+              `#${w.matchedProductId} · Part ${w.matchedPart || "-"} / Model ${w.matchedModel || "-"}`,
+              kindLabel(w.kind),
+            ]),
+          });
+          if (selected === false) {
+            setError(
+              "Import cancelled — Part/Model columns look swapped. Fix the file and re-upload, or re-run to auto-correct.",
+            );
+            return;
+          }
+          const correctionRowIndices = selected.map((i) => swapWarnings[i].rowIndex);
+          formData.set("acknowledgeSwapWarnings", "1");
+          formData.set("swapCorrections", JSON.stringify(correctionRowIndices));
+          swapAcknowledged = true;
+          continue;
+        }
+
+        break;
       }
 
       if (!response.ok || !typedPayload?.ok) {

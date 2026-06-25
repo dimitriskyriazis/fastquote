@@ -212,6 +212,79 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     })();
   }, [tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
 
+  // Keep the signed session cookie alive on long-open tabs. The cookie carries a
+  // fixed ~8h TTL (SESSION_TTL_SECONDS) and is NEVER refreshed server-side, so a
+  // tab left open — or a machine left asleep overnight — silently crosses the
+  // expiry; the next authenticated request then 401s, and because the request now
+  // carries no uid it also collapses onto the shared per-IP rate-limit bucket and
+  // starts returning 429 ("Authentication required" + "Too many requests"). We
+  // pre-empt that by re-minting via /api/me, which is silent (IIS supplies the
+  // Windows identity) and resets the TTL. This does NOT weaken the 8h bound: every
+  // re-mint is a full, freshly-verified Windows-auth handshake, not a blind
+  // cookie-lifetime extension.
+  useEffect(() => {
+    if (!sessionEstablished) return;
+    if (accessDeniedUnrecognizedUser) return;
+    if (typeof window === 'undefined') return;
+
+    // Re-stamp well under the 8h TTL so the cookie never lapses during continuous
+    // use; the wide margin tolerates missed ticks (browsers throttle timers in
+    // hidden tabs) since the visibility/focus handler catches the user's return.
+    const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 min
+    // Coalesce bursts of focus/visibility/online events (rapid tab flipping) so we
+    // don't re-mint — and spend rate-limit budget — more than once per window.
+    const MIN_REMINT_GAP_MS = 5 * 60 * 1000; // 5 min
+
+    let lastRemintAt = Date.now();
+    let cancelled = false;
+    let inFlight = false;
+
+    const remint = async () => {
+      if (cancelled || inFlight) return;
+      // No point refreshing a hidden tab — the visibility handler re-mints the
+      // moment it becomes visible again, which is exactly the overnight case.
+      if (document.visibilityState === 'hidden') return;
+      inFlight = true;
+      try {
+        const result = await tryResolveViaWindowsAuth();
+        if (cancelled) return;
+        lastRemintAt = Date.now();
+        if (result.userId) {
+          writeCookieValue(result.userId);
+          setUserId(result.userId);
+        }
+        // A background refresh deliberately does NOT tear the app down on a
+        // transient failure or a mid-session access change: the next focus tick
+        // (or a real request's own error path) recovers, and staying quiet avoids
+        // false "access denied"/"signing in" flashes on a flaky network.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void remint();
+    }, REFRESH_INTERVAL_MS);
+
+    const onWake = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - lastRemintAt < MIN_REMINT_GAP_MS) return;
+      void remint();
+    };
+
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('online', onWake);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+      window.removeEventListener('online', onWake);
+    };
+  }, [sessionEstablished, accessDeniedUnrecognizedUser, tryResolveViaWindowsAuth]);
+
   const selectedUser = useMemo(
     () => users.find((user) => user.id === userId) ?? null,
     [userId, users],

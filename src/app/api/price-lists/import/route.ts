@@ -1000,6 +1000,22 @@ export async function POST(req: NextRequest) {
     const isAppendMode = appendToPriceListId != null;
     const columnMappings = parseColumnMappings(formData.get("columnMappings"));
     const decimalFormat = normalizePriceListDecimalFormat(formData.get("decimalFormat"));
+    // Part/Model swap warning handshake: the first submit detects rows whose
+    // Part/Model look swapped vs existing products and returns them (409) without
+    // committing. The user then re-submits with acknowledgeSwapWarnings=1 and,
+    // optionally, swapCorrections=[rowIndex,...] for the rows to auto-swap back.
+    const acknowledgeSwapWarnings = normalizeBool(formData.get("acknowledgeSwapWarnings")) === true;
+    const swapCorrections: number[] = (() => {
+      const raw = formData.get("swapCorrections");
+      if (typeof raw !== "string") return [];
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0);
+      } catch {
+        return [];
+      }
+    })();
 
     const parsePricingPolicies = (value: unknown): Array<{ pricingPolicyId: number }> => {
       if (typeof value !== "string") return [];
@@ -1054,6 +1070,19 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 },
       );
+    }
+
+    // Apply user-confirmed Part/Model swap corrections before any downstream
+    // processing (brand pattern, existing-product matching) so the corrected
+    // values flow through the normal pipeline and match the right product.
+    if (acknowledgeSwapWarnings && swapCorrections.length > 0) {
+      const correctionSet = new Set(swapCorrections);
+      parsedRows.forEach((row, idx) => {
+        if (!correctionSet.has(idx)) return;
+        const oldPart = row.partNumber;
+        row.partNumber = row.modelNumber;
+        row.modelNumber = oldPart;
+      });
     }
 
     const auditUserId = resolveAuditUserId(req);
@@ -1279,6 +1308,102 @@ export async function POST(req: NextRequest) {
             ok: false,
             error: `Import cancelled: ${blockers.length} part number${blockers.length > 1 ? "s" : ""} already exist in the database under a different brand.`,
             blockers,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    // Pre-flight: detect rows whose Part/Model columns look SWAPPED vs existing
+    // products of this brand. A row that would CREATE a new product (no normal
+    // match) but whose imported PartNumber equals an existing product's
+    // ModelNumber (or whose imported ModelNumber equals an existing PartNumber)
+    // almost always means the file has the two columns reversed — importing
+    // as-is would create a reversed-duplicate product. Return them (409) so the
+    // user can cancel, import as-is, or auto-swap the chosen rows. Skipped once
+    // acknowledged so the re-submit can proceed.
+    if (!acknowledgeSwapWarnings) {
+      const swapPartKeys = Array.from(
+        new Set(parsedRows.map((r) => normalizeKey(r.partNumber)).filter((v): v is string => Boolean(v))),
+      );
+      const swapModelKeys = Array.from(
+        new Set(parsedRows.map((r) => normalizeKey(r.modelNumber)).filter((v): v is string => Boolean(v))),
+      );
+
+      const [productsModelEqImportedPart, productsPartEqImportedModel] = await Promise.all([
+        fetchProductsByKeys(pool, swapPartKeys, "ModelNumber", brandId!),
+        fetchProductsByKeys(pool, swapModelKeys, "PartNumber", brandId!),
+      ]);
+
+      const existingModelToProduct = new Map<string, ProductRow>();
+      for (const p of productsModelEqImportedPart) {
+        const k = normalizeKey(p.ModelNumber);
+        if (k && !existingModelToProduct.has(k)) existingModelToProduct.set(k, p);
+      }
+      const existingPartToProduct = new Map<string, ProductRow>();
+      for (const p of productsPartEqImportedModel) {
+        const k = normalizeKey(p.PartNumber);
+        if (k && !existingPartToProduct.has(k)) existingPartToProduct.set(k, p);
+      }
+
+      type SwapWarning = {
+        rowIndex: number;
+        importedPart: string | null;
+        importedModel: string | null;
+        description: string | null;
+        matchedProductId: number;
+        matchedPart: string | null;
+        matchedModel: string | null;
+        kind: "fullSwap" | "partIsExistingModel" | "modelIsExistingPart";
+      };
+      const swapWarnings: SwapWarning[] = [];
+
+      parsedRows.forEach((row, idx) => {
+        const partKey = normalizeKey(row.partNumber);
+        const modelKey = normalizeKey(row.modelNumber);
+        const legacyKey = normalizeKey(row.legacyPartNumber);
+        if (!partKey && !modelKey) return;
+
+        // If the row matches an existing product the normal way, it is not a swap.
+        const sameBrandPartMatch = partKey ? byPartNumber.has(partKey) : false;
+        const legacyMatch = legacyKey ? byLegacyPartNumber.has(legacyKey) : false;
+        let modelMatch = false;
+        if (!sameBrandPartMatch && !legacyMatch && modelKey && byModelNumber.has(modelKey)) {
+          const candidate = byModelNumber.get(modelKey);
+          const candidatePartKey = normalizeKey(candidate?.PartNumber);
+          modelMatch = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
+        }
+        if (sameBrandPartMatch || legacyMatch || modelMatch) return;
+
+        const byPart = partKey ? existingModelToProduct.get(partKey) : undefined; // imported Part == existing Model
+        const byModel = modelKey ? existingPartToProduct.get(modelKey) : undefined; // imported Model == existing Part
+        if (!byPart && !byModel) return;
+
+        const matched = byPart ?? byModel!;
+        const kind: SwapWarning["kind"] =
+          byPart && byModel && byPart.ID === byModel.ID
+            ? "fullSwap"
+            : byPart
+              ? "partIsExistingModel"
+              : "modelIsExistingPart";
+        swapWarnings.push({
+          rowIndex: idx,
+          importedPart: row.partNumber,
+          importedModel: row.modelNumber,
+          description: row.description,
+          matchedProductId: matched.ID,
+          matchedPart: matched.PartNumber,
+          matchedModel: matched.ModelNumber,
+          kind,
+        });
+      });
+
+      if (swapWarnings.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `${swapWarnings.length} row${swapWarnings.length > 1 ? "s" : ""} look like the Part and Model columns are swapped versus existing products.`,
+            partModelSwapWarnings: swapWarnings,
           },
           { status: 409 },
         );

@@ -269,6 +269,10 @@ export type SelectableConfirmDialogOptions = {
   columnWidths?: string[];
   /** Index into `columns` of the "new value" column to highlight green when it differs. */
   highlightColumn?: number;
+  /** Whether every row starts checked (default true). Pass false for opt-in selection. */
+  defaultChecked?: boolean;
+  /** Allow confirming with zero rows selected (e.g. "import as-is"). Default false. */
+  allowEmpty?: boolean;
 };
 
 /**
@@ -284,14 +288,16 @@ export const showSelectableConfirmDialog = async ({
   rows,
   columnWidths,
   highlightColumn,
+  defaultChecked = true,
+  allowEmpty = false,
 }: SelectableConfirmDialogOptions): Promise<number[] | false> => {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     // SSR / non-interactive: apply everything by default.
-    return rows.map((_, i) => i);
+    return defaultChecked === false ? [] : rows.map((_, i) => i);
   }
 
   return new Promise<number[] | false>((resolve) => {
-    const checked = new Set<number>(rows.map((_, i) => i)); // all on by default
+    const checked = new Set<number>(defaultChecked === false ? [] : rows.map((_, i) => i));
 
     const overlay = document.createElement('div');
     overlay.className = 'fastquote-confirm-overlay';
@@ -332,7 +338,7 @@ export const showSelectableConfirmDialog = async ({
       'position:sticky;top:0;z-index:1;text-align:center;';
     const selectAllCb = document.createElement('input');
     selectAllCb.type = 'checkbox';
-    selectAllCb.checked = rows.length > 0;
+    selectAllCb.checked = rows.length > 0 && defaultChecked !== false;
     selectAllCb.title = 'Select / deselect all';
     selectAllCb.style.cursor = 'pointer';
     thCheck.appendChild(selectAllCb);
@@ -359,7 +365,7 @@ export const showSelectableConfirmDialog = async ({
     const updateConfirmBtn = () => {
       const n = checked.size;
       confirmBtn.textContent = `${confirmLabel} ${n} selected`;
-      confirmBtn.disabled = n === 0;
+      confirmBtn.disabled = !allowEmpty && n === 0;
       if (n === 0) {
         selectAllCb.checked = false;
         selectAllCb.indeterminate = false;
