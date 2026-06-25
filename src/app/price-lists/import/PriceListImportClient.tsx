@@ -1210,7 +1210,7 @@ export default function PriceListImportClient({
       const totalCount = activeSheet.allRows.length;
       const importVisible = await showConfirmDialog({
         title: "Excel filter detected",
-        message: `This file has an Excel filter active — ${visibleCount} of ${totalCount} rows are visible. Import only the visible rows, or all rows?`,
+        message: `This file has an Excel filter active, ${visibleCount} of ${totalCount} rows are visible. Import only the visible rows, or all rows?`,
         confirmLabel: `Import ${visibleCount} visible rows only`,
         cancelLabel: `Import all ${totalCount} rows`,
       });
@@ -1375,7 +1375,7 @@ export default function PriceListImportClient({
         if (response.status === 409 && typedPayload?.blockers && typedPayload.blockers.length > 0) {
           const blockers = typedPayload.blockers;
           await showConfirmDialog({
-            title: "Import cancelled — duplicate part numbers",
+            title: "Import cancelled - duplicate part numbers",
             message: `${blockers.length} row${blockers.length > 1 ? "s" : ""} in the file have part numbers that already exist in the database under a different brand. Fix or remove these rows and re-upload.`,
             confirmLabel: "OK",
             cancelLabel: "Close",
@@ -1421,7 +1421,7 @@ export default function PriceListImportClient({
                 (existing.length > 0
                   ? ` (${existing.length} more already exist as reversed duplicates and will import as-is.)`
                   : ""),
-              confirmLabel: "Import — fix",
+              confirmLabel: "Import - fix",
               cancelLabel: "Cancel & fix file",
               columns: ["Imported Part", "Imported Model", "Matches existing product", "Signal"],
               columnWidths: ["23%", "23%", "34%", "20%"],
@@ -1435,7 +1435,7 @@ export default function PriceListImportClient({
             });
             if (selected === false) {
               setError(
-                "Import cancelled — Part/Model columns look swapped. Fix the file and re-upload, or re-run to auto-correct.",
+                "Import cancelled - Part/Model columns look swapped. Fix the file and re-upload, or re-run to auto-correct.",
               );
               return;
             }
@@ -1446,8 +1446,8 @@ export default function PriceListImportClient({
             const proceed = await showConfirmDialog({
               title: "Reversed-duplicate product detected",
               message:
-                `${existing.length} imported product${existing.length > 1 ? "s are" : " is a"} reversed duplicate${existing.length > 1 ? "s" : ""} of existing product${existing.length > 1 ? "s" : ""} ` +
-                "— the imported Part matches an existing product's Model and/or vice-versa. They'll import as-is, matching the existing reversed product. Consider cleaning up the duplicate afterward.",
+                `${existing.length} imported product${existing.length > 1 ? "s are" : " is a"} reversed duplicate${existing.length > 1 ? "s" : ""} of existing product${existing.length > 1 ? "s" : ""}` +
+                ", the imported Part matches an existing product's Model and/or vice-versa. They'll import as-is, matching the existing reversed product. Consider cleaning up the duplicate afterward.",
               confirmLabel: "Import anyway",
               cancelLabel: "Cancel",
               tone: "danger",
@@ -1461,7 +1461,7 @@ export default function PriceListImportClient({
               },
             });
             if (!proceed) {
-              setError("Import cancelled — reversed-duplicate products detected.");
+              setError("Import cancelled - reversed-duplicate products detected.");
               return;
             }
           }
@@ -2277,7 +2277,7 @@ export default function PriceListImportClient({
                                 <div className={styles.previewHeading}>
                                   <span>
                                     {activeSheet.visibleDataRowIndices !== null
-                                      ? `Sample rows — ${activeSheet.visibleRowCount} visible of ${activeSheet.rowCount} total (Excel filter active)`
+                                      ? `Sample rows - ${activeSheet.visibleRowCount} visible of ${activeSheet.rowCount} total (Excel filter active)`
                                       : `Sample rows (first ${displayPreviewRows.length > 0 ? displayPreviewRows.length : 3})`}
                                   </span>
                                   <span className={styles.previewHint}>

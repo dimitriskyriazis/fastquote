@@ -8553,12 +8553,12 @@ const requestedColumnDefsMap = useMemo(
   const withCurrency = (formatted: string) =>
     offerCurrencySymbol === '$' || offerCurrencySymbol === '£' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
   const formatEuroTotal = useCallback((value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '-';
     const formatted = decimalFormatter.format(value);
     return offerCurrencySymbol === '$' || offerCurrencySymbol === '£' ? `${offerCurrencySymbol} ${formatted}` : `${formatted} ${offerCurrencySymbol}`;
   }, [offerCurrencySymbol]);
   const formatPercentTotal = (value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '-';
     return `${decimalFormatter.format(value)} %`;
   };
   const hoursTotalFormatter = useMemo(
@@ -8566,7 +8566,7 @@ const requestedColumnDefsMap = useMemo(
     [],
   );
   const formatHoursTotal = (value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '-';
     return `${hoursTotalFormatter.format(Math.ceil(value))} h`;
   };
   const formatDiscountTotal = (listPrice: number | null | undefined, netPrice: number | null | undefined) => {
@@ -8576,7 +8576,7 @@ const requestedColumnDefsMap = useMemo(
       || !Number.isFinite(listPrice)
       || !Number.isFinite(netPrice)
     ) {
-      return '—';
+      return '-';
     }
     const discount = listPrice - netPrice;
     const percent = Math.abs(listPrice) < 1e-9 ? 0 : (discount / listPrice) * 100;
@@ -8807,11 +8807,11 @@ const requestedColumnDefsMap = useMemo(
         ? achievedOfferNet / totalCostForMargin
         : null;
       const successMessage = opts?.markupTarget != null
-        ? `Total Markup set to ${achievedMarkup != null ? `${floorTo(achievedMarkup, 2)}` : '—'} (target ${opts.markupTarget}) — ${entries.length} items updated`
+        ? `Total Markup set to ${achievedMarkup != null ? `${floorTo(achievedMarkup, 2)}` : '-'} (target ${opts.markupTarget}) - ${entries.length} items updated`
         : opts?.marginTarget != null
-          ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '—'} (target ${opts.marginTarget}%) — ${entries.length} items updated`
+          ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '-'} (target ${opts.marginTarget}%) - ${entries.length} items updated`
           : !requireExact
-            ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) — ${entries.length} items updated`
+            ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) - ${entries.length} items updated`
             : `Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`;
       showToastMessage(successMessage, 'success', 5500, {
         label: 'Undo',
@@ -9028,7 +9028,7 @@ const requestedColumnDefsMap = useMemo(
       try {
         const choice = await showMultiChoiceDialog({
           title: 'Apply markup',
-          message: `Set the offer markup to ${floorTo(parsed, 2)}. Apply it proportionally — rescaling every Net Unit Price so the offer total markup hits the target while keeping the current spread between rows — or apply the same ${floorTo(parsed, 2)} markup to every product row?`,
+          message: `Set the offer markup to ${floorTo(parsed, 2)}. Apply it proportionally, rescaling every Net Unit Price so the offer total markup hits the target while keeping the current spread between rows, or apply the same ${floorTo(parsed, 2)} markup to every product row?`,
           choices: [
             { label: 'Apply proportionally', value: 'proportional' },
             { label: 'Apply to all rows', value: 'all' },
@@ -9958,7 +9958,7 @@ const requestedColumnDefsMap = useMemo(
                       }
                     }}
                   >
-                    {totalMarkupValue != null && Number.isFinite(totalMarkupValue) ? decimalFormatter.format(floorTo(totalMarkupValue, 2)) : '—'}
+                    {totalMarkupValue != null && Number.isFinite(totalMarkupValue) ? decimalFormatter.format(floorTo(totalMarkupValue, 2)) : '-'}
                   </span>
                 )}
               </div>

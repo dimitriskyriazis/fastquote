@@ -1629,11 +1629,11 @@ export default function ClientProductsPage({
                 if (dups.length > 0) {
                   const lines = dups.slice(0, 8).map((g) => {
                     const ids = g.rows.map((r) => r.OfferDetailID).join(', ');
-                    return `• Item No "${g.treeOrdering}" — used by ${g.rows.length} rows (IDs ${ids})`;
+                    return `• Item No "${g.treeOrdering}" - used by ${g.rows.length} rows (IDs ${ids})`;
                   });
                   const more = dups.length > 8 ? `\n…and ${dups.length - 8} more.` : '';
                   showToastMessage(
-                    `Cannot leave manual mode — ${dups.length} duplicate Item No${dups.length === 1 ? '' : 's'} need to be resolved first:\n${lines.join('\n')}${more}`,
+                    `Cannot leave manual mode, ${dups.length} duplicate Item No${dups.length === 1 ? '' : 's'} need to be resolved first:\n${lines.join('\n')}${more}`,
                     'error',
                     12000,
                   );

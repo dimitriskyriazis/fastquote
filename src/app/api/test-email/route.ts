@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   await sendDraftOrderCompletionEmail({
     userId: auth.userId,
     offerId: 99999,
-    offerDescription: 'TEST — Δοκιμαστική προσφορά',
+    offerDescription: 'TEST - Δοκιμαστική προσφορά',
     customerName: 'TEST CUSTOMER Α.Ε.',
     results: {
       brandsCreated: ['TestBrand1', 'TestBrand2'],

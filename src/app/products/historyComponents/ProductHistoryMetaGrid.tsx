@@ -27,9 +27,9 @@ export default function ProductHistoryMetaGrid({ partNumber, modelNumber, descri
   const rowData = useMemo(
     () => [
       {
-        PartNumber: partNumber || '—',
-        ModelNumber: modelNumber || '—',
-        Description: description || '—',
+        PartNumber: partNumber || '-',
+        ModelNumber: modelNumber || '-',
+        Description: description || '-',
       },
     ],
     [partNumber, modelNumber, description],

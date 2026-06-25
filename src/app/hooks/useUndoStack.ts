@@ -90,7 +90,7 @@ export function useUndoStack(maxSize = 20) {
     setStack(next);
     try {
       await last.undo();
-      showToastMessage(`${last.label} — reverted`, 'info');
+      showToastMessage(`${last.label} - reverted`, 'info');
     } catch {
       showToastMessage(`Unable to revert: ${last.label}`, 'error');
     } finally {

@@ -61,7 +61,7 @@ const moneyFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 2, maxi
 const qtyFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
 const formatMoney = (v: number | null | undefined): string =>
-  v == null || !Number.isFinite(v) ? '—' : `${moneyFmt.format(v)} €`;
+  v == null || !Number.isFinite(v) ? '-' : `${moneyFmt.format(v)} €`;
 const formatQty = (v: number): string => qtyFmt.format(v);
 
 type Recipient = {
@@ -127,10 +127,10 @@ function renderEmail(
   results: DraftOrderCompletionResults,
 ): { subject: string; html: string; text: string } {
   const greeting = 'Γεια σας,';
-  const orderCode = results.order?.finCode ?? '—';
-  const projectCode = results.project?.code ?? '—';
-  const customerLabel = customerName?.trim() || '—';
-  const projectDescription = offerDescription?.trim() || '—';
+  const orderCode = results.order?.finCode ?? '-';
+  const projectCode = results.project?.code ?? '-';
+  const customerLabel = customerName?.trim() || '-';
+  const projectDescription = offerDescription?.trim() || '-';
   const projectCodeLabel = results.project?.isNew ? 'Κωδικός νέου έργου:' : 'Κωδικός έργου:';
 
   const pl = (count: number, singular: string, plural: string) => (count === 1 ? singular : plural);
@@ -176,14 +176,14 @@ function renderEmail(
     actions.push(`Δημιουργία προπαραγγελίας: ${results.order.finCode}`);
   }
 
-  const subject = `${hasDropped ? '⚠ ' : ''}FastQuote — Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}${hasDropped ? ` — ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή ΔΕΝ καταχωρήθηκε', 'γραμμές ΔΕΝ καταχωρήθηκαν')}` : ''}`;
+  const subject = `${hasDropped ? '⚠ ' : ''}FastQuote - Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}${hasDropped ? ` - ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή ΔΕΝ καταχωρήθηκε', 'γραμμές ΔΕΝ καταχωρήθηκαν')}` : ''}`;
 
   const actionsHtml = actions.length > 0
     ? `<ul>${actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>`
     : '<p><em>Καμία ενέργεια δεν καταγράφηκε.</em></p>';
 
   const formatCatLine = (p: { categoryName: string | null; subCategoryName: string | null; typeName: string | null }) =>
-    [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ') || '—';
+    [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ') || '-';
 
   const newProductsCats = (results.newProductsCategorization ?? []).filter(
     p => p.categoryName || p.subCategoryName || p.typeName,
@@ -239,16 +239,16 @@ function renderEmail(
               return `<tr>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${pos}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.code)}</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.brandName ?? '—')}</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '—')}</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.description ?? '—')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.brandName ?? '-')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '-')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.description ?? '-')}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatQty(l.qty)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.cost)}</td>
                 <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${formatMoney(l.costTotal)}</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${l.warrantyMonths != null ? l.warrantyMonths : '—'}</td>
-                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.comment ?? '—')}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px; text-align: right;">${l.warrantyMonths != null ? l.warrantyMonths : '-'}</td>
+                <td style="border: 1px solid #e5e7eb; padding: 6px 8px;">${escapeHtml(l.comment ?? '-')}</td>
               </tr>`;
             })
             .join('')}
@@ -270,7 +270,7 @@ function renderEmail(
     ? `
       <div style="border: 2px solid #dc2626; background: #fef2f2; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
         <p style="margin: 0 0 8px; color: #b91c1c; font-weight: 700;">⚠ Προσοχή: ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1</p>
-        <p style="margin: 0 0 10px; color: #7f1d1d;">Οι παρακάτω γραμμές στάλθηκαν αλλά δεν εμφανίζονται στην προπαραγγελία ${escapeHtml(orderCode)} — πιθανή αιτία: ο κωδικός είδους περιέχει «&». Πρέπει να καταχωρηθούν χειροκίνητα.</p>
+        <p style="margin: 0 0 10px; color: #7f1d1d;">Οι παρακάτω γραμμές στάλθηκαν αλλά δεν εμφανίζονται στην προπαραγγελία ${escapeHtml(orderCode)}, πιθανή αιτία: ο κωδικός είδους περιέχει «&». Πρέπει να καταχωρηθούν χειροκίνητα.</p>
         <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 900px;">
           <thead>
             <tr style="background: #fee2e2;">
@@ -291,9 +291,9 @@ function renderEmail(
                 return `<tr>
                   <td style="border: 1px solid #fecaca; padding: 6px 8px;">${pos}</td>
                   <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.code)}</td>
-                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.brandName ?? '—')}</td>
-                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '—')}</td>
-                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.description ?? '—')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.brandName ?? '-')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.partNumber ?? '-')}</td>
+                  <td style="border: 1px solid #fecaca; padding: 6px 8px;">${escapeHtml(l.description ?? '-')}</td>
                   <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatQty(l.qty)}</td>
                   <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatMoney(l.price)}</td>
                   <td style="border: 1px solid #fecaca; padding: 6px 8px; text-align: right;">${formatMoney(l.lineval)}</td>
@@ -345,10 +345,10 @@ function renderEmail(
     '',
     ...(hasDropped
       ? [
-          `⚠ ΠΡΟΣΟΧΗ — ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1 (πιθανή αιτία: ο κωδικός περιέχει «&»). Καταχωρήστε τες χειροκίνητα:`,
+          `⚠ ΠΡΟΣΟΧΗ - ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1 (πιθανή αιτία: ο κωδικός περιέχει «&»). Καταχωρήστε τες χειροκίνητα:`,
           ...droppedLines.map((l, idx) => {
             const pos = l.position != null ? l.position : idx + 1;
-            return `  ${pos}. ${l.code} — ${l.brandName ?? '—'} | ${l.partNumber ?? '—'} | ${l.description ?? '—'} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)}`;
+            return `  ${pos}. ${l.code} - ${l.brandName ?? '-'} | ${l.partNumber ?? '-'} | ${l.description ?? '-'} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)}`;
           }),
           `  Σύνολο αξίας που λείπει: ${formatMoney(droppedTotal)}`,
           '',
@@ -373,14 +373,14 @@ function renderEmail(
           'Γραμμές προπαραγγελίας:',
           ...orderLines.map((l, idx) => {
             const pos = l.position != null ? l.position : idx + 1;
-            const cost = l.cost != null ? formatMoney(l.cost) : '—';
-            const costTotal = l.costTotal != null ? formatMoney(l.costTotal) : '—';
-            const warranty = l.warrantyMonths != null ? `${l.warrantyMonths}m` : '—';
-            const desc = l.description ?? '—';
-            const brand = l.brandName ?? '—';
-            const part = l.partNumber ?? '—';
-            const comment = l.comment != null && l.comment.trim() !== '' ? l.comment : '—';
-            return `${pos}. ${l.code} — ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | costTotal ${costTotal} | warranty ${warranty} | comment ${comment}`;
+            const cost = l.cost != null ? formatMoney(l.cost) : '-';
+            const costTotal = l.costTotal != null ? formatMoney(l.costTotal) : '-';
+            const warranty = l.warrantyMonths != null ? `${l.warrantyMonths}m` : '-';
+            const desc = l.description ?? '-';
+            const brand = l.brandName ?? '-';
+            const part = l.partNumber ?? '-';
+            const comment = l.comment != null && l.comment.trim() !== '' ? l.comment : '-';
+            return `${pos}. ${l.code} - ${brand} | ${part} | ${desc} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)} | cost ${cost} | costTotal ${costTotal} | warranty ${warranty} | comment ${comment}`;
           }),
           `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
           `Σύνολο κόστους: ${formatMoney(orderLinesCostTotal)}`,

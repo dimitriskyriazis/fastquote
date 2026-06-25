@@ -92,7 +92,7 @@ const numberValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>)
   return String(num);
 };
 const formatPercentTotal = (value: number | null | undefined) => {
-  if (value == null || !Number.isFinite(value)) return '—';
+  if (value == null || !Number.isFinite(value)) return '-';
   return `${percentFormatter.format(value)} %`;
 };
 const formatHoursTotal = (value: number | null | undefined) => {
@@ -202,7 +202,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   }, []);
 
   const formatMoneyTotal = useCallback((value: number | null | undefined) => {
-    if (value == null || !Number.isFinite(value)) return '—';
+    if (value == null || !Number.isFinite(value)) return '-';
     return placeCurrencySymbol(currencyFormatter.format(value), currencySymbol);
   }, [currencySymbol]);
 

@@ -93,7 +93,7 @@ export default function DetachedAddProductsClient({ offerId }: Props) {
 
   useEffect(() => {
     const previousTitle = document.title;
-    document.title = `Add Products — Offer ${offerId}`;
+    document.title = `Add Products - Offer ${offerId}`;
     return () => {
       document.title = previousTitle;
     };

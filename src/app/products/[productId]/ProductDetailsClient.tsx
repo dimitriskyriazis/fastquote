@@ -287,7 +287,7 @@ export default function ProductDetailsClient({
           autoComplete="off"
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
           value={value}
-          placeholder="—"
+          placeholder="-"
           onChange={(e) => handleValueChange(def.id, e.target.value)}
           onBlur={() => handleBlur(def)}
         />
@@ -300,7 +300,7 @@ export default function ProductDetailsClient({
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
         type={def.inputType ?? 'text'}
         value={value}
-        placeholder="—"
+        placeholder="-"
         onChange={(e) => handleValueChange(def.id, e.target.value)}
         onBlur={() => handleBlur(def)}
       />

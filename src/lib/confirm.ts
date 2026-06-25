@@ -138,7 +138,7 @@ export const showEnhancePreviewDialog = async (
           `padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;` +
           `word-break:break-word;white-space:pre-wrap;line-height:1.4;` +
           (muted ? 'color:#9ca3af;font-style:italic;' : '');
-        td.textContent = text ?? '—';
+        td.textContent = text ?? '-';
         return td;
       };
 
@@ -178,7 +178,7 @@ export const showEnhancePreviewDialog = async (
       tr.appendChild(makeCell(partText, !partText));
 
       if (row.skipped) {
-        const skipCell = makeCell('(skipped — no data)', true);
+        const skipCell = makeCell('(skipped - no data)', true);
         skipCell.colSpan = 2;
         tr.appendChild(skipCell);
         tr.style.opacity = '0.5';

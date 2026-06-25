@@ -941,15 +941,15 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           return (
             <tr key={p.productId}>
               <td>{productLabel(p.partNumber, p.modelNumber, p.productId)}</td>
-              <td>{p.brandName ?? '—'}</td>
-              <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '—'}</td>
+              <td>{p.brandName ?? '-'}</td>
+              <td>{[p.modelNumber, p.description].filter(Boolean).join(' - ') || '-'}</td>
               <td>
                 <select
                   className={styles.select}
                   value={p.categoryId ?? ''}
                   onChange={e => handleCategoryChange(p.productId, 'categoryId', e.target.value ? Number(e.target.value) : null)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {categoryLookups.map(c => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
@@ -961,7 +961,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                   value={p.subCategoryId ?? ''}
                   onChange={e => handleCategoryChange(p.productId, 'subCategoryId', e.target.value ? Number(e.target.value) : null)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {filteredSubCategories.map(sc => (
                     <option key={sc.id} value={sc.id}>{sc.name}</option>
                   ))}
@@ -973,7 +973,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                   value={p.typeId ?? ''}
                   onChange={e => handleCategoryChange(p.productId, 'typeId', e.target.value ? Number(e.target.value) : null)}
                 >
-                  <option value="">—</option>
+                  <option value="">-</option>
                   {typeLookups.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
@@ -1069,7 +1069,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                   <div key={nm.fastquoteName} style={{ borderBottom: '1px solid #fde68a', paddingBottom: '10px' }}>
                     <div style={{ fontSize: '0.85rem', marginBottom: '6px' }}>
                       <span style={{ fontWeight: 700, color: '#0f172a' }}>{nm.fastquoteName}</span>
-                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}> — select a match from Soft1</span>
+                      <span style={{ color: '#64748b', fontSize: '0.75rem' }}> - select a match from Soft1</span>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                       {nm.matches.map(m => {
@@ -1158,9 +1158,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 {autoMatched.map(m => (
                   <tr key={m.productId}>
                     <td>{productLabel(m.partNumber, m.modelNumber, m.productId)}</td>
-                    <td>{m.brandName ?? '—'}</td>
-                    <td>{[m.modelNumber, m.description].filter(Boolean).join(' - ') || '—'}</td>
-                    <td>{m.CODE ?? '—'}</td>
+                    <td>{m.brandName ?? '-'}</td>
+                    <td>{[m.modelNumber, m.description].filter(Boolean).join(' - ') || '-'}</td>
+                    <td>{m.CODE ?? '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1305,11 +1305,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 <tbody>
                   {noMatches.map(ns => {
                     const label = productLabel(ns.partNumberActual, ns.modelNumberActual, ns.productId);
-                    const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ') || '—';
+                    const desc = [ns.modelNumberActual, ns.description].filter(Boolean).join(' - ') || '-';
                     return (
                       <tr key={ns.productId}>
                         <td>{label}</td>
-                        <td>{ns.brandName ?? '—'}</td>
+                        <td>{ns.brandName ?? '-'}</td>
                         <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '500px' }} title={desc}>{desc}</td>
                         <td>
                           <button
@@ -1384,10 +1384,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
 
     return (
       <>
-        <p className={styles.sectionTitle}>FastQuote ↔ Soft1 — review and set line comments</p>
+        <p className={styles.sectionTitle}>FastQuote ↔ Soft1 - review and set line comments</p>
         <div className={styles.compareHint}>
           The Soft1 columns are the real item (MTRL) values. Edit the yellow <strong>Comment</strong> to
-          set the comment on each Soft1 order line — blank means no comment. This does <strong>not</strong> change
+          set the comment on each Soft1 order line, blank means no comment. This does <strong>not</strong> change
           the FastQuote offer comment.
         </div>
         <div className={styles.compareScroll}>
@@ -1415,10 +1415,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             <tbody>
               {compareRows.map(row => (
                 <tr key={row.lineId}>
-                  <td>{row.fq.brand ?? '—'}</td>
-                  <td>{row.fq.partNo ?? '—'}</td>
-                  <td>{row.fq.model ?? '—'}</td>
-                  <td className={styles.compareWrap} title={row.fq.description ?? ''}>{row.fq.description ?? '—'}</td>
+                  <td>{row.fq.brand ?? '-'}</td>
+                  <td>{row.fq.partNo ?? '-'}</td>
+                  <td>{row.fq.model ?? '-'}</td>
+                  <td className={styles.compareWrap} title={row.fq.description ?? ''}>{row.fq.description ?? '-'}</td>
                   <td className={styles.compareWrap} title={row.fq.comment ?? ''}>{row.fq.comment ?? ''}</td>
                   <td className={styles.compareDivider}>{row.s1.position ?? ''}</td>
                   <td>
@@ -1426,10 +1426,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                       {row.s1.linked ? 'Linked' : 'New'}
                     </span>
                   </td>
-                  <td>{row.s1.code ?? '—'}</td>
-                  <td>{row.s1.brand ?? '—'}</td>
-                  <td>{row.s1.partNo ?? '—'}</td>
-                  <td className={styles.compareWrap} title={row.s1.description ?? ''}>{row.s1.description ?? '—'}</td>
+                  <td>{row.s1.code ?? '-'}</td>
+                  <td>{row.s1.brand ?? '-'}</td>
+                  <td>{row.s1.partNo ?? '-'}</td>
+                  <td className={styles.compareWrap} title={row.s1.description ?? ''}>{row.s1.description ?? '-'}</td>
                   <td>
                     <input
                       type="text"
@@ -1470,7 +1470,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const formatAssignment = (p: CategorizedProduct) => {
       const label = p.modelNumber || p.partNumber || p.description || `#${p.productId}`;
       const parts = [p.categoryName, p.subCategoryName, p.typeName].filter(Boolean).join(' › ');
-      return { label, parts: parts || '—' };
+      return { label, parts: parts || '-' };
     };
 
     return (
@@ -1568,7 +1568,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <tr key={`${line.productId}-${idx}`}>
                 <td>{idx + 1}</td>
                 <td>{line.position ?? ''}</td>
-                <td>{line.productCode !== '(new)' ? `${line.productCode} — ` : ''}{line.productName}</td>
+                <td>{line.productCode !== '(new)' ? `${line.productCode} - ` : ''}{line.productName}</td>
                 <td className={styles.tableRight}>{line.qty}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.price)}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.lineTotal)}</td>
@@ -1751,7 +1751,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               return !p || !p.description || !p.brandName || !p.subCategoryId || !p.typeId;
             });
             if (incomplete.length > 0) {
-              return `${incomplete.length} product${incomplete.length > 1 ? 's are' : ' is'} missing SubCategory or Type — fill in all fields before continuing`;
+              return `${incomplete.length} product${incomplete.length > 1 ? 's are' : ' is'} missing SubCategory or Type, fill in all fields before continuing`;
             }
           }
           return undefined;
@@ -1910,7 +1910,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                       {manualSearchLoading ? 'Searching...' : 'Search Soft1'}
                     </button>
                     <span className={styles.manualHint}>
-                      Smart match — dashes, spaces, dots, slashes and case are ignored.
+                      Smart match - dashes, spaces, dots, slashes and case are ignored.
                     </span>
                     <span className={styles.manualHintRight}>Press Enter in any field to search</span>
                   </div>
@@ -1925,7 +1925,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 ) : manualSearchResults.length === 0 ? (
                   <div className={styles.manualResultsEmpty}>
                     {manualSearchTouched
-                      ? 'No results — try a different value or shorten the input.'
+                      ? 'No results - try a different value or shorten the input.'
                       : 'Enter a Part/Model number or a Description and press Search.'}
                   </div>
                 ) : (
@@ -1947,10 +1947,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                             className={`${styles.manualResultRow} ${selected ? styles.manualResultRowSelected : ''}`}
                             onClick={() => setManualSearchSelectedMtrl(r.MTRL)}
                           >
-                            <td>{r.BRANDNAME ?? '—'}</td>
-                            <td>{r.CODE2 ?? '—'}</td>
-                            <td>{r.CODE ?? '—'}</td>
-                            <td title={r.NAME1 ?? ''}>{r.NAME1 ?? '—'}</td>
+                            <td>{r.BRANDNAME ?? '-'}</td>
+                            <td>{r.CODE2 ?? '-'}</td>
+                            <td>{r.CODE ?? '-'}</td>
+                            <td title={r.NAME1 ?? ''}>{r.NAME1 ?? '-'}</td>
                           </tr>
                         );
                       })}

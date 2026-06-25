@@ -235,7 +235,7 @@ export default function BrandDetailsClient({ brandId, record }: Props) {
           autoComplete="off"
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''}`}
           value={value}
-          placeholder="—"
+          placeholder="-"
           onChange={(e) => handleValueChange(def.id, e.target.value)}
           onBlur={() => handleBlur(def)}
         />
@@ -248,7 +248,7 @@ export default function BrandDetailsClient({ brandId, record }: Props) {
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''}`}
         type="text"
         value={value}
-        placeholder="—"
+        placeholder="-"
         onChange={(e) => handleValueChange(def.id, e.target.value)}
         onBlur={() => handleBlur(def)}
       />

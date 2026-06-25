@@ -657,7 +657,7 @@ export default function CustomerBasicDataClient({
 
     const pending = pendingFields[def.id];
     const value = values[def.id] ?? '';
-    const placeholder = value === '' ? '—' : undefined;
+    const placeholder = value === '' ? '-' : undefined;
 
     const fieldOptions = def.options ?? [];
     const shouldRenderSelect = fieldOptions.length > 0;

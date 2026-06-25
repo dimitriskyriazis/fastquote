@@ -911,7 +911,7 @@ export default function PriceListCleanupClient() {
 
                 {showNoDiscountWarning ? (
                   <div className={styles.warningNote}>
-                    No discount column mapped — Cost will equal List Price. Map a per-row discount
+                    No discount column mapped, Cost will equal List Price. Map a per-row discount
                     column above.
                   </div>
                 ) : null}
@@ -932,7 +932,7 @@ export default function PriceListCleanupClient() {
                   <option value="auto">Auto-detect</option>
                   {PRICE_LIST_DECIMAL_FORMAT_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
-                      {opt.label} — {opt.description}
+                      {opt.label} - {opt.description}
                     </option>
                   ))}
                 </select>
@@ -1009,10 +1009,10 @@ export default function PriceListCleanupClient() {
             <div className={styles.intro}>
               Rewrites the Description column to the Telmaco house style (uses web search for extra
               specs). Very similar products (the same line in different colours/sizes) are rewritten
-              together so their descriptions stay consistent. Nothing is saved — only your downloaded
+              together so their descriptions stay consistent. Nothing is saved, only your downloaded
               file changes.
               {enabledReadySheets.length > 1
-                ? " Only the selected sheet's descriptions are processed — switch tabs to run it on another sheet."
+                ? " Only the selected sheet's descriptions are processed, switch tabs to run it on another sheet."
                 : ""}
               {Object.keys(aiByPartNumber).length > 0 && !aiRunning ? (
                 <>
@@ -1072,7 +1072,7 @@ export default function PriceListCleanupClient() {
               <div className={styles.previewHeading}>
                 <span>
                   Cleaned preview (first product rows)
-                  {multiSheet ? ` — ${activeSheet?.name ?? "active sheet"}` : ""}
+                  {multiSheet ? ` - ${activeSheet?.name ?? "active sheet"}` : ""}
                 </span>
                 <span className={styles.previewHint}>
                   Normalized output columns{includeCost ? "; the Cost Price column is bold" : ""}.

@@ -72,7 +72,7 @@ export default function DashboardStats() {
 
   const winRateDisplay = stats.winRate != null
     ? `${Math.round(stats.winRate * 100)}%`
-    : '—';
+    : '-';
 
   const totalOffers = Object.values(stats.offersByStatus).reduce((sum, c) => sum + c, 0);
   const statusEntries = Object.entries(stats.offersByStatus)

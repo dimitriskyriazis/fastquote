@@ -32,8 +32,7 @@ export async function middleware(request: NextRequest) {
     pathname === '/api/sso' ||
     pathname === '/api/me' ||
     pathname === '/api/whoami' ||
-    pathname === '/api/health' ||
-    pathname === '/api/debug-windows-user';
+    pathname === '/api/health';
   const allowUnauthedPage =
     pathname === '/' ||
     pathname === '/favicon.ico' ||

@@ -231,7 +231,7 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
   return (
     <LookupModal
       open
-      title={`Contact Group Lists — ${contactName}`}
+      title={`Contact Group Lists - ${contactName}`}
       onClose={onClose}
       onConfirm={onClose}
       confirmLabel="Close"

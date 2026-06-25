@@ -159,7 +159,7 @@ async function fetchPreviousPriceLists(): Promise<PreviousPriceListOption[]> {
         const from = formatDate(row.ValidFromDate);
         const to = formatDate(row.ValidToDate);
         const brand = row.BrandName?.trim();
-        const dates = from || to ? `(${from || "—"} → ${to || "—"})` : "";
+        const dates = from || to ? `(${from || "-"} → ${to || "-"})` : "";
         const enabledLabel =
           row.Enabled === false || row.Enabled === 0 ? " • disabled" : "";
         const brandLabel = brand ? ` • ${brand}` : "";

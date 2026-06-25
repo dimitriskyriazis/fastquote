@@ -924,7 +924,7 @@ export default function PriceListBasicDataClient({
 
     const pending = pendingFields[def.id];
     const value = values[def.id] ?? '';
-    const placeholder = value === '' ? '—' : undefined;
+    const placeholder = value === '' ? '-' : undefined;
 
     if (def.comboBox && def.datalistOptions && def.datalistOptions.length > 0) {
       const search = value.trim();
@@ -1272,7 +1272,7 @@ export default function PriceListBasicDataClient({
               {rulesForPicker.map((rule) => {
                 const isSelected = rulePickerSelection.has(rule.id);
                 const policyLabel =
-                  rule.pricingPolicyName ?? pricingPolicyNameById.get(Number(rule.pricingPolicyId)) ?? '—';
+                  rule.pricingPolicyName ?? pricingPolicyNameById.get(Number(rule.pricingPolicyId)) ?? '-';
                 const canEdit = rule.brandId != null && rule.pricingPolicyId != null;
                 const draft = discountDrafts[rule.id];
                 return (

@@ -976,7 +976,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                   </button>
                 </div>
                 <div className={styles.helpText}>
-                  <strong>{activeSheet.name || 'Sheet'}</strong> — Select the corresponding column for each field.{activeSheet.includeHeaderRow ? ' Suggested matches appear at the top.' : ''}
+                  <strong>{activeSheet.name || 'Sheet'}</strong> - Select the corresponding column for each field.{activeSheet.includeHeaderRow ? ' Suggested matches appear at the top.' : ''}
                 </div>
                 <div className={styles.mappingGrid}>
                   {COLUMN_DISPLAY.map((column) => {
@@ -1074,7 +1074,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                         onKeyDown={(e) => { if (e.key === 'Enter') addManualRow(); }}
                       />
                       {itemNoExists ? (
-                        <span className={styles.manualEntryWarning}>Item {itemNoValue} already exists — use a different number</span>
+                        <span className={styles.manualEntryWarning}>Item {itemNoValue} already exists - use a different number</span>
                       ) : null}
                     </label>
                   );
@@ -1094,7 +1094,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
                   {manualRows.map((row, idx) => {
                     const summary = [row.brand, row.modelNumber, row.partNumber, row.description]
                       .filter(Boolean)
-                      .join(' — ');
+                      .join(' - ');
                     return (
                       <div key={idx} className={styles.manualRowItem}>
                         <span className={styles.manualRowIndex}>{idx + 1}</span>

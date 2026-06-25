@@ -1282,7 +1282,7 @@ export default function OfferBasicDataClient({
   const readOnlyDisplayValue = typeof def.readOnlyDisplayValue === 'function'
     ? def.readOnlyDisplayValue(record)
     : null;
-  const placeholder = !isEditable ? undefined : (value == null || value === '' ? (def.placeholder ?? '—') : undefined);
+  const placeholder = !isEditable ? undefined : (value == null || value === '' ? (def.placeholder ?? '-') : undefined);
   const pending = pendingMap[def.id] || (def.id === 'contactId' && isRefreshingContacts);
 
   if (!isEditable) {
@@ -1292,7 +1292,7 @@ export default function OfferBasicDataClient({
       const displayValue =
         matchingOption?.label ??
         readOnlyDisplayValue ??
-        (readonlyValue ? formatDisplayValue(readonlyValue) : '—');
+        (readonlyValue ? formatDisplayValue(readonlyValue) : '-');
       return (
         <div className={styles.fieldReadonly} id={controlId}>
           {displayValue}

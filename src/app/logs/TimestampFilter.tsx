@@ -48,7 +48,7 @@ function getModelAsString(model: unknown): string {
   const from = formatShort(m.dateFrom || "");
   if (m.type === "inRange") {
     const to = formatShort(m.dateTo || "");
-    return `${from} — ${to}`;
+    return `${from} - ${to}`;
   }
   return `${label} ${from}`;
 }
