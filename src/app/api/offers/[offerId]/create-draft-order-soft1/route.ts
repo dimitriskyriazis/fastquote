@@ -1880,7 +1880,12 @@ async function handleExecute(
     droppedLines: [],
   };
 
-  // 1. Create missing brands
+  // 1. Create missing brands. Capture each brand's MTRMANFCTR id (freshly
+  // created OR found on an idempotent retry) so step 2 can resolve the
+  // manufacturer by id instead of re-matching it by name. A just-created brand
+  // has no entry in brandResolutions, so without this its item would fall back
+  // to a fragile by-name lookup against the row we just inserted.
+  const createdBrandMtrmanfctr = new Map<string, number>();
   for (const brandName of missingBrands) {
     // Idempotency: check if brand was already created. Ambiguous (53101)
     // means it exists multiple times — don't create another.
@@ -1888,6 +1893,9 @@ async function handleExecute(
     try {
       const existing = await findBrandInErp(erpPool, brandName);
       alreadyExists = existing.found > 0 && existing.brandId != null;
+      if (alreadyExists && existing.brandId != null) {
+        createdBrandMtrmanfctr.set(brandName.trim(), existing.brandId);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes('ambiguous')) throw err;
@@ -1895,6 +1903,7 @@ async function handleExecute(
     }
     if (!alreadyExists) {
       const created = await createManufacturerInErp(erpPool, brandName, ctx.businessUnit);
+      createdBrandMtrmanfctr.set(brandName.trim(), created.mtrmanfctrId);
       logger.info('wizard execute brand created', { requestId, offerId, brandName, businessUnit: ctx.businessUnit, mtrmanfctrId: created.mtrmanfctrId });
     }
     results.brandsCreated.push(brandName);
@@ -1964,7 +1973,7 @@ async function handleExecute(
           partNumber: product.PartNumber,
           brandId: product.BrandID,
           brandName: resolveBrandName(product.BrandName!),
-          mtrmanfctr: resolveBrandMtrmanfctr(product.BrandName!),
+          mtrmanfctr: resolveBrandMtrmanfctr(product.BrandName!) ?? createdBrandMtrmanfctr.get(product.BrandName!.trim()) ?? null,
           categoryId: product.CategoryID!,
           subCategoryId: product.SubCategoryID,
           typeId: product.TypeID,
@@ -2668,7 +2677,10 @@ export async function POST(
     // Wait for all category updates to complete before continuing
     await Promise.all(categoryUpdatePromises);
 
-    // Check if any brands need to be created in ERP
+    // Check if any brands need to be created in ERP. Capture each brand's
+    // MTRMANFCTR id (created or already-existing) so item creation below can
+    // resolve the manufacturer by id rather than re-matching it by name.
+    const createdBrandMtrmanfctr = new Map<string, number>();
     const brandCreationConfirmed = body?.brandCreationConfirmed ?? false;
     const uniqueBrandNames = [...new Set(
       products
@@ -2683,6 +2695,8 @@ export async function POST(
           const existing = await findBrandInErp(erpPool, brandName);
           if (existing.found === 0 || existing.brandId == null) {
             missingBrands.push(brandName);
+          } else {
+            createdBrandMtrmanfctr.set(brandName.trim(), existing.brandId);
           }
         } catch (err) {
           // Ambiguous (53101) means brand exists with duplicates — not missing.
@@ -2708,6 +2722,7 @@ export async function POST(
         for (const brandName of missingBrands) {
           try {
             const created = await createManufacturerInErp(erpPool, brandName, businessUnit);
+            createdBrandMtrmanfctr.set(brandName.trim(), created.mtrmanfctrId);
             logger.info('create-draft-order-soft1 brand created in ERP', {
               requestId,
               offerId: normalizedId,
@@ -2853,6 +2868,7 @@ export async function POST(
                   partNumber: product.PartNumber,
                   brandId: product.BrandID,
                   brandName: product.BrandName!,
+                  mtrmanfctr: createdBrandMtrmanfctr.get(product.BrandName!.trim()) ?? null,
                   categoryId: product.CategoryID!,
                   subCategoryId: product.SubCategoryID,
                   typeId: product.TypeID,
@@ -3331,6 +3347,7 @@ export async function POST(
               partNumber: product.PartNumber,
               brandId: product.BrandID,
               brandName: product.BrandName!,
+              mtrmanfctr: createdBrandMtrmanfctr.get(product.BrandName!.trim()) ?? null,
               categoryId: product.CategoryID!,
               subCategoryId: product.SubCategoryID,
               typeId: product.TypeID,
