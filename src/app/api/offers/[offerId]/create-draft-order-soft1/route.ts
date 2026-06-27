@@ -421,6 +421,7 @@ async function fetchOfferProducts(
     Description: string | null;
     BrandName: string | null;
     BrandID: number | null;
+    BrandSoftOneID: number | null;
     CategoryID: number | null;
     SubCategoryID: number | null;
     TypeID: number | null;
@@ -436,6 +437,7 @@ async function fetchOfferProducts(
       p.Description,
       b.Name AS BrandName,
       p.BrandID,
+      b.SoftOneID AS BrandSoftOneID,
       p.CategoryID,
       p.SubCategoryID,
       p.TypeID,
@@ -1077,6 +1079,10 @@ async function handleCheckBrands(
   const missingBrands: string[] = [];
   const existingBrands: string[] = [];
   const nearMatchBrands: Array<{ fastquoteName: string; matches: Array<{ erpName: string; MTRMANFCTR: number }> }> = [];
+  // Brands resolved by their explicit FastQuote SoftOneID → Soft1 MTRMANFCTR
+  // mapping (see step 0 below). Carries the MTRMANFCTR so item creation uses the
+  // exact manufacturer instead of re-matching by name.
+  const autoMatchedBrands: Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }> = [];
 
   // Active company-1 brands, loaded once and reused for JS-side fuzzy ranking
   // below (same ISACTIVE/COMPANY filter as the exact-name match). The table is
@@ -1092,7 +1098,58 @@ async function handleCheckBrands(
     return { MTRMANFCTR: r.MTRMANFCTR, name, key: cleanBrandKey(name), tokens: brandTokens(name) };
   });
 
+  // Highest-priority resolution data: a FastQuote Brand whose SoftOneID points
+  // directly at a Soft1 manufacturer (MTRMANFCTR) in COMPANY 1. This explicit
+  // mapping is authoritative — it beats name/fuzzy matching and resolves brands
+  // whose names differ from, or are duplicated in, Soft1. Build brandName →
+  // SoftOneID from the offer's products; a name carrying conflicting ids across
+  // products is treated as unmapped (null) and falls through to name matching.
+  const softOneIdByBrand = new Map<string, number | null>();
+  for (const p of products) {
+    if (!p.BrandName || !p.BrandID) continue;
+    const key = p.BrandName.trim();
+    const id = p.BrandSoftOneID ?? null;
+    if (!softOneIdByBrand.has(key)) softOneIdByBrand.set(key, id);
+    else if (softOneIdByBrand.get(key) !== id) softOneIdByBrand.set(key, null);
+  }
+  // Keep only the SoftOneIDs that actually exist in MTRMANFCTR as an active
+  // (ISACTIVE = 1) COMPANY-1 manufacturer, resolving each to its ERP name (one
+  // round-trip for all of them). The ISACTIVE filter matches every other
+  // brand-match path here, so a SoftOneID pointing at a deactivated manufacturer
+  // falls through to name/fuzzy matching instead of silently auto-matching.
+  const wantedSoftOneIds = [...new Set(
+    [...softOneIdByBrand.values()].filter((v): v is number => v != null),
+  )];
+  const softOneIdToErpName = new Map<number, string>();
+  if (wantedSoftOneIds.length > 0) {
+    const idReq = erpPool.request();
+    const idPlaceholders = wantedSoftOneIds.map((id, i) => {
+      idReq.input(`soi${i}`, sql.Int, id);
+      return `@soi${i}`;
+    });
+    const idRes = await idReq.query<{ MTRMANFCTR: number; NAME: string | null }>(`
+      SELECT MTRMANFCTR, NAME FROM dbo.MTRMANFCTR
+      WHERE COMPANY = 1 AND ISACTIVE = 1 AND MTRMANFCTR IN (${idPlaceholders.join(', ')})
+    `);
+    for (const r of idRes.recordset ?? []) {
+      softOneIdToErpName.set(r.MTRMANFCTR, (r.NAME ?? '').trim());
+    }
+  }
+
   for (const brandName of uniqueBrandNames) {
+    // 0. Explicit SoftOneID → active MTRMANFCTR (COMPANY 1) match. Highest
+    // priority: auto-matched without user input, carrying the exact MTRMANFCTR forward.
+    const mappedSoftOneId = softOneIdByBrand.get(brandName) ?? null;
+    if (mappedSoftOneId != null && softOneIdToErpName.has(mappedSoftOneId)) {
+      existingBrands.push(brandName);
+      autoMatchedBrands.push({
+        fastquoteName: brandName,
+        erpName: softOneIdToErpName.get(mappedSoftOneId) || brandName,
+        MTRMANFCTR: mappedSoftOneId,
+      });
+      continue;
+    }
+
     // 1. Try exact match via tlm._mtrlFindBrand. Proc throws 53101 on
     // ambiguous matches — treat that like "needs user resolution" and fall
     // through to the fuzzy block, which surfaces candidates in the wizard.
@@ -1164,9 +1221,10 @@ async function handleCheckBrands(
   logger.info('wizard check-brands done', {
     requestId, offerId,
     existing: existingBrands.length, nearMatch: nearMatchBrands.length, missing: missingBrands.length,
+    autoMatchedById: autoMatchedBrands.length,
   });
 
-  return NextResponse.json({ ok: true, step: 'check-brands', missingBrands, existingBrands, nearMatchBrands });
+  return NextResponse.json({ ok: true, step: 'check-brands', missingBrands, existingBrands, nearMatchBrands, autoMatchedBrands });
 }
 
 async function handleMatchProducts(
@@ -1570,8 +1628,7 @@ async function handleCompareProducts(
 
   const eligibleLines = (linesRes.recordset ?? [])
     .filter(l => l.ProductID != null && resolvedProductIds.has(l.ProductID)
-      && l.Quantity != null && l.Quantity > 0
-      && l.NetUnitPrice != null && l.NetUnitPrice >= 0)
+      && l.Quantity != null && l.Quantity > 0)
     .sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
 
   // Read the actual SoftOne item-master (MTRL) values for every matched MTRL:
@@ -1744,7 +1801,7 @@ async function handlePrepareSummary(
   }
 
   const eligibleLines = allLines.filter(
-    line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0 && line.NetUnitPrice != null && line.NetUnitPrice >= 0,
+    line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0,
   );
 
   // Pull actual Soft1 MTRL.NAME for already-linked products so the wizard
@@ -2050,7 +2107,7 @@ async function handleExecute(
 
     const lines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
     const eligibleLines = lines.filter(
-      l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0 && l.NetUnitPrice != null && l.NetUnitPrice >= 0,
+      l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0,
     );
     const orderLines: OrderLineForCreation[] = eligibleLines.map(l => ({
       erpId: l.ERPID!,
@@ -3200,9 +3257,7 @@ export async function POST(
                 line.ERPID != null &&
                 line.ERPCode != null &&
                 line.Quantity != null &&
-                line.Quantity > 0 &&
-                line.NetUnitPrice != null &&
-                line.NetUnitPrice >= 0,
+                line.Quantity > 0,
             )
             .map((line) => ({
               erpId: line.ERPID!,
@@ -3673,9 +3728,7 @@ export async function POST(
               line.ERPID != null &&
               line.ERPCode != null &&
               line.Quantity != null &&
-              line.Quantity > 0 &&
-              line.NetUnitPrice != null &&
-              line.NetUnitPrice >= 0,
+              line.Quantity > 0,
           )
           .map((line) => ({
             erpId: line.ERPID!,

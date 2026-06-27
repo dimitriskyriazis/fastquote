@@ -427,6 +427,13 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setExistingBrands(result.existingBrands ?? []);
     setNearMatchBrands(result.nearMatchBrands ?? []);
     setBrandDecisions(new Map());
+    // Brands whose FastQuote SoftOneID maps directly to a Soft1 manufacturer are
+    // auto-matched (no user picking). Seed the resolution map so the chosen
+    // MTRMANFCTR flows through to item creation at execute time, exactly like a
+    // user-picked near-match. Reset (rather than merge) so a re-run recomputes a
+    // clean authoritative set; near-match picks are re-added on Continue.
+    const auto = (result.autoMatchedBrands ?? []) as Array<{ fastquoteName: string; erpName: string; MTRMANFCTR: number }>;
+    setResolvedBrandMap(new Map(auto.map(a => [a.fastquoteName, { erpName: a.erpName, MTRMANFCTR: a.MTRMANFCTR }])));
     setBrandsCheckComplete(true);
   }, [callStep]);
 

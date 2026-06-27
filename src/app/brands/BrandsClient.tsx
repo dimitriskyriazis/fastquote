@@ -77,7 +77,7 @@ const normalizeOptionalInt = (value: unknown): number | null => {
 
 const BRAND_FIELD_LABELS: Record<string, string> = {
   Name: "Brand name",
-  SoftOneID: "SoftOne ID",
+  SoftOneID: "ERP ID",
   SoftOneCode: "SoftOne Code",
   Comment: "Comment",
   AVC4Name: "AVC4 Name",
@@ -246,19 +246,6 @@ export default function BrandsClient() {
         editable: true,
       },
       {
-        field: "SoftOneID",
-        headerName: "SoftOne ID",
-        filter: "agTextColumnFilter",
-        width: 130,
-        editable: true,
-        hide: true,
-        valueSetter: (params) => {
-          params.data = params.data ?? {};
-          (params.data as Record<string, unknown>).SoftOneID = normalizeOptionalInt(params.newValue);
-          return true;
-        },
-      },
-      {
         field: "SoftOneCode",
         headerName: "SoftOne Code",
         filter: "agTextColumnFilter",
@@ -272,6 +259,18 @@ export default function BrandsClient() {
         filter: "agTextColumnFilter",
         width: 180,
         editable: canEditAdminOnly,
+      },
+      {
+        field: "SoftOneID",
+        headerName: "ERP ID",
+        filter: "agTextColumnFilter",
+        width: 130,
+        editable: true,
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).SoftOneID = normalizeOptionalInt(params.newValue);
+          return true;
+        },
       },
       {
         field: "PartNumberSuffix",
