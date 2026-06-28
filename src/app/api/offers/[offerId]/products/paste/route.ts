@@ -443,6 +443,38 @@ const resolveAdjustedServicePrices = async (
   return map;
 };
 
+/**
+ * Return the subset of `productIds` that belong to at least one ENABLED service
+ * price list. Used to detect service rows independently of the copied IsService
+ * flag (which legacy/clipboard rows may not carry), matching the /products/add
+ * pre-flight check. Chunks the IN-list to stay under SQL Server's parameter cap.
+ */
+const resolveServiceProductIds = async (
+  pool: ConnectionPool,
+  productIds: number[],
+): Promise<Set<number>> => {
+  const found = new Set<number>();
+  const unique = [...new Set(productIds.filter((id) => Number.isInteger(id)))];
+  if (unique.length === 0) return found;
+  const CHUNK = 1000;
+  for (let start = 0; start < unique.length; start += CHUNK) {
+    const chunk = unique.slice(start, start + CHUNK);
+    const request = pool.request();
+    chunk.forEach((id, idx) => request.input(`__sp${idx}`, sql.Int, id));
+    const inList = chunk.map((_, idx) => `@__sp${idx}`).join(', ');
+    const res = await request.query<{ ProductID: number }>(`
+      SELECT DISTINCT pli.ProductID
+      FROM dbo.PriceListItems pli
+      INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND pl.Enabled = 1 AND ISNULL(pl.IsService, 0) = 1
+      WHERE pli.ProductID IN (${inList})
+    `);
+    for (const row of res.recordset ?? []) {
+      if (typeof row.ProductID === 'number') found.add(row.ProductID);
+    }
+  }
+  return found;
+};
+
 const insertProductRowsFreshPricing = async (transaction: Transaction, pool: ConnectionPool, offerId: number, rows: InsertRow[], createdBy: number, svcLocation: string | null): Promise<number[]> => {
   if (!rows.length) return [];
   const inserted: number[] = [];
@@ -903,9 +935,21 @@ export async function POST(
     const createdBy = resolveCreatedBy(buildAuditContext(req).userId);
 
     // ── Service-location price adjustment ──────────────────────────────
-    // If any clipboard rows are services, the target offer must have a
-    // ServicesLocation set so prices are adjusted to the correct tier.
-    const hasServiceRows = insertRows.some((r) => r.isService);
+    // Service rows require the target offer to have a ServicesLocation set so
+    // prices are adjusted to the correct tier. Detect services authoritatively
+    // by price-list membership (an enabled service price list) — not only by the
+    // copied IsService flag — so packages/clipboards whose rows predate the flag
+    // still trigger the location prompt, mirroring the /products/add path.
+    const pastedProductIds = insertRows
+      .filter((r) => r.productId != null && !r.isCategory && !r.isComment)
+      .map((r) => r.productId as number);
+    // When the copied flag already proves services exist, skip the lookup.
+    const serviceProductIds = insertRows.some((r) => r.isService)
+      ? new Set<number>()
+      : await resolveServiceProductIds(pool, pastedProductIds);
+    const isServiceRow = (r: InsertRow): boolean =>
+      r.isService || (r.productId != null && serviceProductIds.has(r.productId));
+    const hasServiceRows = insertRows.some(isServiceRow);
     let servicesLocation: string | null = null;
     if (hasServiceRows) {
       const locationReq = pool.request();
@@ -928,13 +972,13 @@ export async function POST(
       // target offer's location.
       if (keepPricing) {
         const serviceRowsWithPli = insertRows.filter(
-          (r) => r.isService && r.priceListItemId != null && !r.isCategory && !r.isComment,
+          (r) => isServiceRow(r) && r.priceListItemId != null && !r.isCategory && !r.isComment,
         );
         if (serviceRowsWithPli.length > 0) {
           const uniquePliIds = [...new Set(serviceRowsWithPli.map((r) => r.priceListItemId!))];
           const adjustedPrices = await resolveAdjustedServicePrices(pool, uniquePliIds, servicesLocation);
           for (const row of insertRows) {
-            if (!row.isService || row.priceListItemId == null) continue;
+            if (!isServiceRow(row) || row.priceListItemId == null) continue;
             const newPrice = adjustedPrices.get(row.priceListItemId) ?? null;
             if (newPrice == null) continue;
             const custDisc = row.customerDiscount ?? 0;

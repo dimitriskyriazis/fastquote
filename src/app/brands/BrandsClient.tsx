@@ -78,7 +78,7 @@ const normalizeOptionalInt = (value: unknown): number | null => {
 const BRAND_FIELD_LABELS: Record<string, string> = {
   Name: "Brand name",
   SoftOneID: "ERP ID",
-  SoftOneCode: "SoftOne Code",
+  SoftOneCode: "ERP Code",
   Comment: "Comment",
   AVC4Name: "AVC4 Name",
   Enabled: "Enabled",
@@ -247,7 +247,7 @@ export default function BrandsClient() {
       },
       {
         field: "SoftOneCode",
-        headerName: "SoftOne Code",
+        headerName: "ERP Code",
         filter: "agTextColumnFilter",
         width: 150,
         editable: true,

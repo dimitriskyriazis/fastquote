@@ -74,7 +74,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
     }
 
     if (!isSoftOneIdValid) {
-      setError('SoftOne ID must be a valid integer.');
+      setError('ERP ID must be a valid integer.');
       return;
     }
 
@@ -156,7 +156,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
         </div>
         <div className={lookupStyles.fieldHalf}>
           <label className={lookupStyles.fieldLabel} htmlFor="brand-softone-id">
-            SoftOne ID
+            ERP ID
           </label>
           <input
             id="brand-softone-id"
@@ -169,7 +169,7 @@ export default function AddBrandModal({ open, onClose, onCreated, overlayClassNa
         </div>
         <div className={lookupStyles.fieldHalf}>
           <label className={lookupStyles.fieldLabel} htmlFor="brand-softone-code">
-            SoftOne Code
+            ERP Code
           </label>
           <input
             id="brand-softone-code"

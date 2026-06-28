@@ -38,8 +38,8 @@ const SECTION_METADATA: Record<SectionKey, { title: string }> = {
 const ALL_FIELD_DEFINITIONS: FieldDefinition[] = [
   { id: 'name', label: 'Name', section: 'general', recordKey: 'Name', apiField: 'Name' },
   { id: 'comment', label: 'Comment', section: 'general', recordKey: 'Comment', apiField: 'Comment', multiline: true, span: -1 },
-  { id: 'softOneId', label: 'SoftOne ID', section: 'general', recordKey: 'SoftOneID', apiField: 'SoftOneID', isInt: true },
-  { id: 'softOneCode', label: 'SoftOne Code', section: 'general', recordKey: 'SoftOneCode', apiField: 'SoftOneCode' },
+  { id: 'softOneId', label: 'ERP ID', section: 'general', recordKey: 'SoftOneID', apiField: 'SoftOneID', isInt: true },
+  { id: 'softOneCode', label: 'ERP Code', section: 'general', recordKey: 'SoftOneCode', apiField: 'SoftOneCode' },
   { id: 'avc4Name', label: 'AVC4 Name', section: 'general', recordKey: 'AVC4Name', apiField: 'AVC4Name' },
   { id: 'enabled', label: 'Enabled', section: 'general', recordKey: 'Enabled', apiField: 'Enabled', isSelect: true },
   { id: 'partNumberSuffix', label: 'Part Number Suffix', section: 'advanced', recordKey: 'PartNumberSuffix', apiField: 'PartNumberSuffix', adminOnly: true },

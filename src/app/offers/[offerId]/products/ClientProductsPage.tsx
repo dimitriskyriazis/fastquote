@@ -1259,7 +1259,8 @@ export default function ClientProductsPage({
           ],
         });
         if (!location) {
-          setAddStandardPackageError('Services Location is required to add service products.');
+          // User dismissed the picker — abort silently (matches the
+          // add-service-lines flow); the modal stays open so they can retry.
           return;
         }
         await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
