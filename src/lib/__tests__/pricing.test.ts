@@ -528,10 +528,31 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.customerDiscount).toBe(20);    // as edited
     });
 
-    it('returns null when denominator blows up (CD=100%)', () => {
+    it('CD=100%: gives the line away free → net 0, margin null', () => {
       const input: PricingInput = {
         listPrice: 1000,
         customerDiscount: 100,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: null,
+        provided: { ...noProvided, customerDiscount: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(0);         // 1000 × (1 - 1.00)
+      expect(r.customerDiscount).toBe(100);
+      expect(r.netCost).toBe(800);            // cost-side untouched
+      expect(r.telmacoDiscount).toBe(20);     // unchanged
+      expect(r.margin).toBeNull();            // margin undefined at net 0
+    });
+
+    it('effective discount > 100% (CD + ACD): skips recompute, holds old net', () => {
+      // CD edited to 80 while a held ACD of 30 already pushes the effective
+      // discount to 110% — a negative net is nonsensical, so net is held.
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 80,
+        additionalCustomerDiscount: 30,
         telmacoDiscount: 20,
         netUnitPrice: 900,
         netCost: 800,
@@ -614,6 +635,25 @@ describe('resolvePricing — single-field edit cascade', () => {
       // NP = 750 / (1 - 0.111111) = 843.7508 → CD = 1 - 843.7508/1000
       expect(r.netUnitPrice).toBeCloseTo(843.75, 1);
       expect(r.customerDiscount).toBeCloseTo(15.625, 2);
+    });
+
+    it('TD=100% (Keep Net): zeroes Net Cost (free cost), Margin floats to 100%', () => {
+      const input: PricingInput = {
+        listPrice: 1000,
+        customerDiscount: 10,
+        telmacoDiscount: 100,   // free cost
+        netUnitPrice: 900,
+        netCost: 800,
+        margin: 11.1111,
+        provided: { ...noProvided, telmacoDiscount: true },
+        holdMarginOnCostChange: false,
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netCost).toBe(0);              // 1000 × (1 - 1.00)
+      expect(r.telmacoDiscount).toBe(100);
+      expect(r.netUnitPrice).toBe(900);       // held (Keep Net)
+      expect(r.customerDiscount).toBe(10);    // held
+      expect(r.margin).toBe(100);             // (1 - 0/900) — full margin at zero cost
     });
   });
 

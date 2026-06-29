@@ -383,7 +383,10 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     const effective = (cd ?? 0) + acdValue;
     if (hasValidLp) {
       const factor = 1 - percentageToFactor(effective);
-      if (!(factor > 0)) return null; // 100%+ effective discount: skip recompute
+      // An exactly-100% effective discount (factor === 0) is a legitimate free
+      // line → net 0 (lp * 0). Only an over-100% discount (factor < 0, which
+      // would imply a negative net) is nonsensical, so skip recompute there.
+      if (factor < 0) return null;
       const newNp = roundTo(lp * factor);
       return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: deriveMarginPercent(newNp, tc), additionalCustomerDiscount: acd };
     }
@@ -409,7 +412,10 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     if (td == null) return null;
     if (hasValidLp) {
       const factor = 1 - percentageToFactor(td);
-      if (!(factor > 0)) return null;
+      // 100% Telmaco discount (factor === 0) → net cost 0 (free cost), the
+      // cost-side mirror of the CustomerDiscount branch above. Only an
+      // over-100% discount (factor < 0, negative cost) is skipped.
+      if (factor < 0) return null;
       const newTc = roundTo(lp * factor);
       if (keepMargin && m != null) {
         const marginFactor = 1 - percentageToFactor(m);
