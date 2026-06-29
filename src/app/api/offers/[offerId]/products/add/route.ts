@@ -2197,59 +2197,65 @@ async function handleRestoreRows(offerId: number, body: Record<string, unknown>)
       const request = pool.request();
       request.input('__offerId', sql.Int, offerId);
       request.input('__id', sql.Int, id);
-      request.input('ProductID', sql.Int, row.ProductID != null ? Number(row.ProductID) : null);
-      request.input('BrandID', sql.Int, row.BrandID != null ? Number(row.BrandID) : null);
-      request.input('PartNumber', sql.NVarChar(255), row.PartNumber != null ? String(row.PartNumber) : null);
-      request.input('ModelNumber', sql.NVarChar(255), row.ModelNumber != null ? String(row.ModelNumber) : null);
-      request.input('ProductDescription', sql.NVarChar(sql.MAX), row.ProductDescription != null ? String(row.ProductDescription) : null);
-      request.input('ListPrice', sql.Decimal(18, 4), row.ListPrice != null ? Number(row.ListPrice) : null);
-      request.input('NetUnitPrice', sql.Decimal(18, 4), row.NetUnitPrice != null ? Number(row.NetUnitPrice) : null);
-      request.input('TelmacoDiscount', sql.Decimal(18, 4), row.TelmacoDiscount != null ? Number(row.TelmacoDiscount) : null);
-      request.input('CustomerDiscount', sql.Decimal(18, 4), row.CustomerDiscount != null ? Number(row.CustomerDiscount) : null);
-      request.input('NetCost', sql.Decimal(18, 4), row.NetCost != null ? Number(row.NetCost) : null);
-      request.input('NetCostOtherCurrency', sql.Decimal(18, 4), row.NetCostOtherCurrency != null ? Number(row.NetCostOtherCurrency) : null);
-      request.input('OtherCurrencyID', sql.Int, row.OtherCurrencyID != null ? Number(row.OtherCurrencyID) : null);
-      request.input('CurrencyCostModifier', sql.Decimal(18, 4), row.CurrencyCostModifier != null ? Number(row.CurrencyCostModifier) : null);
-      request.input('Margin', sql.Decimal(18, 4), row.Margin != null ? Number(row.Margin) : null);
-      request.input('GrossProfit', sql.Decimal(18, 4), row.GrossProfit != null ? Number(row.GrossProfit) : null);
-      request.input('TotalCost', sql.Decimal(18, 4), row.TotalCost != null ? Number(row.TotalCost) : null);
-      request.input('PriceListID', sql.Int, row.PriceListID != null ? Number(row.PriceListID) : null);
-      request.input('PriceListItemID', sql.Int, row.PriceListItemID != null ? Number(row.PriceListItemID) : null);
-      request.input('Quantity', sql.Decimal(18, 4), row.Quantity != null ? Number(row.Quantity) : null);
-      request.input('TelmacoWarranty', sql.NVarChar(255), row.TelmacoWarranty != null ? String(row.TelmacoWarranty) : null);
-      request.input('Warranty', sql.NVarChar(255), row.Warranty != null ? String(row.Warranty) : null);
-      request.input('IsCategory', sql.Bit, row.IsCategory ? 1 : 0);
-      request.input('IsComment', sql.Bit, row.IsComment ? 1 : 0);
-      request.input('IsPrintable', sql.Bit, row.IsPrintable ? 1 : 0);
-      request.input('Comment', sql.NVarChar(sql.MAX), row.Comment != null ? String(row.Comment) : null);
+
+      // Only update the columns actually present in the payload. A full row snapshot
+      // (populate / update-product-data undo) updates everything as before; a partial
+      // snapshot (e.g. a cell-edit undo restoring just the pricing columns) updates only
+      // those, leaving the rest untouched instead of nulling them. TotalPrice/TotalNet are
+      // included so totals are restored raw — a single-field PATCH can't recompute them
+      // back because the pricing recompute is asymmetric.
+      const has = (key: string) => Object.prototype.hasOwnProperty.call(row, key);
+      const setClauses: string[] = [];
+      const bindNumber = (key: string, type: ReturnType<typeof sql.Decimal>) => {
+        if (!has(key)) return;
+        request.input(key, type, row[key] != null ? Number(row[key]) : null);
+        setClauses.push(`${key} = @${key}`);
+      };
+      const bindString = (key: string, type: ReturnType<typeof sql.Decimal>) => {
+        if (!has(key)) return;
+        request.input(key, type, row[key] != null ? String(row[key]) : null);
+        setClauses.push(`${key} = @${key}`);
+      };
+      const bindBit = (key: string) => {
+        if (!has(key)) return;
+        request.input(key, sql.Bit, row[key] ? 1 : 0);
+        setClauses.push(`${key} = @${key}`);
+      };
+
+      bindNumber('ProductID', sql.Int());
+      bindNumber('BrandID', sql.Int());
+      bindString('PartNumber', sql.NVarChar(255));
+      bindString('ModelNumber', sql.NVarChar(255));
+      bindString('ProductDescription', sql.NVarChar(sql.MAX));
+      bindNumber('ListPrice', sql.Decimal(18, 4));
+      bindNumber('NetUnitPrice', sql.Decimal(18, 4));
+      bindNumber('TotalPrice', sql.Decimal(18, 4));
+      bindNumber('TotalNet', sql.Decimal(18, 4));
+      bindNumber('TelmacoDiscount', sql.Decimal(18, 4));
+      bindNumber('CustomerDiscount', sql.Decimal(18, 4));
+      bindNumber('AdditionalCustomerDiscount', sql.Decimal(18, 4));
+      bindNumber('NetCost', sql.Decimal(18, 4));
+      bindNumber('NetCostOtherCurrency', sql.Decimal(18, 4));
+      bindNumber('OtherCurrencyID', sql.Int());
+      bindNumber('CurrencyCostModifier', sql.Decimal(18, 4));
+      bindNumber('Margin', sql.Decimal(18, 4));
+      bindNumber('GrossProfit', sql.Decimal(18, 4));
+      bindNumber('TotalCost', sql.Decimal(18, 4));
+      bindNumber('PriceListID', sql.Int());
+      bindNumber('PriceListItemID', sql.Int());
+      bindNumber('Quantity', sql.Decimal(18, 4));
+      bindString('TelmacoWarranty', sql.NVarChar(255));
+      bindString('Warranty', sql.NVarChar(255));
+      bindBit('IsCategory');
+      bindBit('IsComment');
+      bindBit('IsPrintable');
+      bindString('Comment', sql.NVarChar(sql.MAX));
+
+      if (setClauses.length === 0) continue;
 
       await request.query(`
         UPDATE dbo.OfferDetails SET
-          ProductID            = @ProductID,
-          BrandID              = @BrandID,
-          PartNumber           = @PartNumber,
-          ModelNumber          = @ModelNumber,
-          ProductDescription   = @ProductDescription,
-          ListPrice            = @ListPrice,
-          NetUnitPrice         = @NetUnitPrice,
-          TelmacoDiscount      = @TelmacoDiscount,
-          CustomerDiscount     = @CustomerDiscount,
-          NetCost              = @NetCost,
-          NetCostOtherCurrency = @NetCostOtherCurrency,
-          OtherCurrencyID      = @OtherCurrencyID,
-          CurrencyCostModifier = @CurrencyCostModifier,
-          Margin               = @Margin,
-          GrossProfit          = @GrossProfit,
-          TotalCost            = @TotalCost,
-          PriceListID          = @PriceListID,
-          PriceListItemID      = @PriceListItemID,
-          Quantity             = @Quantity,
-          TelmacoWarranty      = @TelmacoWarranty,
-          Warranty             = @Warranty,
-          IsCategory           = @IsCategory,
-          IsComment            = @IsComment,
-          IsPrintable          = @IsPrintable,
-          Comment              = @Comment
+          ${setClauses.join(',\n          ')}
         WHERE ID = @__id AND OfferID = @__offerId
       `);
       restored++;

@@ -79,6 +79,7 @@ import {
   RowAutoHeightModule,
   RenderApiModule,
   PostProcessPopupParams,
+  ProcessCellForExportParams,
   _BaseTooltipStateManager,
 } from 'ag-grid-community';
 import {
@@ -5175,6 +5176,26 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     copyToClipboardRobust(params.data ?? '', html);
   }, []);
 
+  // Some columns surface a DISPLAY-ONLY sentinel via their valueGetter (e.g. the
+  // offer-products Customer Discount cell shows a 100% / -100% flag on anomalous
+  // rows whose stored discount is actually blank). AG Grid's built-in copy uses the
+  // valueGetter result, so copying such a cell would put the sentinel on the
+  // clipboard and pasting it would write a bogus discount. Columns that opt in with
+  // `copyValueFromField` copy their raw stored field value instead — matching the
+  // HTML flavour above, which already reads the raw field directly.
+  const processCellForClipboard = useCallback((params: ProcessCellForExportParams<RowData>) => {
+    const colDef = params.column?.getColDef?.();
+    const field = colDef?.field;
+    if (
+      field &&
+      (colDef as { copyValueFromField?: boolean } | undefined)?.copyValueFromField &&
+      params.node?.data
+    ) {
+      return (params.node.data as Record<string, unknown>)[field] ?? null;
+    }
+    return params.value;
+  }, []);
+
   const handleClearUserFilters = useCallback(() => {
     const api = gridApiRef.current ?? gridRef.current?.api ?? null;
     if (!api || api.isDestroyed?.()) return;
@@ -5336,6 +5357,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           onRowDragLeave={handleRowDragLeave}
           suppressLastEmptyLineOnPaste
           sendToClipboard={sendToClipboard}
+          processCellForClipboard={processCellForClipboard}
           onPasteStart={handlePasteStart}
           onPasteEnd={handlePasteEnd}
           onCellValueChanged={handleCellValueChanged}

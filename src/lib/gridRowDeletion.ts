@@ -187,6 +187,13 @@ type GridRowDeletionConfig<RowData> = {
   refreshHandler?: (api: GridApi<RowData> | null) => void;
   canDelete?: (count: number, rows?: (RowData | null)[]) => DeletePermissionResult;
   restoreEndpoint?: string;
+  /**
+   * When set, the toast "Undo" button calls this instead of POSTing restoreEndpoint
+   * directly. Lets a host that wires deletions into its own undo stack route the toast
+   * through that single stack, so the toast and Ctrl+Z can't both restore (which would
+   * duplicate rows). Falls back to the restoreEndpoint fetch when not provided.
+   */
+  onRequestUndo?: (deletedRows: unknown[], api: GridApi<RowData> | null) => void;
   onDeleteSuccess?: (deletedRows: unknown[], api: GridApi<RowData> | null) => void;
   dataEndpoint?: string;
   idField?: string;
@@ -350,11 +357,18 @@ export class GridRowDeletion<RowData> {
       dismissDeleting?.();
       const apiDeletedRows = Array.isArray(payload.deletedRows) ? payload.deletedRows : [];
       const restoreEndpoint = this.config.restoreEndpoint;
-      if (restoreEndpoint && apiDeletedRows.length > 0) {
+      const onRequestUndo = this.config.onRequestUndo;
+      if ((onRequestUndo || restoreEndpoint) && apiDeletedRows.length > 0) {
         const capturedApi = api;
         showToastMessage(this.getSuccessMessage(typeLabel, rowLabel), 'success', 5500, {
           label: 'Undo',
           onClick: () => {
+            // Prefer the host's undo stack so the toast and Ctrl+Z share one restore.
+            if (onRequestUndo) {
+              onRequestUndo(apiDeletedRows, capturedApi);
+              return;
+            }
+            if (!restoreEndpoint) return;
             fetch(restoreEndpoint, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },

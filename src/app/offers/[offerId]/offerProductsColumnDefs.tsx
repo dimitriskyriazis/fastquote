@@ -841,6 +841,12 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     {
       field: 'CustomerDiscount',
       headerName: 'Customer Discount',
+      // Clipboard copy must use the stored discount, NOT the display-only 100% /
+      // -100% sentinel this column's valueGetter surfaces on anomalous rows (see
+      // flagFullDiscountNoNet / flagMissingListPriceDiscount). Without this, copying
+      // such a cell — whose real stored discount is blank — pastes a bogus 100%.
+      // Honoured by AgGridAll's processCellForClipboard.
+      ...({ copyValueFromField: true } as object),
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',

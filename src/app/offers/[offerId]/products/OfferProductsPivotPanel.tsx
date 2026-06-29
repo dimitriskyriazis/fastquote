@@ -219,7 +219,12 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
 
       { field: 'CategoryName', headerName: 'Category', hide: hideCategory, suppressColumnsToolPanel: hideCategory},
       { field: 'BrandName', headerName: 'Brand', hide: hideBrand, suppressColumnsToolPanel: hideBrand },
-      { field: 'PartNumber', headerName: 'Part No', hide: !isBrandPartNo, suppressColumnsToolPanel: !isBrandPartNo },
+      // Part No is the row-group column in the brandPartNo layout. In the Brand/Category
+      // pivot layouts it's hidden by default but kept in the Columns tool panel
+      // (suppressColumnsToolPanel: false) so the user can drag it into Row Groups on demand
+      // to break each brand/category into per-part-number sub-rows. It is never grouped or
+      // shown by default in those layouts.
+      { field: 'PartNumber', headerName: 'Part No', hide: !isBrandPartNo, suppressColumnsToolPanel: false },
       { field: 'Quantity', headerName: 'Qty', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Quantity'), valueFormatter: numberValueFormatter, aggFunc: 'sum', width: 110 },
       { field: 'TotalPrice', headerName: 'Total List', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalPrice'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', width: 150 },
       { field: 'CustomerDiscount', headerName: 'Customer Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('CustomerDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', width: 200 },

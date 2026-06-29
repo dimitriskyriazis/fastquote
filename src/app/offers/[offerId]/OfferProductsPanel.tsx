@@ -55,7 +55,7 @@ const AgGridAll = dynamic<AgGridAllProps>(() => import('../../components/AgGridA
 });
 import { showToastMessage } from '../../../lib/toast';
 import { useUndoStack } from '../../hooks/useUndoStack';
-import { pushCellEditUndo } from '../../../lib/undoHelpers';
+import { pushCellEditUndo, makeOfferDetailRevert } from '../../../lib/undoHelpers';
 import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
@@ -146,6 +146,7 @@ import {
   computeNetPriceRescale,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
+  PRICING_SNAPSHOT_COLUMNS,
   PROPAGATABLE_FIELD_LABELS,
   DESCRIPTION_PASTE_BLOCKLIST,
   COST_ANALYSIS_COLUMNS,
@@ -3055,6 +3056,9 @@ const requestedColumnDefsMap = useMemo(
           return checkDeletePermissionForClient(roles, count, 'offerProducts', 'editOffers', { isCreator: isOfferCreator });
         },
         restoreEndpoint: `${resolvedEndpoint}/restore`,
+        // Route the toast "Undo" through the same stack as Ctrl+Z (onDeleteSuccess pushes
+        // that entry below), so a delete can't be restored twice and duplicate the rows.
+        onRequestUndo: () => performUndo(),
         onDeleteSuccess: (deletedRows) => {
           const anyRequested = deletedRows.some((row) => {
             const r = row as Record<string, unknown> | null;
@@ -3081,7 +3085,7 @@ const requestedColumnDefsMap = useMemo(
           }
         },
       }),
-    [resolvedEndpoint, refreshOfferProductGrid, roles, isOfferCreator, pushUndo],
+    [resolvedEndpoint, refreshOfferProductGrid, roles, isOfferCreator, pushUndo, performUndo],
   );
 
   const populateRequestedRowsToOffer = useCallback(async (nodes: RowNode<Record<string, unknown>>[], options?: { skipInternalUndoPush?: boolean }) => {
@@ -7037,23 +7041,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${friendlyLabel} (status ${res.status})`);
         }
-        const capturedOldValue = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
-        const capturedField = field;
         pushUndo({
           label: `${friendlyLabel} updated`,
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOldValue }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue(capturedField, capturedOldValue); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [field]: normalizedOldValue },
+            cells: [[field, normalizedOldValue]],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [field]: normalizedNewValue },
+            cells: [[field, normalizedNewValue]],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage(`${friendlyLabel} updated`, 'success', 5500, {
           label: 'Undo',
@@ -7152,22 +7158,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update quantity (status ${res.status})`);
         }
-        const capturedOldQty = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Quantity updated',
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Quantity: capturedOldQty }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue('Quantity', capturedOldQty); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Quantity: normalizedOldValue },
+            cells: [['Quantity', normalizedOldValue]],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Quantity: normalizedNewValue },
+            cells: [['Quantity', normalizedNewValue]],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage('Quantity updated', 'success', 5500, {
           label: 'Undo',
@@ -7265,23 +7274,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update value (status ${res.status})`);
         }
-        const capturedOld = normalizedOldValue;
-        const capturedField = editedField;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${editedField} updated`,
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOld }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue(capturedField, capturedOld); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [editedField]: normalizedOldValue },
+            cells: [[editedField, normalizedOldValue]],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [editedField]: normalizedNewValue },
+            cells: [[editedField, normalizedNewValue]],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage(`${editedField} updated`, 'success', 5500, {
           label: 'Undo',
@@ -7356,25 +7367,25 @@ const requestedColumnDefsMap = useMemo(
         } catch {
           /* noop */
         }
-        const capturedOldDesc = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Description updated',
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, ProductDescription: capturedOldDesc }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try {
-              event.node?.setDataValue?.('Description', capturedOldDesc ?? '', 'api');
-              event.node?.setDataValue?.('ProductDescription', capturedOldDesc ?? '', 'api');
-            } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { ProductDescription: normalizedOldValue },
+            cells: [['Description', normalizedOldValue ?? ''], ['ProductDescription', normalizedOldValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { ProductDescription: normalizedNewValue },
+            cells: [['Description', normalizedNewValue ?? ''], ['ProductDescription', normalizedNewValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage('Description updated', 'success', 5500, {
           label: 'Undo',
@@ -7446,22 +7457,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update comment (status ${res.status})`);
         }
-        const capturedOldComment = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Comment updated',
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Comment: capturedOldComment }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue?.('Comment', capturedOldComment ?? ''); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Comment: normalizedOldValue },
+            cells: [['Comment', normalizedOldValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Comment: normalizedNewValue },
+            cells: [['Comment', normalizedNewValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage('Comment updated', 'success', 5500, {
           label: 'Undo',
@@ -7524,22 +7538,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update delivery (status ${res.status})`);
         }
-        const capturedOldDelivery = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: 'Delivery updated',
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, Delivery: capturedOldDelivery }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue?.('Delivery', capturedOldDelivery ?? ''); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Delivery: normalizedOldValue },
+            cells: [['Delivery', normalizedOldValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { Delivery: normalizedNewValue },
+            cells: [['Delivery', normalizedNewValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage('Delivery updated', 'success', 5500, {
           label: 'Undo',
@@ -7594,22 +7611,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${field} (status ${res.status})`);
         }
-        const capturedOldValue = normalizedOldValue;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${field} updated`,
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [field]: capturedOldValue }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue?.(field, capturedOldValue ?? ''); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [field]: normalizedOldValue },
+            cells: [[field, normalizedOldValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [field]: normalizedNewValue },
+            cells: [[field, normalizedNewValue ?? '']],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage(`${field} updated`, 'success', 5500, {
           label: 'Undo',
@@ -7988,6 +8008,20 @@ const requestedColumnDefsMap = useMemo(
 
     const runUpdate = async () => {
       try {
+        // Snapshot the row's pricing columns BEFORE the edit recomputes them, so undo can
+        // restore the exact prior state. Pricing fields are interdependent and the server
+        // recompute is asymmetric (a single-field PATCH can't reverse e.g. the Customer
+        // Discount a List Price edit recomputed), so undo/redo write these raw via
+        // restore-rows. Captured synchronously here from the still-old row data.
+        const pricingSnapshot = (override: Record<string, unknown>): Record<string, unknown> => {
+          const data = (event.data ?? {}) as Record<string, unknown>;
+          const snap: Record<string, unknown> = { OfferDetailID: offerDetailId };
+          for (const col of PRICING_SNAPSHOT_COLUMNS) {
+            if (Object.prototype.hasOwnProperty.call(data, col)) snap[col] = data[col];
+          }
+          return { ...snap, ...override };
+        };
+        const beforePricingSnapshot = pricingSnapshot({ [field]: normalizedOldValue });
         const updateEntry: Record<string, unknown> = { OfferDetailID: offerDetailId, [field]: normalizedNewValue };
         if (shouldAutoSetCommentQuantity) updateEntry.Quantity = 1;
         const res = await fetch(resolvedEndpoint, {
@@ -8064,23 +8098,27 @@ const requestedColumnDefsMap = useMemo(
         const lastShown = pricingToastDedupRef.current.get(toastKey) ?? 0;
         if (now - lastShown > 800) {
           pricingToastDedupRef.current.set(toastKey, now);
-          const capturedOldPricing = normalizedOldValue;
-          const capturedDetailId = offerDetailId;
-          const capturedField = field;
+          // event.data now holds the post-edit (recomputed) values, so this captures the
+          // "after" state for redo; beforePricingSnapshot captured the "before" state above.
+          const afterPricingSnapshot = pricingSnapshot({});
+          const capturedAddEndpoint = addProductsEndpoint;
+          const restorePricingRows = (rows: Record<string, unknown>[]) => async () => {
+            const r = await fetch(capturedAddEndpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'restore-rows', rows }),
+            });
+            const p = (await r.json().catch(() => null)) as { ok?: boolean } | null;
+            if (!r.ok || !p?.ok) throw new Error('Failed to revert');
+            // Raw restore doesn't recompute; purge so derived columns + footer totals
+            // refetch correctly from the server.
+            refreshOfferProductGrid(null, { purge: true });
+          };
           pushUndo({
             label: `${label} updated`,
             groupToken: pasteUndoToken ?? undefined,
-            undo: async () => {
-              const undoRes = await fetch(resolvedEndpoint, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOldPricing }] }),
-              });
-              const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-              if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-              try { event.node?.setDataValue(capturedField, capturedOldPricing); } catch { /* noop */ }
-              event.api?.refreshServerSide?.({ purge: false });
-            },
+            undo: restorePricingRows([beforePricingSnapshot]),
+            redo: restorePricingRows([afterPricingSnapshot]),
           });
           showToastMessage(`${label} updated`, 'success', 5500, {
             label: 'Undo',
@@ -8103,7 +8141,7 @@ const requestedColumnDefsMap = useMemo(
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta, openCostCurrencyPrompt]);
+  }, [resolvedEndpoint, addProductsEndpoint, refreshOfferProductGrid, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta, openCostCurrencyPrompt]);
 
   const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Origin') return;
@@ -8153,22 +8191,26 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update origin (status ${res.status})`);
         }
-        const capturedOldValue = oldValue;
         const capturedProductId = productId;
+        // Origin lives on the shared Products master, so undo/redo PATCH /api/products/{id}
+        // (not the offer-detail endpoint). The node write uses source 'api' so it doesn't
+        // re-enter handleOriginEdit and fire a spurious save.
+        const patchOrigin = (value: string | null) => async () => {
+          const res = await fetch(`/api/products/${encodeURIComponent(String(capturedProductId))}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin: value }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+          if (!res.ok || !payload?.ok) throw new Error('Failed to revert');
+          try { event.node?.setDataValue?.('Origin', value, 'api'); } catch { /* noop */ }
+          event.api?.refreshServerSide?.({ purge: false });
+        };
         pushUndo({
           label: 'Origin updated',
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(`/api/products/${encodeURIComponent(String(capturedProductId))}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ origin: capturedOldValue }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue?.('Origin', capturedOldValue); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: patchOrigin(oldValue),
+          redo: patchOrigin(newValue),
         });
         showToastMessage('Origin updated', 'success', 5500, {
           label: 'Undo',
@@ -8388,23 +8430,25 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update value (status ${res.status})`);
         }
-        const capturedOld = normalizedOldValue;
-        const capturedField = editedField;
-        const capturedDetailId = offerDetailId;
         pushUndo({
           label: `${editedField} updated`,
           groupToken: pasteUndoToken ?? undefined,
-          undo: async () => {
-            const undoRes = await fetch(resolvedEndpoint, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ OfferDetailID: capturedDetailId, [capturedField]: capturedOld }] }),
-            });
-            const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
-            if (!undoRes.ok || !undoPayload?.ok) throw new Error('Failed to revert');
-            try { event.node?.setDataValue(capturedField, capturedOld); } catch { /* noop */ }
-            event.api?.refreshServerSide?.({ purge: false });
-          },
+          undo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [editedField]: normalizedOldValue },
+            cells: [[editedField, normalizedOldValue]],
+            node: event.node,
+            api: event.api,
+          }),
+          redo: makeOfferDetailRevert({
+            endpoint: resolvedEndpoint,
+            offerDetailId,
+            patch: { [editedField]: normalizedNewValue },
+            cells: [[editedField, normalizedNewValue]],
+            node: event.node,
+            api: event.api,
+          }),
         });
         showToastMessage(`${editedField} updated`, 'success', 5500, {
           label: 'Undo',

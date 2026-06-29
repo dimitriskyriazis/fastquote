@@ -9,6 +9,13 @@ const makeEntry = (
   groupToken?: string | number,
 ): PushUndoEntry => ({ label, undo, groupToken });
 
+const makeRedoableEntry = (
+  label: string,
+  undo: () => Promise<void>,
+  redo: () => Promise<void>,
+  groupToken?: string | number,
+): PushUndoEntry => ({ label, undo, redo, groupToken });
+
 const noop = () => Promise.resolve();
 
 describe('appendUndoEntry', () => {
@@ -91,6 +98,64 @@ describe('appendUndoEntry', () => {
     await expect(stack[0].undo()).rejects.toThrow(/revert/i);
     expect(undoOk).toHaveBeenCalledTimes(1);
     expect(undoBad).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries a redo closure through on a plain (non-coalesced) push', () => {
+    const redo = vi.fn(async () => {});
+    const next = appendUndoEntry([], makeRedoableEntry('A', noop, redo), 20, NOW);
+    expect(next[0].redo).toBe(redo);
+  });
+
+  it('leaves redo undefined when the pushed entry has none', () => {
+    const next = appendUndoEntry([], makeEntry('A', noop), 20, NOW);
+    expect(next[0].redo).toBeUndefined();
+  });
+
+  it('composes the redo of both coalesced edits into the merged entry', async () => {
+    const calls: string[] = [];
+    const redoA = vi.fn(async () => { calls.push('A'); });
+    const redoB = vi.fn(async () => { calls.push('B'); });
+
+    let stack: UndoEntry[] = [];
+    stack = appendUndoEntry(stack, makeRedoableEntry('Qty updated', noop, redoA, 5), 20, NOW);
+    stack = appendUndoEntry(stack, makeRedoableEntry('Qty updated', noop, redoB, 5), 20, NOW);
+
+    expect(stack).toHaveLength(1);
+    expect(stack[0].redo).toBeDefined();
+    await stack[0].redo!();
+    expect(redoA).toHaveBeenCalledTimes(1);
+    expect(redoB).toHaveBeenCalledTimes(1);
+    expect(calls.sort()).toEqual(['A', 'B']);
+  });
+
+  it('keeps the merged entry redoable even if only one member has a redo', async () => {
+    const redoB = vi.fn(async () => {});
+    let stack: UndoEntry[] = [];
+    stack = appendUndoEntry(stack, makeEntry('paste', noop, 1), 20, NOW); // no redo
+    stack = appendUndoEntry(stack, makeRedoableEntry('paste', noop, redoB, 1), 20, NOW);
+    expect(stack[0].redo).toBeDefined();
+    await stack[0].redo!();
+    expect(redoB).toHaveBeenCalledTimes(1);
+  });
+
+  it('merged entry stays non-redoable when neither member has a redo', () => {
+    let stack: UndoEntry[] = [];
+    stack = appendUndoEntry(stack, makeEntry('paste', noop, 1), 20, NOW);
+    stack = appendUndoEntry(stack, makeEntry('paste', noop, 1), 20, NOW);
+    expect(stack[0].redo).toBeUndefined();
+  });
+
+  it('surfaces a failure if any coalesced redo rejects, but still runs the others', async () => {
+    const redoOk = vi.fn(async () => {});
+    const redoBad = vi.fn(async () => { throw new Error('reapply failed'); });
+
+    let stack: UndoEntry[] = [];
+    stack = appendUndoEntry(stack, makeRedoableEntry('X', noop, redoOk, 9), 20, NOW);
+    stack = appendUndoEntry(stack, makeRedoableEntry('X', noop, redoBad, 9), 20, NOW);
+
+    await expect(stack[0].redo!()).rejects.toThrow(/re-apply/i);
+    expect(redoOk).toHaveBeenCalledTimes(1);
+    expect(redoBad).toHaveBeenCalledTimes(1);
   });
 
   it('respects maxSize for non-coalesced pushes and never grows it on merge', () => {

@@ -2201,6 +2201,16 @@ export const PRICING_FIELD_LABELS: Record<string, string> = {
 
 export const PRICING_EDITABLE_FIELDS = new Set(Object.keys(PRICING_FIELD_LABELS));
 
+// Columns captured for an exact pricing undo/redo. Pricing fields are interdependent and
+// the server pricing recompute is asymmetric (a single-field PATCH can't reverse e.g. a
+// Customer Discount that a List Price edit recomputed on a 0%-discount row), so undo/redo
+// restore these raw via the restore-rows action rather than re-running resolvePricing.
+export const PRICING_SNAPSHOT_COLUMNS = [
+  'ListPrice', 'NetUnitPrice', 'CustomerDiscount', 'AdditionalCustomerDiscount', 'TelmacoDiscount',
+  'NetCost', 'NetCostOtherCurrency', 'OtherCurrencyID', 'CurrencyCostModifier', 'Margin',
+  'TotalPrice', 'TotalNet', 'GrossProfit', 'TotalCost',
+] as const;
+
 // Fields whose value can be propagated to other rows of the same product within
 // the same offer when the user confirms. Excludes per-row identifiers
 // (Requested*), product-level fields (Origin), and product identifiers
