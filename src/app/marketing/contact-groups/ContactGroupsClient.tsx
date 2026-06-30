@@ -205,6 +205,7 @@ export default function ContactGroupsClient() {
 
   const columnDefs = useMemo<ColDef[]>(
     () => [
+      { field: "ContactGroupID", headerName: "ID", filter: "agNumberColumnFilter", editable: false, width: 90 },
       { field: "Description", headerName: "Description", filter: "agTextColumnFilter", editable: canManage, width: 400 },
       { field: "Division", headerName: "Division", filter: "agTextColumnFilter", editable: canManage },
       { field: "GroupImportance", headerName: "Group Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },

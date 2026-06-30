@@ -96,6 +96,13 @@ import type {
 } from './offerProductsPanelTypes';
 import { buildRequestedColumnDefsMap, buildProductColumnDefs } from './offerProductsColumnDefs';
 import {
+  buildCellPaintStorageKey,
+  parseCellPaintMap,
+  normalizeHexColor,
+  type CellPaintMap,
+  type CellPaintRuleParams,
+} from './products/offerCellPaint';
+import {
   decimalFormatter,
   DEFAULT_ROW_HEIGHT,
   MAX_CATEGORY_DEPTH,
@@ -2797,6 +2804,144 @@ const requestedColumnDefsMap = useMemo(
     try { node?.setDataValue?.('Margin', roundedMargin); } catch { /* noop */ }
   }, [readOnly]);
 
+  // ── Excel-style manual cell fill ──────────────────────────────────────
+  // Painted cells are a purely visual, per-user annotation stored in
+  // localStorage (keyed by user + offer); they never touch the server. The
+  // colour is rendered via cellClassRules (merged into every column) plus a
+  // CSS background-image overlay — see offerCellPaint.ts / ag-grid-overrides.css.
+  const cellPaintStorageKey = useMemo(
+    () => buildCellPaintStorageKey(userId, offerId),
+    [userId, offerId],
+  );
+  const cellPaintMapRef = useRef<CellPaintMap>({});
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      cellPaintMapRef.current = parseCellPaintMap(window.localStorage.getItem(cellPaintStorageKey));
+    } catch {
+      cellPaintMapRef.current = {};
+    }
+    // The key can change after mount (once userId resolves), so re-apply the
+    // paint to any cells the grid has already rendered.
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed?.()) {
+      try { api.refreshCells({ force: true }); } catch { /* noop */ }
+    }
+  }, [cellPaintStorageKey]);
+
+  const persistCellPaint = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const map = cellPaintMapRef.current;
+      if (Object.keys(map).length === 0) {
+        window.localStorage.removeItem(cellPaintStorageKey);
+      } else {
+        window.localStorage.setItem(cellPaintStorageKey, JSON.stringify(map));
+      }
+    } catch {
+      /* quota exceeded / storage disabled — keep the in-memory paint */
+    }
+  }, [cellPaintStorageKey]);
+
+  const resolvePaintColor = useCallback((params: CellPaintRuleParams): string | null => {
+    const id = normalizeOfferDetailId(
+      (params.data as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
+    );
+    if (id == null) return null;
+    const colId = params.column?.getColId?.() ?? params.colDef?.field;
+    if (!colId) return null;
+    return normalizeHexColor(cellPaintMapRef.current[String(id)]?.[colId]);
+  }, []);
+
+  // Paint (or clear, when colour is null) the currently-selected cell range.
+  // Returns the number of cells changed. The grid is server-side: rows outside
+  // the loaded blocks can't be resolved, so a huge selection (e.g. select-all
+  // on a long offer) may only cover the loaded rows — we count and report those
+  // skipped rows rather than silently painting a subset.
+  const paintSelectedCells = useCallback((color: string | null): number => {
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return 0;
+    const hex = color == null ? null : normalizeHexColor(color);
+    if (color != null && hex == null) {
+      showToastMessage('That colour could not be applied.', 'error');
+      return 0;
+    }
+    const map = cellPaintMapRef.current;
+    let touched = 0;
+    let skippedRows = 0;
+    const touchCell = (id: number, colId: string) => {
+      const sid = String(id);
+      if (hex == null) {
+        const cols = map[sid];
+        if (cols && colId in cols) {
+          delete cols[colId];
+          if (Object.keys(cols).length === 0) delete map[sid];
+          touched += 1;
+        }
+      } else {
+        const cols = map[sid] ?? (map[sid] = {});
+        cols[colId] = hex;
+        touched += 1;
+      }
+    };
+    const ranges = api.getCellRanges?.() ?? [];
+    if (ranges.length > 0) {
+      ranges.forEach((range) => {
+        const columns = range.columns ?? [];
+        if (columns.length === 0) return;
+        const startRow = range.startRow ?? range.endRow;
+        const endRow = range.endRow ?? range.startRow;
+        if (!startRow || !endRow) return;
+        if (startRow.rowPinned || endRow.rowPinned) return;
+        const from = Math.min(startRow.rowIndex, endRow.rowIndex);
+        const to = Math.max(startRow.rowIndex, endRow.rowIndex);
+        for (let rowIndex = from; rowIndex <= to; rowIndex += 1) {
+          const node = api.getDisplayedRowAtIndex(rowIndex);
+          const id = normalizeOfferDetailId(
+            (node?.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+          );
+          if (id == null) {
+            skippedRows += 1;
+            continue;
+          }
+          columns.forEach((column) => {
+            const colId = column.getColId?.();
+            if (colId) touchCell(id, colId);
+          });
+        }
+      });
+    } else {
+      const focused = api.getFocusedCell?.();
+      if (focused?.column && typeof focused.rowIndex === 'number') {
+        const node = api.getDisplayedRowAtIndex(focused.rowIndex);
+        const id = normalizeOfferDetailId(
+          (node?.data as { OfferDetailID?: unknown } | undefined)?.OfferDetailID ?? null,
+        );
+        const colId = focused.column.getColId?.();
+        if (id != null && colId) touchCell(id, colId);
+      }
+    }
+    if (touched === 0) {
+      showToastMessage('Select one or more cells first, then pick a fill colour.', 'info');
+      return 0;
+    }
+    persistCellPaint();
+    try {
+      api.refreshCells({ force: true });
+    } catch {
+      /* noop */
+    }
+    if (skippedRows > 0) {
+      showToastMessage(
+        `${hex == null ? 'Cleared' : 'Filled'} the loaded rows. ${skippedRows} selected row${skippedRows === 1 ? ' was' : 's were'} not loaded yet — scroll to them and re-apply.`,
+        'info',
+        7000,
+      );
+    }
+    return touched;
+  }, [persistCellPaint]);
+
   const productColumnDefs: ColDef[] = useMemo(() => buildProductColumnDefs({
       standardPackageMode,
       isManualMode,
@@ -2817,6 +2962,7 @@ const requestedColumnDefsMap = useMemo(
       offerCurrencySymbol: offerCurrencyName ?? '€',
       pricingPolicyName,
       readOnly,
+      resolvePaintColor,
       onMarkupEdit: handleMarkupEdit,
     }), [
     actualNumericCellClass,
@@ -2838,6 +2984,7 @@ const requestedColumnDefsMap = useMemo(
     offerCurrencyName,
     pricingPolicyName,
     readOnly,
+    resolvePaintColor,
     handleMarkupEdit,
   ]);
 
@@ -4709,6 +4856,7 @@ const requestedColumnDefsMap = useMemo(
           try { api.deselectAll(); } catch { /* noop */ }
         }
       },
+      paintSelectedCells,
       getLastClickedRowId: () => {
         const row = lastClickedRowRef.current;
         return row ? normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null) : null;
@@ -4790,7 +4938,7 @@ const requestedColumnDefsMap = useMemo(
       applyStartingItemNoShift,
       findItemNoDuplicates,
     }),
-    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, findItemNoDuplicates, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getGridViewportElement, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo],
+    [applyStartingItemNoShift, canUndo, clearSelectedRowHighlight, findItemNoDuplicates, forceReapplyRequestedColumnsVisibility, getAddInsertionAnchor, getAllVisibleRowData, getGridViewportElement, getSelectedOfferDetailIds, getSelectedOfferDetailIdsForPriceUpdate, getSelectedRequestedOfferDetailId, getSelectedRowData, getStartingItemNo, getTemplateExportRows, getViewportScrollTop, lastLabel, performUndo, populateOffer, updateProductData, pushUndo, paintSelectedCells],
   );
 
 

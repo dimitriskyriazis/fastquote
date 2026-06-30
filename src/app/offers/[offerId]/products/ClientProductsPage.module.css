@@ -412,6 +412,191 @@
   border-color: rgba(113, 63, 18, 0.25);
 }
 
+/* Excel-style cell fill: split button. The main side applies the last-used
+   colour in one click; the caret opens the palette. */
+.cellPaintSplit {
+  display: inline-flex;
+  align-items: stretch;
+  position: relative;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
+  background: #ffffff;
+  overflow: visible;
+  pointer-events: auto;
+  z-index: 6;
+}
+
+.cellPaintMainButton {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px 0 11px;
+  border: none;
+  background: transparent;
+  border-radius: 999px 0 0 999px;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.cellPaintMainButton:hover {
+  background: #f1f5f9;
+}
+
+.cellPaintMainButton:focus-visible {
+  outline: none;
+  background: #e2e8f0;
+}
+
+.cellPaintIcon {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.cellPaintUnderline {
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+}
+
+.cellPaintDropdown {
+  display: flex;
+  align-items: stretch;
+  position: static;
+}
+
+.cellPaintCaret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border-left: 1px solid rgba(15, 23, 42, 0.15);
+  border-radius: 0 999px 999px 0;
+  font-size: 10px;
+  color: #475569;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.cellPaintCaret::-webkit-details-marker {
+  display: none;
+}
+
+.cellPaintCaret:hover {
+  background: #f1f5f9;
+}
+
+.cellPaintMenu {
+  left: 0;
+  right: auto;
+  min-width: auto;
+  width: max-content;
+  gap: 8px;
+  padding: 8px;
+}
+
+.cellPaintSwatches {
+  display: grid;
+  grid-template-columns: repeat(4, 22px);
+  gap: 6px;
+}
+
+.cellPaintSwatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 100ms ease, box-shadow 100ms ease;
+}
+
+.cellPaintSwatch:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
+}
+
+.cellPaintSwatch:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.65);
+  outline-offset: 1px;
+}
+
+.cellPaintSectionLabel {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding: 2px 2px 0;
+}
+
+.cellPaintCustomRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.cellPaintCustomText {
+  flex: 1;
+  font-size: 12px;
+  color: #0f172a;
+}
+
+.cellPaintOkButton {
+  flex: 0 0 auto;
+  padding: 4px 14px;
+  border: 1px solid rgba(2, 132, 199, 0.45);
+  border-radius: 6px;
+  background: #0ea5e9;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.cellPaintOkButton:hover {
+  background: #0284c7;
+}
+
+.cellPaintOkButton:focus-visible {
+  outline: 2px solid rgba(2, 132, 199, 0.65);
+  outline-offset: 1px;
+}
+
+/* Native colour input — small square trigger; the styled preview above shows
+   the current pick, so keep this compact. */
+.cellPaintCustomInput {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 5px;
+  background: #ffffff;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.cellPaintClear {
+  text-align: center;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.cellPaintClear:hover {
+  background: #eef2f7;
+}
+
 .serviceMenuItemPrintable {
   background: #fef9c3;
   color: #713f12;

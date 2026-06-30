@@ -843,3 +843,31 @@
   background-color: #ccd5df !important;
   color: #181d1f !important;
 }
+
+/* ── Excel-style manual cell fill ("Fill" toolbar button) ──────────────────
+   The user selects cells and picks any colour (preset, recent, or custom).
+   Painted cells carry the .offer-products-grid__cell--paint marker class plus
+   an inline --fq-cellpaint custom property holding the chosen hex (both set in
+   offerProductsColumnDefs.tsx via cellClassRules + cellStyle).
+
+   The fill is rendered as a solid `background-image` gradient, NOT a
+   background-color. Every other rule above (row colours, selection, hover,
+   pricelist status, zebra) sets `background-color`; because background-image
+   paints ABOVE background-color, the manual fill always wins regardless of
+   selector specificity — no specificity war, no second-stylesheet copy. The
+   cell text and AG Grid's range outline still render on top. */
+.offer-products-grid .ag-cell.offer-products-grid__cell--paint {
+  background-image: linear-gradient(var(--fq-cellpaint, transparent), var(--fq-cellpaint, transparent)) !important;
+}
+/* A couple of rules above paint a background on the .ag-cell-value CHILD (the
+   unlinked + negative-margin case, resting + hover) which would otherwise sit
+   on top of the parent's fill overlay and hide it. Force the value span
+   transparent on painted cells so the fill shows through. The first selector
+   covers any future low-specificity .ag-cell-value background; the unlinked
+   ones mirror those rules' selectors (+ the paint marker) to out-rank them. */
+.offer-products-grid .ag-cell.offer-products-grid__cell--paint .ag-cell-value,
+.offer-products-grid .ag-row.offer-row--unlinked:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--paint .ag-cell-value,
+.offer-products-grid .ag-row.offer-row--unlinked.ag-row-hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--paint .ag-cell-value,
+.offer-products-grid .ag-row.offer-row--unlinked:hover:not(.offer-row--category):not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service) .ag-cell.offer-products-grid__cell--paint .ag-cell-value {
+  background-color: transparent !important;
+}

@@ -20,6 +20,13 @@ import pageHeaderStyles from '../../../components/PageHeader.module.css';
 import toolbarStyles from './ClientProductsPage.module.css';
 import lookupStyles from '../../../components/LookupModal.module.css';
 import { mapRowToClipboardRow, readClipboard } from './productClipboard';
+import {
+  CELL_PAINT_PALETTE,
+  addRecentColor,
+  buildCellPaintRecentStorageKey,
+  normalizeHexColor,
+  parseRecentColors,
+} from './offerCellPaint';
 
 const OfferProductsPivotPanel = dynamic(() => import('./OfferProductsPivotPanel'), { ssr: false });
 const AddRequestedProductsModal = dynamic(() => import('./AddRequestedProductsModal'), { ssr: false });
@@ -269,6 +276,52 @@ export default function ClientProductsPage({
   const layoutStorageKey = useMemo(() => buildLayoutStorageKey(userId), [userId]);
   const layoutStorageKeyRef = useRef(layoutStorageKey);
   layoutStorageKeyRef.current = layoutStorageKey;
+
+  // Recently-used cell-fill colours (per user, shared across offers, like
+  // Excel). Painting itself lives in the panel; this just feeds the picker.
+  const cellPaintRecentStorageKey = useMemo(() => buildCellPaintRecentStorageKey(userId), [userId]);
+  const [recentPaintColors, setRecentPaintColors] = useState<string[]>([]);
+  // The colour the main "Fill" bucket will apply. Choosing a colour in the
+  // dropdown only ARMS this (and the strip under the bucket) — it does NOT
+  // paint and does NOT touch recents. Painting happens only when the bucket is
+  // clicked, and a colour enters "Recent" only once it's actually applied.
+  const [activeFillColor, setActiveFillColor] = useState<string>(CELL_PAINT_PALETTE[0].hex);
+  const [customPaintColor, setCustomPaintColor] = useState<string>('#ffd966');
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let parsed: string[] = [];
+    try {
+      parsed = parseRecentColors(window.localStorage.getItem(cellPaintRecentStorageKey));
+    } catch {
+      parsed = [];
+    }
+    setRecentPaintColors(parsed);
+    if (parsed[0]) setActiveFillColor(parsed[0]);
+  }, [cellPaintRecentStorageKey]);
+  // Arm a colour without painting (dropdown selection).
+  const selectFillColor = useCallback((color: string) => {
+    const hex = normalizeHexColor(color);
+    if (hex) setActiveFillColor(hex);
+  }, []);
+  // Apply a colour to the current selection: arm it, paint, and remember it on
+  // success. Used by the main bucket (armed colour) and the custom-picker OK.
+  const applyColor = useCallback((color: string) => {
+    const hex = normalizeHexColor(color);
+    if (!hex) return;
+    setActiveFillColor(hex);
+    const painted = offerProductsPanelRef.current?.paintSelectedCells?.(hex) ?? 0;
+    if (painted <= 0) return;
+    setRecentPaintColors((prev) => {
+      const next = addRecentColor(prev, hex);
+      if (typeof window !== 'undefined') {
+        try { window.localStorage.setItem(cellPaintRecentStorageKey, JSON.stringify(next)); } catch { /* noop */ }
+      }
+      return next;
+    });
+  }, [cellPaintRecentStorageKey]);
+  const clearPaintColor = useCallback(() => {
+    offerProductsPanelRef.current?.paintSelectedCells?.(null);
+  }, []);
   const creationCountersRef = useRef<Record<CreatableActionType, number>>({
     category: 0,
     'printable-comment': 0,
@@ -1602,6 +1655,132 @@ export default function ClientProductsPage({
     </button>
   );
 
+  // Excel-style cell fill: select cells in the grid, then pick a colour (or
+  // "No fill" to clear). Paint is a per-user visual annotation persisted in
+  // localStorage by the panel — see offerCellPaint.ts.
+  // Excel-style split button: the main bucket applies the armed colour (shown
+  // as the strip under the bucket) to the selected cells; the caret opens the
+  // palette to arm a different colour. Default to the first preset (yellow).
+  const cellPaintControl = pivotView ? null : (
+    <div className={toolbarStyles.cellPaintSplit}>
+      <button
+        type="button"
+        className={toolbarStyles.cellPaintMainButton}
+        title={`Fill selected cells with ${activeFillColor}`}
+        aria-label={`Fill selected cells with ${activeFillColor}`}
+        onClick={() => applyColor(activeFillColor)}
+      >
+        <svg
+          className={toolbarStyles.cellPaintIcon}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.7}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          {/* hanging rod + pivot */}
+          <path d="M10 2.5v4.2" />
+          <circle cx="10" cy="6.9" r="0.7" fill="currentColor" stroke="none" />
+          {/* tilted bucket body, pouring lip to the right */}
+          <path d="M4.3 12.8 11.5 5.6l6.3 6.3-.5 5.1a2 2 0 0 1-2 1.8H8a2 2 0 0 1-2-1.8z" />
+          {/* inner highlight line + dot */}
+          <path d="M8.7 9.4 6.9 12.3" />
+          <circle cx="6.3" cy="13.7" r="0.55" fill="currentColor" stroke="none" />
+          {/* drop */}
+          <path d="M19.4 13.7c1 1.2 1.6 2 1.6 2.8a1.6 1.6 0 1 1-3.2 0c0-.8.6-1.6 1.6-2.8z" />
+        </svg>
+        <span
+          className={toolbarStyles.cellPaintUnderline}
+          style={{ backgroundColor: activeFillColor }}
+          aria-hidden="true"
+        />
+      </button>
+      <details className={toolbarStyles.cellPaintDropdown}>
+        <summary
+          className={toolbarStyles.cellPaintCaret}
+          title="Choose a fill colour"
+          aria-label="Choose a fill colour"
+        >
+          <span aria-hidden="true">▾</span>
+        </summary>
+        <div className={`${toolbarStyles.commentMenu} ${toolbarStyles.cellPaintMenu}`} role="menu" aria-label="Cell fill colours">
+        <div className={toolbarStyles.cellPaintSwatches}>
+          {CELL_PAINT_PALETTE.map((swatch) => (
+            <button
+              type="button"
+              key={swatch.key}
+              className={toolbarStyles.cellPaintSwatch}
+              style={{ backgroundColor: swatch.hex }}
+              title={`Choose ${swatch.label}`}
+              aria-label={`Choose ${swatch.label}`}
+              onClick={(event) => {
+                event.currentTarget.closest('details')?.removeAttribute('open');
+                selectFillColor(swatch.hex);
+              }}
+            />
+          ))}
+        </div>
+        {recentPaintColors.length > 0 ? (
+          <>
+            <div className={toolbarStyles.cellPaintSectionLabel}>Recent</div>
+            <div className={toolbarStyles.cellPaintSwatches}>
+              {recentPaintColors.map((hex) => (
+                <button
+                  type="button"
+                  key={hex}
+                  className={toolbarStyles.cellPaintSwatch}
+                  style={{ backgroundColor: hex }}
+                  title={`Choose ${hex}`}
+                  aria-label={`Choose ${hex}`}
+                  onClick={(event) => {
+                    event.currentTarget.closest('details')?.removeAttribute('open');
+                    selectFillColor(hex);
+                  }}
+                />
+              ))}
+            </div>
+          </>
+        ) : null}
+        <div className={toolbarStyles.cellPaintCustomRow}>
+          <input
+            type="color"
+            className={toolbarStyles.cellPaintCustomInput}
+            value={customPaintColor}
+            aria-label="Pick a custom fill colour"
+            onChange={(event) => setCustomPaintColor(event.target.value)}
+          />
+          <span className={toolbarStyles.cellPaintCustomText}>Custom colour</span>
+          <button
+            type="button"
+            className={toolbarStyles.cellPaintOkButton}
+            title="Apply this colour to the selected cells"
+            onClick={(event) => {
+              event.currentTarget.closest('details')?.removeAttribute('open');
+              applyColor(customPaintColor);
+            }}
+          >
+            OK
+          </button>
+        </div>
+        <button
+          type="button"
+          className={`${toolbarStyles.commentMenuItem} ${toolbarStyles.cellPaintClear}`}
+          role="menuitem"
+          onClick={(event) => {
+            event.currentTarget.closest('details')?.removeAttribute('open');
+            clearPaintColor();
+          }}
+        >
+          No fill (clear)
+        </button>
+        </div>
+      </details>
+    </div>
+  );
+
   const topLeftActions = (
     <div className={toolbarStyles.leftColumn}>
       <Link
@@ -1697,12 +1876,14 @@ export default function ClientProductsPage({
   const secondaryHeaderLeftActions = isStandardPackage ? (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
+      {cellPaintControl}
       {startingItemNoControl}
     </div>
   ) : (
     <div className={toolbarStyles.leftRequestedRow}>
       {undoButton}
       {collapseAllToggleButton}
+      {cellPaintControl}
       {addRequestedButton}
       {layoutSelect}
       {startingItemNoControl}

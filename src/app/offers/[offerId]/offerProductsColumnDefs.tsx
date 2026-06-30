@@ -7,6 +7,7 @@
 
 import React from 'react';
 import type {
+  CellClassParams,
   CellStyle,
   ColDef,
   ICellRendererParams,
@@ -43,6 +44,7 @@ import {
   type RequestedDisplayFieldKey,
 } from './offerProductsUtils';
 import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
+import { CELL_PAINT_MARKER_CLASS, isDarkColor, type ResolvePaintColor } from './products/offerCellPaint';
 import { deriveMarkupFactor, markupFactorFromMargin } from '../../../lib/pricing';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
@@ -219,6 +221,10 @@ export type ProductColumnDefsDeps = {
   offerCurrencySymbol: string;
   pricingPolicyName?: string | null;
   readOnly?: boolean;
+  // Excel-style manual cell fill. Resolves the hex colour painted on a cell (or
+  // null). Merged into every column so any cell can be painted — see
+  // offerCellPaint.ts.
+  resolvePaintColor?: ResolvePaintColor;
   // Handles an inline Markup-cell edit. Markup is a derived column (no stored
   // field): the typed value is converted to the equivalent Margin and routed
   // through the existing Margin pipeline by the panel.
@@ -355,14 +361,43 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     offerCurrencySymbol,
     pricingPolicyName,
     readOnly = false,
+    resolvePaintColor,
     onMarkupEdit,
   } = deps;
   const additionalDiscountVisibleByDefault = pricingPolicyName === 'AVC4';
 
   const offerCurrencyFormatter = buildCurrencyFormatter(offerCurrencySymbol);
 
+  // Merge the Excel-style manual cell fill into every column so any cell can be
+  // painted: a marker class (drives the CSS background-image overlay) plus an
+  // inline --fq-cellpaint custom property carrying the chosen hex, composed on
+  // top of each column's own cellStyle. Dark fills flip the text to white.
+  const applyPaintRules = (cols: ColDef[]): ColDef[] => {
+    const resolve = resolvePaintColor;
+    if (!resolve) return cols;
+    return cols.map((column) => {
+      const prevStyle = column.cellStyle;
+      return {
+        ...column,
+        cellClassRules: {
+          ...(column.cellClassRules ?? {}),
+          [CELL_PAINT_MARKER_CLASS]: (params: CellClassParams) => resolve(params) != null,
+        },
+        cellStyle: (params: CellClassParams): CellStyle | null | undefined => {
+          const base = typeof prevStyle === 'function' ? prevStyle(params) : prevStyle;
+          const hex = resolve(params);
+          if (!hex) return base ?? null;
+          const baseObj = base && typeof base === 'object' ? base : {};
+          const styled = { ...baseObj, '--fq-cellpaint': hex } as CellStyle;
+          if (isDarkColor(hex)) styled.color = '#ffffff';
+          return styled;
+        },
+      };
+    });
+  };
+
   if (standardPackageMode) {
-    return [
+    return applyPaintRules([
       {
         headerName: '',
         colId: '__row_drag__',
@@ -559,7 +594,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
         cellClass: actualNumericCellClass,
         cellStyle: actualNumericCellStyle,
       },
-    ];
+    ]);
   }
 
   // ── Full layout ──────────────────────────────────────────────────────
@@ -1300,7 +1335,7 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
 
   const requestedColumnIds = new Set<string>(['RequestedItemNo', ...REQUESTED_DISPLAY_FIELD_KEYS]);
   const hasSavedHidden = Object.keys(savedHiddenMap).length > 0;
-  return ordered.flatMap((column) => {
+  return applyPaintRules(ordered.flatMap((column) => {
     const id = typeof column.colId === 'string'
       ? column.colId
       : typeof column.field === 'string'
@@ -1328,5 +1363,5 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       return [{ ...column, hide: savedHiddenMap[id] }];
     }
     return [column];
-  });
+  }));
 }

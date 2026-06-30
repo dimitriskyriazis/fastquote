@@ -61,6 +61,13 @@ export async function POST(req: NextRequest) {
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID
       LEFT JOIN dbo.Customers cust ON cust.ID = c.CustomerID
       WHERE c.Email IS NOT NULL AND c.Email <> ''
+        -- Exclude contacts that have opted out / have a bad address: they must never be mailed.
+        AND (
+          c.EmailStatusID IS NULL
+          OR c.EmailStatusID NOT IN (
+               SELECT ID FROM dbo.EmailStatuses WHERE Name IN ('Email Unsubscribed', 'Wrong Email')
+             )
+        )
       ORDER BY c.LastName, c.FirstName
     `);
 

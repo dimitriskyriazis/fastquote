@@ -307,6 +307,13 @@ export default function MailsClient() {
   const columnDefs = useMemo<ColDef[]>(
     () => [
       {
+        field: "MailID",
+        headerName: "ID",
+        filter: "agNumberColumnFilter",
+        editable: false,
+        width: 90,
+      },
+      {
         field: "Date",
         headerName: "Date",
         filter: "agDateColumnFilter",

@@ -473,19 +473,16 @@ export async function POST(
         ? Boolean(existingOffer.IsStandardPackage)
         : false;
 
-    // Copies reset status to Draft Request; new versions keep the source offer's status
+    // Both copies and new versions reset status to Draft Request and clear the ERP project code.
     let effectiveStatusId = existingOffer.StatusID;
-    let effectiveERPProjectCode = existingOffer.ERPProjectCode;
-    if (duplicateMode === 'copy') {
-      effectiveERPProjectCode = null;
-      const draftStatusRequest = pool.request();
-      const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
-        SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'
-      `);
-      const draftStatusId = draftStatusResult.recordset?.[0]?.ID ?? null;
-      if (draftStatusId != null) {
-        effectiveStatusId = draftStatusId;
-      }
+    const effectiveERPProjectCode: string | null = null;
+    const draftStatusRequest = pool.request();
+    const draftStatusResult = await draftStatusRequest.query<{ ID: number }>(`
+      SELECT TOP 1 ID FROM dbo.OfferStatus WHERE LOWER(TRIM(Name)) = 'draft request'
+    `);
+    const draftStatusId = draftStatusResult.recordset?.[0]?.ID ?? null;
+    if (draftStatusId != null) {
+      effectiveStatusId = draftStatusId;
     }
 
     const transaction = new sql.Transaction(pool);

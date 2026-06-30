@@ -66,6 +66,11 @@ export type OfferProductsPanelHandle = {
     treeOrdering: string;
     rows: Array<{ OfferDetailID: number; description: string | null }>;
   }>>;
+  // Excel-style cell fill: paint the currently-selected cell range with the
+  // given hex colour, or pass null to clear the fill. Returns the number of
+  // cells changed (0 if nothing was selected). Persisted per user + offer in
+  // localStorage (purely visual — never sent to the server).
+  paintSelectedCells: (color: string | null) => number;
 };
 
 export type OfferProductsTemplateExportRow = {
