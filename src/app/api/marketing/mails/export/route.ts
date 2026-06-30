@@ -161,7 +161,10 @@ export async function POST(req: NextRequest) {
     const englishRows = allRows.filter((r) => !isGreek(r.LastName) && !isGreek(r.FirstName));
 
     const folderName = buildMailFolderName(mailId, mailRow.Description);
-    const folderPath = path.join(requireMailsExportRoot(), folderName);
+    // The export root is a runtime env var (an external network share), not a build-time
+    // path. Without these turbopackIgnore hints, NFT tries to statically resolve the
+    // unknown base and ends up globbing the whole project into the route's file trace.
+    const folderPath = path.join(/*turbopackIgnore: true*/ requireMailsExportRoot(), folderName);
 
     const filesToWrite: Array<{ name: string; data: Buffer | string }> = [
       { name: "MailCustomerEmailList.xlsx", data: Buffer.from(buildExcelBuffer(allRows, "All Contacts")) },
@@ -176,8 +179,8 @@ export async function POST(req: NextRequest) {
       await Promise.all(
         filesToWrite.map(({ name, data }) =>
           typeof data === "string"
-            ? fs.writeFile(path.join(folderPath, name), data, "utf8")
-            : fs.writeFile(path.join(folderPath, name), data),
+            ? fs.writeFile(path.join(/*turbopackIgnore: true*/ folderPath, name), data, "utf8")
+            : fs.writeFile(path.join(/*turbopackIgnore: true*/ folderPath, name), data),
         ),
       );
     } catch (writeErr) {
