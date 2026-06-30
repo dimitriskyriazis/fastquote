@@ -1438,7 +1438,7 @@ export default function ClientProductsPage({
           Pricing Behaviour
         </div>
         <div style={{ padding: '2px 8px 6px', fontSize: '0.8rem', fontWeight: 600, color: '#475569' }}>
-          When Net Cost or Telmaco Discount changes:
+          When List Price, Net Cost or Telmaco Discount changes:
         </div>
         {([false, true] as const).map((holdMargin) => {
           const label = holdMargin ? 'Keep Margin' : 'Keep Net';

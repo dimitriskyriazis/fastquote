@@ -69,7 +69,8 @@ export interface ProjectFormData {
   erpProjectCode: string | null;
   description: string | null;
   customerName: string | null;
-  salesPersonName: string | null;
+  salesPersonName: string | null; // full name — used for the required-field check
+  salesPersonCode: string | null; // AspNetUsers.NameCode — shown as "Αρμόδιος Πωλητής"
   contactName: string | null;
   orderSignedDate: Date | null;
   deliveryDueDate: Date | null;
@@ -77,6 +78,9 @@ export interface ProjectFormData {
     totalNet: number; // overall net price (after offer-level extra discount)
     productsNet: number; // product lines only
     servicesNet: number; // service lines only
+    totalCost: number; // overall cost price
+    productsCost: number; // product lines cost only
+    servicesCost: number; // service lines cost only
     marginPct: number | null; // 1 − ΣCost/ΣNet, as a percentage
   };
   services: {
@@ -173,6 +177,7 @@ export async function getProjectFormData(offerId: number): Promise<ProjectFormDa
       DeliveryDueDate: Date | string | null;
       CustomerName: string | null;
       SalesPersonName: string | null;
+      SalesPersonNameCode: string | null;
       ContactName: string | null;
       ExtraNetDiscount: number | null;
       ExtraNetDiscountMode: string | null;
@@ -185,6 +190,7 @@ export async function getProjectFormData(offerId: number): Promise<ProjectFormDa
         c.Name AS CustomerName,
         -- Prefer the Greek full name (this form is in Greek), fall back to English.
         COALESCE(NULLIF(LTRIM(RTRIM(sales.FullNameGR)), ''), sales.FullName) AS SalesPersonName,
+        sales.NameCode AS SalesPersonNameCode,
         LTRIM(RTRIM(CONCAT(
           ISNULL(t.Name, ''), ' ',
           ISNULL(ct.FirstName, ''), ' ',
@@ -211,12 +217,16 @@ export async function getProjectFormData(offerId: number): Promise<ProjectFormDa
       productsNet: number | null;
       servicesNet: number | null;
       totalCost: number | null;
+      productsCost: number | null;
+      servicesCost: number | null;
     }>(`
       SELECT
         SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalNet, 0) ELSE 0 END) AS totalNet,
         SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} AND ISNULL(od.IsService, 0) = 0 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) AS productsNet,
         SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} AND ISNULL(od.IsService, 0) = 1 THEN COALESCE(od.TotalNet, 0) ELSE 0 END) AS servicesNet,
-        SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalCost, 0) ELSE 0 END) AS totalCost
+        SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalCost, 0) ELSE 0 END) AS totalCost,
+        SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} AND ISNULL(od.IsService, 0) = 0 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) AS productsCost,
+        SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} AND ISNULL(od.IsService, 0) = 1 THEN COALESCE(od.TotalCost, 0) ELSE 0 END) AS servicesCost
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @offerId;
     `);
@@ -242,7 +252,11 @@ export async function getProjectFormData(offerId: number): Promise<ProjectFormDa
   const netBeforeExtra = num(totalsRow?.totalNet);
   const productsBefore = num(totalsRow?.productsNet);
   const servicesBefore = num(totalsRow?.servicesNet);
+  // Cost prices are the actual costs — the offer-level extra discount only reduces
+  // the selling (net) price, never cost, so these are used as summed (no factor).
   const totalCost = num(totalsRow?.totalCost);
+  const productsCost = num(totalsRow?.productsCost);
+  const servicesCost = num(totalsRow?.servicesCost);
 
   const extraValue = header?.ExtraNetDiscount == null ? null : num(header.ExtraNetDiscount);
   const extraMode: 'pct' | 'abs' = header?.ExtraNetDiscountMode === 'abs' ? 'abs' : 'pct';
@@ -276,10 +290,11 @@ export async function getProjectFormData(offerId: number): Promise<ProjectFormDa
     description: cleanString(header?.Description),
     customerName: cleanString(header?.CustomerName),
     salesPersonName: cleanString(header?.SalesPersonName),
+    salesPersonCode: cleanString(header?.SalesPersonNameCode),
     contactName: cleanString(header?.ContactName),
     orderSignedDate: toDate(header?.OrderSignedDate),
     deliveryDueDate: toDate(header?.DeliveryDueDate),
-    totals: { totalNet, productsNet, servicesNet, marginPct },
+    totals: { totalNet, productsNet, servicesNet, totalCost, productsCost, servicesCost, marginPct },
     services: { profiles, totalQty: servicesTotalQty, totalCost: servicesTotalCost },
   };
 }

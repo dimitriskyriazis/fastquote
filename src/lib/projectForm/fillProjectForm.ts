@@ -1,6 +1,6 @@
 // Fills the TELMACO "Project Handover / Budget" Word template (.docx) with an
-// offer's data. The uploaded template carries NO placeholder tokens — it is the
-// blank form — so we locate each fill point by matching the Greek/English LABELS
+// offer's data. The template carries NO placeholder tokens — it is the blank
+// form — so we locate each fill point by matching the Greek/English LABELS
 // in the document and write the resolved value into the adjacent cell (or append
 // it inline after the label).
 //
@@ -33,9 +33,15 @@ const fmtMoneyEur = (v: number | null | undefined): string => {
   const s = fmtMoneyPlain(v);
   return s ? `${s} €` : '';
 };
+// Floor (never round up) to 2 decimals before formatting, mirroring the offer
+// products totals bar (offerProductsUtils.floorTo) so the form's margin matches
+// what FastQuote shows and never overstates it — e.g. 32.118% reads 32,11 here
+// too, not 32,12. The 1e-7 epsilon absorbs float noise (an exact 32.80 won't
+// floor to 32.79).
 const fmtPercentPlain = (v: number | null | undefined): string => {
   if (v == null || !Number.isFinite(v) || v === 0) return '';
-  return moneyFmt.format(v);
+  const floored = Math.floor(v * 100 + 1e-7) / 100;
+  return moneyFmt.format(floored);
 };
 const fmtQty = (v: number | null | undefined): string => {
   if (v == null || !Number.isFinite(v) || v === 0) return '';
@@ -215,7 +221,7 @@ function fillSection1Table(rows: WNode[], appendInline: AppendInline, data: Proj
     ['Αξία Ανάθεσης', fmtMoneyEur(data.totals.totalNet)],
     ['Αξία Υπηρεσιών', fmtMoneyEur(data.totals.servicesNet)],
     ['Περιγραφή Έργου', data.description ?? ''], // specific: avoids matching "Τεχνική Περιγραφή"
-    ['Αρμόδιος Πωλητής', data.salesPersonName ?? ''],
+    ['Αρμόδιος Πωλητής', data.salesPersonCode ?? ''], // AspNetUsers.NameCode, not the full name
     ['Παραλαβής', data.contactName ?? ''], // "Υπεύθυνος Παραλαβής(πελάτη)" — match Παραλαβής, not Πελάτης
     ['Πελάτης', data.customerName ?? ''],
     ['Ημ/νία Σύμβασης', fmtDate(data.orderSignedDate)],
@@ -247,13 +253,14 @@ function fillBudgetHeaderTable(rows: WNode[], setCell: SetCell, data: ProjectFor
   }
 }
 
-// T3 — total-cost summary: "Τομέας | Κόστος (€)". The € is already in the header,
-// so insert plain numbers (no symbol). Write into the value cell (c1).
+// T3 — total-cost summary: "Τομέας | Κόστος (€)". These are COST prices, not net
+// selling prices. The € is already in the header, so insert plain numbers (no
+// symbol). Write into the value cell (c1).
 function fillTotalCostTable(rows: WNode[], setCell: SetCell, data: ProjectFormData): void {
   const rules: Array<[string, string]> = [
-    ['Προϊόντα', fmtMoneyPlain(data.totals.productsNet)],
-    ['Υπηρεσίες', fmtMoneyPlain(data.totals.servicesNet)],
-    ['Σύνολο', fmtMoneyPlain(data.totals.totalNet)],
+    ['Προϊόντα', fmtMoneyPlain(data.totals.productsCost)],
+    ['Υπηρεσίες', fmtMoneyPlain(data.totals.servicesCost)],
+    ['Σύνολο', fmtMoneyPlain(data.totals.totalCost)],
     ['Περιθώριο Κέρδους', fmtPercentPlain(data.totals.marginPct)],
   ];
   for (const row of rows) {

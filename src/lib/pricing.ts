@@ -282,12 +282,14 @@ export const deriveWithoutListPrice = (
  *   - ad-hoc row (ListPrice absent)       → NetUnitPrice / NetCost are anchors.
  *
  * Cascade table (price-list row, single edit). "hold" = unchanged,
- * "calc" = recomputed.  Cost-side edits (TelmacoDiscount, NetCost) branch on
- * the Keep Net / Keep Margin toggle (`holdMarginOnCostChange`):
+ * "calc" = recomputed.  Edits that branch on the Keep Net / Keep Margin toggle
+ * (`holdMarginOnCostChange`) — ListPrice plus the cost-side edits
+ * (TelmacoDiscount, NetCost) — list both variants:
  *
  *   field edited      | toggle      | LP   CD    NP    TD    TC    M
  *   ------------------|-------------|----------------------------------
- *   ListPrice         |     —       | edit hold  calc  hold  calc  hold
+ *   ListPrice         | Keep Net    | edit calc  hold  calc  hold  hold
+ *   ListPrice         | Keep Margin | edit hold  calc  hold  calc  hold
  *   CustomerDiscount  |     —       | hold edit  calc  hold  hold  calc
  *   NetUnitPrice      |     —       | hold calc  edit  hold  hold  calc
  *   TelmacoDiscount   | Keep Net    | hold hold  hold  edit  calc  calc
@@ -299,8 +301,14 @@ export const deriveWithoutListPrice = (
  * (*) A margin edit derives NP, then NP is snapped via roundPriceByMagnitude
  * and Margin is refreshed to the actual value the rounded price yields.
  *
- * Keep Margin necessarily recomputes CD + NP: holding LP and the margin while
- * the cost moves forces the sell price (and therefore the discount) to float.
+ * On a ListPrice edit both toggle variants preserve Margin; they differ in what
+ * stays fixed: Keep Net holds the net prices (sacred sell/cost), so the discount
+ * percentages float; Keep Margin holds the discount percentages, so the net
+ * prices rescale with the list price.
+ *
+ * Keep Margin necessarily recomputes CD + NP on a cost-side edit: holding LP and
+ * the margin while the cost moves forces the sell price (and therefore the
+ * discount) to float.
  *
  * On ad-hoc rows (no valid List Price) the discount columns can't be derived,
  * so the absolute fields are held and Margin is refreshed from NP/TC.
@@ -341,19 +349,24 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
     return { customerDiscount: cd, telmacoDiscount: td, netUnitPrice: newNp, netCost: tc, margin: newM, additionalCustomerDiscount: acd };
   }
 
-  // ListPrice edit — hold both discount percentages (CustomerDiscount and
-  // TelmacoDiscount) and rescale the absolute prices to the new list price, so
-  // Margin is preserved (the screenshot behaviour for a normal row).
+  // ListPrice edit — governed by the Keep Net / Keep Margin toggle. Either
+  // variant preserves Margin; they differ in what stays fixed:
+  //   Keep Net    → hold the net prices (NP + TC); the discount percentages
+  //                 (CustomerDiscount + TelmacoDiscount) float to match the new LP.
+  //   Keep Margin → hold the discount percentages and rescale NP + TC to the new
+  //                 list price (the classic "normal row" behaviour).
   //
-  // Guard: when a discount is a stale/absent default (null or 0) while a real
-  // absolute price exists, hold that price and back out the implied discount
-  // instead. This protects a freshly-typed Net price/cost on a just-inserted
-  // row (whose discounts are still 0) from being overwritten.
+  // Guard: a net value that is null/0 can't be held — fall back to deriving it
+  // from its discount. Under Keep Margin this same fallback also protects a
+  // freshly-typed Net price/cost on a just-inserted row (whose discounts are
+  // still a stale 0) from being overwritten.
   if (p.listPrice) {
     if (!hasValidLp) return null;
 
-    const holdNpAbsolute = (cd == null || Object.is(cd, 0)) && np != null && !Object.is(np, 0);
-    const holdTcAbsolute = (td == null || Object.is(td, 0)) && tc != null && !Object.is(tc, 0);
+    const holdNpAbsolute = np != null && !Object.is(np, 0)
+      && (!keepMargin || cd == null || Object.is(cd, 0));
+    const holdTcAbsolute = tc != null && !Object.is(tc, 0)
+      && (!keepMargin || td == null || Object.is(td, 0));
 
     const newNp = holdNpAbsolute
       ? np

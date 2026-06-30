@@ -3,11 +3,38 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logger } from './loggerEdge';
 import { getRequestId } from './requestId';
 
-// NOTE: no `blockDuration` is set on any limiter. With rate-limiter-flexible that
-// means there is no extended lock-out: once the rolling `duration` window frees up
-// points they become available again. Previously every limiter used
-// `blockDuration: duration`, so a brief burst locked the client out for the full
-// 15-minute window (the `retryAfter: 445` users saw was mid-block).
+// ── Rate-limit budgets are configured EXCLUSIVELY via environment variables ──────────
+// There are intentionally NO limit numbers in this file. The values live in the
+// environment (.env.local in dev; the OS/PM2 process env in prod) so config never drifts
+// between code and env. Tune a limit by changing the env var and redeploying.
+//
+// IMPORTANT (Next.js 16, edge middleware): this module is imported by middleware.ts, which
+// runs in the Edge runtime. Edge bundles inline `process.env.X` at BUILD time, so a changed
+// env var only takes effect after a rebuild — NOT on a bare process restart. The prod
+// deploy (git pull + build + pm2 restart) rebuilds, so changes apply on the next deploy.
+//
+// FAIL CLOSED: if a var is missing/malformed we throw at module load (refuse to serve)
+// rather than continue. This is deliberate: rate-limiter-flexible silently coerces a
+// non-numeric `points` to its internal default of 4, which would throttle every user to
+// ~4 requests/window — a silent, near-total lockout that's far harder to diagnose than a
+// loud boot failure. (Mirrors, more strictly, the SESSION_SECRET guard in middleware.ts.)
+const requireBudget = (raw: string | undefined, varName: string): number => {
+  const n = Number(raw);
+  if (raw === undefined || raw.trim() === '' || !Number.isInteger(n) || n <= 0) {
+    throw new Error(
+      `[rateLimiterEdge] ${varName} is missing or invalid (got: ${raw ?? 'unset'}). ` +
+        `Rate-limit budgets are configured exclusively via environment variables; set ` +
+        `${varName} to a positive integer. Refusing to start.`,
+    );
+  }
+  return n;
+};
+
+// NOTE: RateLimiterMemory is a FIXED window (not sliding) — the budget resets all at once
+// when `duration` elapses from the principal's first request, and with no `blockDuration`
+// set, an exhausted bucket's `retryAfter` is the time left in that window. So `*_DURATION`
+// is also the worst-case lockout a tripped user faces; keep it short (e.g. 300s) so a false
+// trip costs ~5 minutes, not the 15 the old 900s window imposed.
 const createRateLimiter = (points: number, duration: number) =>
   new RateLimiterMemory({ points, duration });
 
@@ -16,25 +43,31 @@ const createRateLimiter = (points: number, duration: number) =>
 // IIS reverse proxy collapsing every user onto one shared IP no longer throttles
 // the whole company on a single bucket.
 const ipLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_IP_POINTS) || 5000,
-  Number(process.env.RATE_LIMIT_IP_DURATION) || 900,
+  requireBudget(process.env.RATE_LIMIT_IP_POINTS, 'RATE_LIMIT_IP_POINTS'),
+  requireBudget(process.env.RATE_LIMIT_IP_DURATION, 'RATE_LIMIT_IP_DURATION'),
 );
 
-// Primary per-user budget. This is the previously-configured-but-never-wired
-// RATE_LIMIT_USER_* budget. It governs everything an authenticated user does,
-// including the high-volume server-side grid block fetches (which are POSTs).
+// Primary per-user budget. Governs everything an authenticated user does, including the
+// high-volume server-side grid block fetches (POSTs) AND every cell-edit PATCH. Keep this
+// comfortably above the strict budget so strict (not this) stays the binding cap for edits;
+// otherwise raising strict would just relocate the 429 onto this bucket in a mixed
+// edit+scroll session.
 const userLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_USER_POINTS) || 15000,
-  Number(process.env.RATE_LIMIT_USER_DURATION) || 900,
+  requireBudget(process.env.RATE_LIMIT_USER_POINTS, 'RATE_LIMIT_USER_POINTS'),
+  requireBudget(process.env.RATE_LIMIT_USER_DURATION, 'RATE_LIMIT_USER_DURATION'),
 );
 
-// Extra throttle for genuine, destructive mutations only (PUT/PATCH/DELETE).
-// Read-only grid data fetches use POST and must NOT count against this bucket,
-// otherwise normal scrolling/filtering exhausts it (the original "offers don't
-// load in prod" 429). POST creates are still bounded by `userLimiter` above.
+// Extra throttle for mutations (PUT/PATCH/DELETE). Read-only grid data fetches use POST and
+// must NOT count against this bucket, otherwise normal scrolling/filtering exhausts it (the
+// original "offers don't load in prod" 429). POST creates are still bounded by `userLimiter`.
+//
+// NOTE: in this app PATCH is the *normal editing* verb — each single cell edit in the
+// offer-products grid is one PATCH, and undo/redo PATCH too. So this bucket governs routine
+// work, not just "destructive" ops; size RATE_LIMIT_STRICT_POINTS to cover a power user's
+// editing/paste/undo burst within one window (the old 1000/15min tripped on normal edits).
 const strictLimiter = createRateLimiter(
-  Number(process.env.RATE_LIMIT_STRICT_POINTS) || 1000,
-  Number(process.env.RATE_LIMIT_STRICT_DURATION) || 900,
+  requireBudget(process.env.RATE_LIMIT_STRICT_POINTS, 'RATE_LIMIT_STRICT_POINTS'),
+  requireBudget(process.env.RATE_LIMIT_STRICT_DURATION, 'RATE_LIMIT_STRICT_DURATION'),
 );
 
 function getClientIp(req: NextRequest): string {

@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo, type DragEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { showToastMessage } from '../../../../lib/toast';
+import { showConfirmDialog, showMultiChoiceDialog } from '../../../../lib/confirm';
+import { formatDateInputValue } from '../../../lib/formatDateInputValue';
 import LookupModal from '../../../components/LookupModal';
 import {
   DEFAULT_PDF_PRODUCT_COLUMNS,
@@ -31,8 +33,13 @@ const TERM_FIELD_LABELS: Record<string, string> = {
   offerValidity: 'Offer Validity',
 };
 
-const OFFER_FIELD_LABELS: Record<string, string> = {
-  offerDate: 'Offer Date',
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** Today's local calendar date as YYYY-MM-DD — matches what the date picker stores for "today". */
+const toLocalYmd = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+/** YYYY-MM-DD → DD/MM/YYYY for display, matching the Basic Data date fields. */
+const ymdToDisplay = (ymd: string) => {
+  const [y, m, d] = ymd.split('-');
+  return y && m && d ? `${d}/${m}/${y}` : ymd;
 };
 
 const menuItemStyle: React.CSSProperties = {
@@ -138,6 +145,28 @@ export default function ExportPdfButton({ offerId, className }: Props) {
     };
   }, []);
 
+  const setOfferDateToToday = useCallback(async (): Promise<boolean> => {
+    const todayYmd = toLocalYmd(new Date());
+    try {
+      const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: [{ field: 'OfferDate', value: todayYmd }] }),
+      });
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? `HTTP ${res.status}`);
+      }
+      // Let the Basic Data panel reflect the new date immediately.
+      window.dispatchEvent(new CustomEvent('fastquote:offer-date-updated', { detail: todayYmd }));
+      return true;
+    } catch (err) {
+      console.error('Failed to update offer date:', err);
+      showToastMessage(err instanceof Error ? err.message : 'Failed to update the offer date.', 'error');
+      return false;
+    }
+  }, [offerId]);
+
   const openMenuWithValidation = useCallback(async () => {
     if (showMenu) {
       setShowMenu(false);
@@ -154,33 +183,60 @@ export default function ExportPdfButton({ offerId, className }: Props) {
       const data = await res.json();
       const isMissing = (v: unknown) => v == null || (typeof v === 'string' && v.trim().length === 0);
 
+      // Required terms still hard-block PDF generation.
       const terms = data.terms ?? {};
       const missingTerms: string[] = [];
       if (isMissing(terms.paymentTerms)) missingTerms.push('paymentTerms');
       if (isMissing(terms.deliveryTime)) missingTerms.push('deliveryTime');
       if (isMissing(terms.offerValidity)) missingTerms.push('offerValidity');
 
-      const offerDateMissing = isMissing(data.offerDate);
-      const hasAnyMissing = offerDateMissing || missingTerms.length > 0;
-
-      if (offerDateMissing) {
-        window.dispatchEvent(new CustomEvent('fastquote:highlight-offer-date-missing'));
-      }
       if (missingTerms.length > 0) {
         window.dispatchEvent(
           new CustomEvent('fastquote:highlight-pdf-terms-missing', { detail: missingTerms }),
         );
-      }
-      if (hasAnyMissing) {
-        const allLabels: string[] = [];
-        if (offerDateMissing) allLabels.push(OFFER_FIELD_LABELS.offerDate);
-        for (const id of missingTerms) allLabels.push(TERM_FIELD_LABELS[id]!);
+        const allLabels = missingTerms.map((id) => TERM_FIELD_LABELS[id]!);
         showToastMessage(
           `Cannot generate PDF. Please fill in: ${allLabels.join(', ')}.`,
           'error',
         );
         return;
       }
+
+      // Offer date: prompt to refresh it when it's missing or older than today.
+      // Derive the offer's date the same way the Basic Data form displays it
+      // (formatDateInputValue) so the prompt always shows the date the user sees.
+      const todayYmd = toLocalYmd(new Date());
+      const todayDisplay = ymdToDisplay(todayYmd);
+      const offerYmd = formatDateInputValue(data.offerDate) || null;
+      if (offerYmd === null) {
+        const confirmed = await showConfirmDialog({
+          title: 'Set the offer date?',
+          message: `This offer has no date set. Set it to today (${todayDisplay}) before printing?`,
+          confirmLabel: 'Set to today',
+          cancelLabel: 'Cancel',
+        });
+        if (!confirmed || !(await setOfferDateToToday())) {
+          // Cancelled, or the update failed — flag the empty field so the user can fix it.
+          window.dispatchEvent(new CustomEvent('fastquote:highlight-offer-date-missing'));
+          return;
+        }
+      } else if (offerYmd < todayYmd) {
+        const offerDisplay = ymdToDisplay(offerYmd);
+        const choice = await showMultiChoiceDialog({
+          title: 'Update the offer date?',
+          message: `This offer is dated ${offerDisplay}. Update it to today (${todayDisplay}) before printing, or keep the existing date?`,
+          choices: [
+            { label: `Update to today (${todayDisplay})`, value: 'update' },
+            { label: `Keep ${offerDisplay}`, value: 'keep' },
+            { label: 'Cancel', value: 'cancel' },
+          ],
+        });
+        // null = dismissed (Esc/overlay-click), 'cancel' = explicit cancel → don't print
+        if (choice === null || choice === 'cancel') return;
+        if (choice === 'update' && !(await setOfferDateToToday())) return;
+        // 'keep' → continue and print with the existing date
+      }
+
       setNoOfLevels(data.noOfLevels ?? 0);
       setPrintProducts(!!data.printProducts);
       setPrintCategories(!!data.printCategories);
@@ -195,7 +251,7 @@ export default function ExportPdfButton({ offerId, className }: Props) {
     } finally {
       setLoadingSettings(false);
     }
-  }, [offerId, showMenu]);
+  }, [offerId, showMenu, setOfferDateToToday]);
 
   useEffect(() => {
     if (!showMenu) return;

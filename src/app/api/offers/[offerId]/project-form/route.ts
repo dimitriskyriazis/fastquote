@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import fs from 'node:fs/promises';
 import { logRequest } from '../../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../../lib/authz';
 import {
@@ -11,6 +12,20 @@ export const runtime = 'nodejs';
 
 const DOCX_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+// The blank TELMACO project form lives on the file server. Its absolute path is
+// configured via PROJECT_FORM_TEMPLATE_PATH (set it in your environment, e.g.
+// .env.local) so the location is never hard-coded in the app.
+const requireProjectFormTemplatePath = (): string => {
+  const raw = process.env.PROJECT_FORM_TEMPLATE_PATH;
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (!value) {
+    throw new Error(
+      'Missing PROJECT_FORM_TEMPLATE_PATH. Set it in your environment (e.g. .env.local) to the absolute path of the blank project form (.docx).',
+    );
+  }
+  return value;
+};
 
 const parseOfferId = (raw: string): number | null => {
   const n = Number(raw);
@@ -47,8 +62,8 @@ export async function GET(
 }
 
 // POST /api/offers/[offerId]/project-form
-// Body: multipart/form-data with `file` = the blank TELMACO project form (.docx).
-// Returns the same document filled with the offer's data, as a download.
+// Reads the blank TELMACO project form from the file server, fills it with the
+// offer's data and returns it as a download. No request body is needed.
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ offerId: string }> },
@@ -64,19 +79,6 @@ export async function POST(
       return NextResponse.json({ ok: false, error: 'Invalid offer ID' }, { status: 400 });
     }
 
-    const formData = await req.formData();
-    const file = formData.get('file');
-    if (!(file instanceof File)) {
-      return NextResponse.json({ ok: false, error: 'No file uploaded' }, { status: 400 });
-    }
-    if (!file.name.toLowerCase().endsWith('.docx')) {
-      return NextResponse.json(
-        { ok: false, error: 'Please upload a Word (.docx) template' },
-        { status: 400 },
-      );
-    }
-
-    const templateBuffer = Buffer.from(await file.arrayBuffer());
     const data = await getProjectFormData(numericId);
 
     // Guard against missing Basic Data (defence in depth — the UI checks first).
@@ -92,11 +94,23 @@ export async function POST(
       );
     }
 
+    let templateBuffer: Buffer;
+    try {
+      const templatePath = requireProjectFormTemplatePath();
+      templateBuffer = await fs.readFile(templatePath);
+    } catch (err) {
+      console.error('project-form template read failed', err);
+      return NextResponse.json(
+        { ok: false, error: 'Could not open the blank project form template on the file server.' },
+        { status: 500 },
+      );
+    }
+
     let result;
     try {
       result = await fillProjectForm(templateBuffer, data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to read the uploaded document';
+      const message = err instanceof Error ? err.message : 'Failed to read the project form template';
       return NextResponse.json({ ok: false, error: message }, { status: 400 });
     }
 

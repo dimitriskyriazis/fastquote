@@ -111,21 +111,12 @@ export default function MailContactsClient({ mailId, description }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mailId: Number(mailId) }),
       });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => null) as { error?: string } | null;
-        showToastMessage(errData?.error ?? 'Export failed', 'error');
+      const data = await res.json().catch(() => null) as { ok?: boolean; folder?: string; error?: string } | null;
+      if (!res.ok || !data?.ok) {
+        showToastMessage(data?.error ?? 'Export failed', 'error');
         return;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `MailCustomerEmailList_${mailId}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      showToastMessage('Export downloaded', 'success');
+      showToastMessage(`Export saved to ${data.folder ?? 'the shared drive'}`, 'success');
     } catch (err) {
       console.error('Export failed', err);
       showToastMessage('Export failed', 'error');

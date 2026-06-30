@@ -349,6 +349,64 @@ const SELECT_FIELD_EXPRESSIONS: Record<string, string> = {
   CategoryName: `NULLIF(LTRIM(RTRIM(cat.ProductDescription)), '')`,
 };
 
+// Category rows store no total of their own; their displayed subtotal is the
+// sum of their descendant priced rows, normally aggregated client-side from the
+// loaded child rows. When a category is collapsed (or the grid starts fully
+// collapsed) those descendants are filtered out of the response, so the client
+// can no longer aggregate them and falls back to the category row's own
+// TotalPrice/TotalNet/TotalCost. We populate those here so a collapsed category
+// still shows its subtotal. `catTotals` (see CATEGORY_TOTALS_APPLY_SQL) is an
+// OUTER APPLY joined only into the row query; the CASE keeps non-category rows
+// reading their own stored totals.
+const CATEGORY_TOTAL_SELECT_EXPRESSIONS: Record<string, string> = {
+  TotalPrice: `CASE WHEN ISNULL(od.IsCategory, 0) = 1 THEN catTotals.CatTotalPrice ELSE od.TotalPrice END`,
+  TotalNet: `CASE WHEN ISNULL(od.IsCategory, 0) = 1 THEN catTotals.CatTotalNet ELSE od.TotalNet END`,
+  TotalCost: `CASE WHEN ISNULL(od.IsCategory, 0) = 1 THEN catTotals.CatTotalCost ELSE od.TotalCost END`,
+};
+
+// Which descendant rows count toward a category subtotal. Mirrors the client's
+// category aggregate (isOfferProductCommentOrProduct && !isOfferProductOption in
+// offerProductsUtils.ts): products / comments / services, excluding options and
+// nested category rows. Keeping the two in sync means the number doesn't jump
+// when a category is expanded (client sum) vs collapsed (this server sum).
+const CATEGORY_DESCENDANT_COUNTED_PREDICATE = `
+  ISNULL(odc.IsOption, 0) = 0
+  AND ISNULL(odc.IsCategory, 0) = 0
+  AND (
+    ISNULL(odc.IsService, 0) = 1
+    OR ISNULL(odc.IsComment, 0) = 1
+    OR NULLIF(LTRIM(RTRIM(odc.PartNumber)), '') IS NOT NULL
+    OR NULLIF(LTRIM(RTRIM(odc.ModelNumber)), '') IS NOT NULL
+    OR NULLIF(LTRIM(RTRIM(odc.RequestedPartNo)), '') IS NOT NULL
+    OR NULLIF(LTRIM(RTRIM(odc.RequestedModelNo)), '') IS NOT NULL
+  )`;
+// The inner WHERE's `ISNULL(od.IsCategory, 0) = 1` guard means the subquery only
+// scans descendants for category rows; for product/comment rows it short-circuits
+// to no rows (catTotals.* = NULL, the CASE above falls back to od.Total*).
+// Collapse state is deliberately ignored here — a category's subtotal is always
+// its full descendant sum regardless of what's hidden for paging.
+//
+// Cost note: this APPLY only does real work when a query both selects Total*
+// (so CATEGORY_TOTAL_SELECT_EXPRESSIONS references catTotals) AND returns
+// category rows — i.e. the paged main grid (<= ~1000 rows, a few dozen
+// categories). The pivot view (forces IsCategory = 0) and the allRows
+// export/copy paths don't request Total*, so catTotals is unreferenced and the
+// optimizer prunes the APPLY entirely — no per-row blow-up. If a future allRows
+// export ever adds Total* to its requested fields, replace this per-category
+// APPLY with a single grouped CTE that rolls leaf rows up to all ancestor
+// paths, otherwise it becomes O(categories x rows).
+const CATEGORY_TOTALS_APPLY_SQL = `
+        OUTER APPLY (
+          SELECT
+            SUM(CASE WHEN ${CATEGORY_DESCENDANT_COUNTED_PREDICATE} THEN COALESCE(odc.TotalPrice, 0) ELSE 0 END) AS CatTotalPrice,
+            SUM(CASE WHEN ${CATEGORY_DESCENDANT_COUNTED_PREDICATE} THEN COALESCE(odc.TotalNet, 0) ELSE 0 END) AS CatTotalNet,
+            SUM(CASE WHEN ${CATEGORY_DESCENDANT_COUNTED_PREDICATE} THEN COALESCE(odc.TotalCost, 0) ELSE 0 END) AS CatTotalCost
+          FROM dbo.OfferDetails odc
+          WHERE ISNULL(od.IsCategory, 0) = 1
+            AND odc.OfferID = od.OfferID
+            AND NULLIF(LTRIM(RTRIM(odc.TreeOrdering)), '') LIKE ${TREE_ORDERING_RAW_EXPRESSION} + '.%'
+        ) catTotals`;
+
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
   TreeOrdering: ['TreeOrderingHierarchy', 'od.TreeOrdering'],
 };
@@ -1558,7 +1616,7 @@ export async function POST(
           SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.Quantity, 0) * COALESCE(od.Commissioning, 0) ELSE 0 END) AS __sumCommissioning`;
 
     const selectedColumnSql = selectedFields
-      .map((field) => `${SELECT_FIELD_EXPRESSIONS[field]} AS ${field}`)
+      .map((field) => `${CATEGORY_TOTAL_SELECT_EXPRESSIONS[field] ?? SELECT_FIELD_EXPRESSIONS[field]} AS ${field}`)
       .join(',\n          ');
     const query = `
         SELECT
@@ -1609,6 +1667,7 @@ export async function POST(
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.Warning END AS PriceListItemWarning,
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.MOQ END AS PriceListItemMOQ
         ${productsFromSql}
+        ${CATEGORY_TOTALS_APPLY_SQL}
         ${combinedWhereSql}
           ${orderSql}
           ${pagingSql}

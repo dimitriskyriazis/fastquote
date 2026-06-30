@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
 import * as XLSX from "xlsx";
-import JSZip from "jszip";
+
+export const runtime = "nodejs";
+
+// Greek & Coptic Unicode block (U+0370–U+03FF). Built via fromCharCode to keep the source ASCII.
+const GREEK_BLOCK = new RegExp(`[${String.fromCharCode(0x0370)}-${String.fromCharCode(0x03ff)}]`);
 
 const isGreek = (name: string | null | undefined): boolean => {
   if (!name) return false;
-  return /[\u0370-\u03FF]/.test(name);
+  return GREEK_BLOCK.test(name);
 };
 
 type ContactRow = {
@@ -51,6 +57,41 @@ function buildEmailText(rows: ContactRow[]): string {
   return ";" + emails.join(";");
 }
 
+// Marketing list exports are written into a per-list folder on the shared drive,
+// so everyone works from the same canonical copy instead of scattered downloads.
+const requireMailsExportRoot = (): string => {
+  const raw = process.env.MAILS_EXPORT_ROOT;
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) {
+    throw new Error(
+      "Missing MAILS_EXPORT_ROOT. Set it in your environment (e.g. .env.local) to the marketing list export folder.",
+    );
+  }
+  return value;
+};
+
+// Characters that are illegal in Windows file/folder names: < > : " / \ | ? *
+const ILLEGAL_FOLDER_CHARS = /[<>:"/\\|?*]/g;
+// ASCII control characters (U+0000–U+001F), built via fromCharCode to keep the source ASCII.
+const CONTROL_CHARS = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}]`, "g");
+
+// Strip characters illegal in Windows folder names, collapse whitespace, and drop
+// trailing dots/spaces (also illegal on Windows).
+const sanitizeFolderSegment = (value: string): string =>
+  value
+    .replace(ILLEGAL_FOLDER_CHARS, "")
+    .replace(CONTROL_CHARS, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "");
+
+// Folder name: "<MailID> - <Description>" (or just "<MailID>" when there is no usable description).
+const buildMailFolderName = (mailId: number, description: string | null | undefined): string => {
+  const cleaned = sanitizeFolderSegment(description ?? "");
+  const namePart = (cleaned.length > 100 ? cleaned.slice(0, 100) : cleaned).replace(/[. ]+$/, "");
+  return namePart ? `${mailId} - ${namePart}` : `${mailId}`;
+};
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/mails/export');
   try {
@@ -64,6 +105,18 @@ export async function POST(req: NextRequest) {
     }
 
     const pool = await getPool();
+
+    // Look up the list itself so we can name the destination folder after it.
+    const mailReq = pool.request();
+    mailReq.input("mailId", sql.Int, mailId);
+    const mailRes = await mailReq.query<{ Description: string | null }>(
+      `SELECT Description FROM dbo.Mails WHERE ID = @mailId`,
+    );
+    const mailRow = mailRes.recordset?.[0];
+    if (!mailRow) {
+      return NextResponse.json({ ok: false, error: "Mail not found" }, { status: 404 });
+    }
+
     const request = pool.request();
     request.input("mailId", sql.Int, mailId);
     const result = await request.query<ContactRow>(`
@@ -107,21 +160,40 @@ export async function POST(req: NextRequest) {
     const greekRows = allRows.filter((r) => isGreek(r.LastName) || isGreek(r.FirstName));
     const englishRows = allRows.filter((r) => !isGreek(r.LastName) && !isGreek(r.FirstName));
 
-    const zip = new JSZip();
-    zip.file("MailCustomerEmailList.xlsx", buildExcelBuffer(allRows, "All Contacts"));
-    zip.file("MailCustomerEmailList_en.xlsx", buildExcelBuffer(englishRows, "English Contacts"));
-    zip.file("MailCustomerEmailList_en.txt", buildEmailText(englishRows));
-    zip.file("MailCustomerEmailList_gr.xlsx", buildExcelBuffer(greekRows, "Greek Contacts"));
-    zip.file("MailCustomerEmailList_gr.txt", buildEmailText(greekRows));
+    const folderName = buildMailFolderName(mailId, mailRow.Description);
+    const folderPath = path.join(requireMailsExportRoot(), folderName);
 
-    const zipBuffer = await zip.generateAsync({ type: "uint8array" });
+    const filesToWrite: Array<{ name: string; data: Buffer | string }> = [
+      { name: "MailCustomerEmailList.xlsx", data: Buffer.from(buildExcelBuffer(allRows, "All Contacts")) },
+      { name: "MailCustomerEmailList_en.xlsx", data: Buffer.from(buildExcelBuffer(englishRows, "English Contacts")) },
+      { name: "MailCustomerEmailList_en.txt", data: buildEmailText(englishRows) },
+      { name: "MailCustomerEmailList_gr.xlsx", data: Buffer.from(buildExcelBuffer(greekRows, "Greek Contacts")) },
+      { name: "MailCustomerEmailList_gr.txt", data: buildEmailText(greekRows) },
+    ];
 
-    return new NextResponse(Buffer.from(zipBuffer), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="MailCustomerEmailList_${mailId}.zip"`,
-      },
+    try {
+      await fs.mkdir(folderPath, { recursive: true });
+      await Promise.all(
+        filesToWrite.map(({ name, data }) =>
+          typeof data === "string"
+            ? fs.writeFile(path.join(folderPath, name), data, "utf8")
+            : fs.writeFile(path.join(folderPath, name), data),
+        ),
+      );
+    } catch (writeErr) {
+      const reason = writeErr instanceof Error ? writeErr.message : String(writeErr);
+      console.error("Failed to write mail export to share", folderPath, writeErr);
+      return NextResponse.json(
+        { ok: false, error: `Could not save to "${folderPath}": ${reason}` },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      folder: folderPath,
+      fileCount: filesToWrite.length,
+      contacts: { total: allRows.length, english: englishRows.length, greek: greekRows.length },
     });
   } catch (err) {
     console.error(err);

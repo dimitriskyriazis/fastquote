@@ -669,6 +669,25 @@ export default function OfferBasicDataClient({
   const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const savedValuesRef = useRef(savedValues);
   savedValuesRef.current = savedValues;
+
+  // The Print Offer button can set the Offer date to today before printing
+  // (when it's missing or stale). Reflect that change in the form immediately.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<string | null>).detail;
+      const ymd = typeof detail === 'string' ? detail : '';
+      setHighlightOfferDateMissing(false);
+      setValues((prev) => ({ ...prev, offerDate: ymd }));
+      setSavedValues((prev) => {
+        const next = { ...prev, offerDate: ymd };
+        savedValuesRef.current = next;
+        return next;
+      });
+    };
+    window.addEventListener('fastquote:offer-date-updated', handler);
+    return () => window.removeEventListener('fastquote:offer-date-updated', handler);
+  }, []);
+
   const filteredMarkets = useMemo(() => {
     const divisionValue = values.division ?? '';
     if (!divisionValue) return localMarkets as OfferDropdownOption[];

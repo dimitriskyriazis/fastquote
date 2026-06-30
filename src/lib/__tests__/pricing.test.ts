@@ -854,8 +854,9 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.customerDiscount).toBe(0);   // unchanged
     });
 
-    it('normal consistent row: holds both discounts, rescales prices, preserves margin', () => {
-      // Core screenshot behaviour: CD/TD stay, NP/TC auto-calc, Margin unchanged.
+    it('Keep Net (default): holds NP + TC, floats both discounts, preserves margin', () => {
+      // Keep Net is the offer default. Raising the list price must NOT move the
+      // net prices — the discount percentages absorb the change instead.
       const input: PricingInput = {
         listPrice: 1100,     // raised from 1000
         customerDiscount: 10,
@@ -864,6 +865,27 @@ describe('resolvePricing — single-field edit cascade', () => {
         netCost: 800,        // was 1000 × 0.8
         margin: 11.1111,
         provided: { ...noProvided, listPrice: true },
+        holdMarginOnCostChange: false,
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(900);          // held
+      expect(r.netCost).toBe(800);               // held
+      expect(r.customerDiscount).toBeCloseTo(18.1818, 3); // 1 − 900/1100
+      expect(r.telmacoDiscount).toBeCloseTo(27.2727, 3);  // 1 − 800/1100
+      expect(r.margin).toBeCloseTo(11.1111, 3);  // preserved
+    });
+
+    it('Keep Margin: holds both discounts, rescales prices, preserves margin', () => {
+      // Core screenshot behaviour under Keep Margin: CD/TD stay, NP/TC auto-calc.
+      const input: PricingInput = {
+        listPrice: 1100,     // raised from 1000
+        customerDiscount: 10,
+        telmacoDiscount: 20,
+        netUnitPrice: 900,   // was 1000 × 0.9
+        netCost: 800,        // was 1000 × 0.8
+        margin: 11.1111,
+        provided: { ...noProvided, listPrice: true },
+        holdMarginOnCostChange: true,
       };
       const r = resolvePricing(input)!;
       expect(r.customerDiscount).toBe(10);   // held
