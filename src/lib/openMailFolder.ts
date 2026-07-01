@@ -12,7 +12,12 @@ type FolderResponse = {
 // (navigator.clipboard.*), this does NOT require the document to have focus, so it works
 // when invoked from an AG Grid context-menu click (where the async API rejects silently).
 // Falls back to the async API for browsers that have dropped execCommand support.
-const copyTextToClipboard = (text: string): void => {
+//
+// Returns whether the copy actually succeeded. This matters because openMailFolder resolves
+// the path via an awaited fetch first: on a slow share the click's transient activation can
+// expire before we reach this point, and both copy paths can then fail. The caller must not
+// claim "copied to clipboard" unless this returns true.
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
   try {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -21,11 +26,19 @@ const copyTextToClipboard = (text: string): void => {
     textarea.select();
     const ok = document.execCommand("copy");
     document.body.removeChild(textarea);
-    if (ok) return;
+    if (ok) return true;
   } catch {
     /* fall through to async API */
   }
-  navigator.clipboard?.writeText(text).catch(() => { /* noop */ });
+  try {
+    // navigator.clipboard is undefined in non-secure (plain http) contexts, so guard it
+    // explicitly — otherwise `await undefined` would resolve and we'd falsely report success.
+    if (!navigator.clipboard) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 // Best-effort open of a file:// URL in Windows Explorer. Chrome/Edge only hand file:// URLs
@@ -63,16 +76,19 @@ export async function openMailFolder(mailId: number): Promise<void> {
   }
 
   const { folder, fileUrl, exists } = data;
-  copyTextToClipboard(folder);
+  const copied = await copyTextToClipboard(folder);
+  // Always surface the path itself so the user can act on it even when the clipboard write
+  // failed; only claim it was copied when it actually was.
+  const pathNote = copied ? `Path copied to clipboard: ${folder}` : `Folder: ${folder}`;
 
   if (!exists) {
     showToastMessage(
-      `This list hasn't been exported yet — export it first to create the folder. Path copied: ${folder}`,
+      `This list hasn't been exported yet — export it first to create the folder. ${pathNote}`,
       "error",
     );
     return;
   }
 
   if (fileUrl) tryOpenFileUrl(fileUrl);
-  showToastMessage(`Opening folder… (path copied to clipboard: ${folder})`, "success");
+  showToastMessage(`Opening folder… ${pathNote}`, "success");
 }
