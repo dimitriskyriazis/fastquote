@@ -148,15 +148,24 @@ export async function performRerank(input: RerankInput): Promise<RankedEntry[]> 
         // SmartPanel vs patch cord) so a reasoning-tier model pays off.
         //
         // gpt-5 family rejects the legacy `max_tokens` param — it only
-        // accepts `max_completion_tokens` (the visible output budget; the
-        // model internally consumes a separate reasoning-token budget that
-        // we don't cap here).  Sending max_tokens silently 400's the call
-        // and rerank falls back to keyword order.
+        // accepts `max_completion_tokens`.  CRITICAL: that budget is
+        // SHARED between reasoning tokens and visible output — it is NOT a
+        // separate "output only" cap.  At the default reasoning effort a
+        // "hdmi cable" rerank burned the entire 2000-token budget on
+        // reasoning (~20s), leaving ZERO tokens for the JSON, so the call
+        // returned empty content (rankedCount 0) after 20s and we silently
+        // fell back to keyword order — pure latency with no benefit.
+        //
+        // reasoning_effort:'low' collapses the reasoning spend so the model
+        // actually emits the ranking, and does so in ~3-5s instead of 20s.
+        // The raised budget leaves comfortable headroom for the JSON output
+        // even if low-effort reasoning runs a little long.
         model: 'gpt-5-mini',
+        reasoning_effort: 'low',
         response_format: { type: 'json_object' },
         // gpt-5 family only supports the default temperature (1); sending
         // temperature: 0 400's the call and rerank falls back to keyword order.
-        max_completion_tokens: 2000,
+        max_completion_tokens: 4000,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: prompt },

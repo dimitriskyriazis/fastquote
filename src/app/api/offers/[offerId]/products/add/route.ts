@@ -650,7 +650,17 @@ async function tryStage1QuickMatch(
   const highlightOrderClause = highlightProductId != null
     ? 'CASE WHEN p.ID = @__highlightProductId THEN 0 ELSE 1 END, '
     : '';
-  const orderSql = `ORDER BY ${highlightOrderClause}(${scoreExpr}) DESC, p.ID DESC`;
+  // Inner CTE order: `p` (dbo.Products) is in scope, so the raw score
+  // expression and p.ID resolve fine.
+  const innerOrderSql = `ORDER BY ${highlightOrderClause}(${scoreExpr}) DESC, p.ID DESC`;
+  // Outer order: only `bp` (the PagedBase CTE) and `price` are in scope — the
+  // score columns (p.PartNumberCleared / p.ModelNumberCleared /
+  // p.LegacyPartNoCleaned) are NOT visible here, so we sort by the
+  // pre-computed __matchScore column the CTE projects instead.
+  const outerHighlightClause = highlightProductId != null
+    ? 'CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, '
+    : '';
+  const outerOrderSql = `ORDER BY ${outerHighlightClause}bp.__matchScore DESC, bp.ProductID DESC`;
 
   const request = pool.request();
   request.input('__limit', sql.Int, pageSize);
@@ -671,11 +681,12 @@ async function tryStage1QuickMatch(
         p.Description,
         p.ModelNumber,
         p.WebLink,
-        b.Name AS BrandName
+        b.Name AS BrandName,
+        (${scoreExpr}) AS __matchScore
       FROM dbo.Products p
         LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       ${whereSql}
-      ${orderSql}
+      ${innerOrderSql}
     )
     SELECT
       bp.ProductID,
@@ -719,7 +730,7 @@ async function tryStage1QuickMatch(
           pl.ValidFromDate DESC,
           pli.ID DESC
       ) price
-    ${orderSql.replace(/\bp\.ID\b/g, 'bp.ProductID')};
+    ${outerOrderSql};
   `;
 
   try {
@@ -1176,12 +1187,28 @@ async function handleProductGrid(
   );
   // Prepend match-score DESC so the closest match wins, then the user's sort
   // (if any), then the highlight pin.
-  const orderSqlWithScore = scoreExpr
-    ? baseOrderSql.replace(/^ORDER BY /i, `ORDER BY (${scoreExpr}) DESC, `)
-    : baseOrderSql;
-  let orderSql = highlightProductId != null
-    ? orderSqlWithScore.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ')
-    : orderSqlWithScore;
+  //
+  // Two variants are built from the SAME scaffolding (highlight CASE, user
+  // sort, rerank CASE) differing only in the score token:
+  //   orderSql       — used inside PagedBase, where OFFSET/FETCH must sort by
+  //                    the real (scoreExpr) to pick the correct page.
+  //   outerOrderSql  — used on the outer SELECT (after the price OUTER APPLY),
+  //                    which only needs to re-establish that order over the
+  //                    already-paged rows.  It sorts by the materialized
+  //                    bp.__score column instead of re-inlining the whole
+  //                    31-term expression, which SQL Server would otherwise
+  //                    recompute for every output row.
+  const buildOrderWithScoreToken = (scoreToken: string | null): string => {
+    let ord = scoreToken
+      ? baseOrderSql.replace(/^ORDER BY /i, `ORDER BY ${scoreToken} DESC, `)
+      : baseOrderSql;
+    if (highlightProductId != null) {
+      ord = ord.replace(/^ORDER BY /i, 'ORDER BY CASE WHEN bp.ProductID = @__highlightProductId THEN 0 ELSE 1 END, ');
+    }
+    return ord;
+  };
+  let orderSql = buildOrderWithScoreToken(scoreExpr ? `(${scoreExpr})` : null);
+  let outerOrderSql = buildOrderWithScoreToken(scoreExpr ? 'bp.__score' : null);
 
   // Rerank override: client has called /rerank and now wants rows returned in
   // the LLM-determined order.  Build a ranked-position CASE expression that
@@ -1202,7 +1229,9 @@ async function handleProductGrid(
       rerankCaseBranches.push(`WHEN @${paramKey} THEN ${rank}`);
     });
     const rerankCase = `CASE bp.ProductID ${rerankCaseBranches.join(' ')} ELSE ${rerankIds.length} END`;
-    orderSql = orderSql.replace(/^ORDER BY /i, `ORDER BY (${rerankCase}) ASC, `);
+    const rerankPrefix = `ORDER BY (${rerankCase}) ASC, `;
+    orderSql = orderSql.replace(/^ORDER BY /i, rerankPrefix);
+    outerOrderSql = outerOrderSql.replace(/^ORDER BY /i, rerankPrefix);
   }
 
   const pool = await getPool();
@@ -1360,10 +1389,16 @@ async function handleProductGrid(
           pl.ValidFromDate DESC,
           pli.ID DESC
       ) price
-    ${orderSql};
+    ${outerOrderSql};
   `;
 
+  // Timing split (logged below) so a slow populate call self-reports where the
+  // wall-clock goes: the main scored SQL query vs the inline LLM rerank.
+  const __sqlStart = Date.now();
   const result = await request.query<ProductGridRow & { __score?: number }>(query);
+  const __sqlMs = Date.now() - __sqlStart;
+  let __rerankMs = 0;
+  let __rerankRan = false;
   let rows = result.recordset ?? [];
 
   // Inline LLM rerank on the first page.  Previously the client did this
@@ -1390,13 +1425,17 @@ async function handleProductGrid(
       modelNumber: r.ModelNumber,
       description: r.Description,
     }));
-    // 12s ceiling — typical rerank latency is 3-6s, so this catches a
-    // pathological stall without letting the user wait 30+s.  On timeout
-    // we just return keyword-ordered rows; the grid still works, just
-    // without the LLM's reordering.
+    // 8s ceiling — with reasoning_effort:'low' the rerank typically returns
+    // in ~3-5s, so this catches a pathological stall without letting the
+    // user wait longer.  On timeout we just return keyword-ordered rows; the
+    // grid still works, just without the LLM's reordering.  (Note: the timed-
+    // out OpenAI call is not cancelled and still bills — acceptable given the
+    // low-effort calls now finish well under the ceiling.)
     const rerankTimeout = new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), 12_000);
+      setTimeout(() => resolve(null), 8_000);
     });
+    __rerankRan = true;
+    const __rerankStart = Date.now();
     try {
       const ranked = await Promise.race([
         performRerank({
@@ -1410,6 +1449,7 @@ async function handleProductGrid(
         }),
         rerankTimeout,
       ]);
+      __rerankMs = Date.now() - __rerankStart;
       if (ranked && ranked.length > 0) {
         const orderIndex = new Map<number, number>();
         ranked.forEach((r, idx) => { orderIndex.set(r.productId, idx); });
@@ -1421,6 +1461,7 @@ async function handleProductGrid(
         });
       }
     } catch (err) {
+      __rerankMs = Date.now() - __rerankStart;
       console.warn('[productGrid] inline rerank failed — returning keyword order', err);
     }
   }
@@ -1456,6 +1497,7 @@ async function handleProductGrid(
     }));
     console.log('[productGrid debug]', JSON.stringify({
       offerId,
+      timing: { sqlMs: __sqlMs, rerankMs: __rerankMs, rerankRan: __rerankRan },
       visibleFilter: visibleFilterEntries,
       hiddenTokens: hiddenSummary,
       scoreClauseCount: scoreClauses.length,

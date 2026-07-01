@@ -62,6 +62,7 @@ import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService, isUnlinkedOfferProductRow } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
+import { clearPartModelNumberUpper } from '../../../lib/partModelNumber';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -3386,6 +3387,11 @@ const requestedColumnDefsMap = useMemo(
     let productsAdded = 0;
     const unmatchedRequestedRows: RequestedProductMatchEntry[] = [];
     const unfoundFarnellPartNumbers: string[] = [];
+    // Farnell products that were matched/created but for which the API returned
+    // no usable price (empty price tiers, quote-only listing, or a rate-limited
+    // lookup). Tracked so the user is warned rather than silently getting a
+    // priceless line.
+    const unpricedFarnellPartNumbers: string[] = [];
     const farnellProductCache = new Map<string, number>();
     const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
     const getFarnellLookupCacheKey = (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => `${searchType}::${partNumber}::${quantity}`;
@@ -3587,13 +3593,22 @@ const requestedColumnDefsMap = useMemo(
 
           // Fetch product summary early so we can check for brand mismatch before assignment
           const productMeta = await fetchProductSummary(productId);
-          const requestedBrandNorm = lookupInfo.brand
-            ? lookupInfo.brand.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-            : null;
-          const matchedBrandNorm = productMeta?.BrandName
-            ? productMeta.BrandName.replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-            : null;
-          if (requestedBrandNorm && matchedBrandNorm && requestedBrandNorm !== matchedBrandNorm) {
+          // Defer to the manual matcher only when the resolved product's
+          // brand is GENUINELY different from the requested brand. Compare
+          // with a case/space/hyphen/punctuation-insensitive key (the same
+          // part-number clearing, which also normalizes accents and keeps
+          // letters of any script, e.g. Greek) so cosmetic formatting
+          // differences are reconciled: a requested "PENN ELCOM" matches a
+          // catalogued "Penn-Elcom" and auto-assigns instead of opening the
+          // modal. This matters because /api/products/resolve falls back to a
+          // brand-less TOP-1 match when the requested brand key doesn't line
+          // up (match 'fallbackNoBrand'), so a strong brand comparison here is
+          // what stops us silently assigning a different-vendor product that
+          // merely reuses the same part number (e.g. a "Sony" request
+          // resolving to a same-code "Bosch" product).
+          const requestedBrandKey = lookupInfo.brand ? clearPartModelNumberUpper(lookupInfo.brand) : '';
+          const matchedBrandKey = productMeta?.BrandName ? clearPartModelNumberUpper(productMeta.BrandName) : '';
+          if (requestedBrandKey && matchedBrandKey && requestedBrandKey !== matchedBrandKey) {
             unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
             continue;
           }
@@ -3626,15 +3641,26 @@ const requestedColumnDefsMap = useMemo(
             if (!lookupResponse || quantityForLookup !== 1 || lookupInfo.partNumber !== assignedPartNumber) {
               lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
             }
-            if (lookupResponse?.product.matchedPrice != null) {
-              const farnellPatch = buildFarnellPricingPatch(
-                offerDetailId,
-                lookupResponse.product.matchedPrice,
-                assignment.pricing,
-              );
-              if (farnellPatch) {
-                updates.push(farnellPatch);
-              }
+            // The part number may be a manufacturer part number rather than a
+            // Farnell order code. The default 'id' lookup only searches order
+            // codes, so fall back to a manufacturer-part-number search (mirrors
+            // the product-creation fallback above) before giving up on a price.
+            if (lookupResponse?.product.matchedPrice == null) {
+              lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup, 'manuPartNum');
+            }
+            const farnellPatch = lookupResponse?.product.matchedPrice != null
+              ? buildFarnellPricingPatch(
+                  offerDetailId,
+                  lookupResponse.product.matchedPrice,
+                  assignment.pricing,
+                )
+              : null;
+            if (farnellPatch) {
+              updates.push(farnellPatch);
+            } else {
+              // Product matched/created but no usable price came back — warn
+              // instead of leaving a silently unpriced line.
+              unpricedFarnellPartNumbers.push(assignedPartNumber);
             }
           }
 
@@ -3710,6 +3736,22 @@ const requestedColumnDefsMap = useMemo(
           showToastMessage(
             `Couldn't find Farnell products with these item codes: ${uniqueParts.join(', ')}`,
             'error',
+          );
+        }
+      }
+      if (unpricedFarnellPartNumbers.length > 0) {
+        const uniqueParts = [...new Set(unpricedFarnellPartNumbers)];
+        if (uniqueParts.length === 1) {
+          showToastMessage(
+            `Added the Farnell product but couldn't get a price for item code: ${uniqueParts[0]}. Please enter the price manually.`,
+            'warning',
+            8000,
+          );
+        } else {
+          showToastMessage(
+            `Added Farnell products but couldn't get prices for these item codes: ${uniqueParts.join(', ')}. Please enter the prices manually.`,
+            'warning',
+            8000,
           );
         }
       }
@@ -5690,7 +5732,6 @@ const requestedColumnDefsMap = useMemo(
     }
 
     const rowHasRequestedFields = hasRequestedPseudoFields(rowData);
-    const rowIsActualProduct = isOfferProductProduct(rowData);
     // Comments and services aren't real products, so don't offer "Create New
     // Product" for them even though they can carry requested pseudo-fields.
     const rowIsCommentOrService = isOfferProductComment(rowData) || isOfferProductService(rowData);
@@ -5698,7 +5739,14 @@ const requestedColumnDefsMap = useMemo(
     // even if its part/model columns are blank — never offer to create one.
     const rowHasAssignedProduct = resolvedProductId != null;
 
-    if (rowHasRequestedFields && !rowIsActualProduct && !rowIsCommentOrService && !rowHasAssignedProduct) {
+    // Show "Create New Product" for a genuine requested row (__isRequestedRow=1)
+    // that hasn't been matched to a catalog product yet. We gate on isRequestedRow
+    // rather than "not a product row", because a requested line that carries a
+    // Requested Part No / Model No is classified as a 'product' row type by
+    // resolveOfferProductRowType — so the old !isOfferProductProduct guard hid the
+    // item on exactly the rows (part/model filled) users most want to convert. The
+    // already-matched case stays excluded via rowHasAssignedProduct (ProductID).
+    if (isRequestedRow(rowData) && !isOfferProductCategory(rowData) && !rowIsCommentOrService && !rowHasAssignedProduct) {
       const requestedBrand = normalizeRequestedLookupValue(
         (rowData as { RequestedBrand?: unknown }).RequestedBrand ?? null,
       );

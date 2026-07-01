@@ -98,6 +98,12 @@ async function updateFarnellPrices(
       farnellProduct = farnellProductCache.get(row.PartNumber) ?? null;
     } else {
       farnellProduct = await fetchFarnellProduct(row.PartNumber, quantity);
+      // PartNumber may be a manufacturer part number, not a Farnell order code.
+      // The default 'id' search only matches order codes, so fall back to a
+      // manufacturer-part-number search before giving up on this row.
+      if (!farnellProduct) {
+        farnellProduct = await fetchFarnellProduct(row.PartNumber, quantity, 'manuPartNum');
+      }
       farnellProductCache.set(row.PartNumber, farnellProduct);
     }
     const listPrice = farnellProduct && farnellProduct.prices.length > 0

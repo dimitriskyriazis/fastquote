@@ -880,8 +880,9 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       // -100% sentinel this column's valueGetter surfaces on anomalous rows (see
       // flagFullDiscountNoNet / flagMissingListPriceDiscount). Without this, copying
       // such a cell — whose real stored discount is blank — pastes a bogus 100%.
-      // Honoured by AgGridAll's processCellForClipboard.
-      ...({ copyValueFromField: true } as object),
+      // Carried on colDef.context (AG Grid's slot for app data) and honoured by
+      // AgGridAll's processCellForClipboard.
+      context: { copyValueFromField: true },
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',

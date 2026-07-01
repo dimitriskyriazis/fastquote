@@ -98,6 +98,13 @@ const parseOptionalId = (value: string | null | undefined): number | null => {
   return Number.isInteger(parsed) ? parsed : null;
 };
 
+// Whitespace- and case-insensitive brand comparison key ("Black Magic" ≡
+// "BlackMagic", "d & b" ≡ "d&b", NBSP). Mirrors normalizeBrandKey in
+// /api/products/resolve so the modal resolves a free-typed / pre-filled
+// (Requested) brand to an existing catalog brand the same way the server does.
+const normalizeBrandKey = (value: string | null | undefined): string =>
+  (value ?? '').replace(/\s+/g, '').toLowerCase();
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -424,11 +431,20 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     }
   }, [brandText, isBrandListOpen, selectedBrand]);
 
+  // Resolve the free-typed / pre-filled (e.g. Requested) brand text to an existing
+  // brand when one matches, instead of leaving it as unmatched free text (which
+  // fails the "Brand is required" check on submit). Prefer an exact name match, then
+  // fall back to the whitespace/case-insensitive key so minor variants of a
+  // requested brand still link to the catalog brand. No match → keep the text so the
+  // user can pick from the list or add a new brand.
   useEffect(() => {
     if (!lookups || form.brandId) return;
-    const normalized = brandText.trim().toLocaleLowerCase();
-    if (!normalized) return;
-    const matched = lookups.brands.find((option) => (option.name || '').trim().toLocaleLowerCase() === normalized);
+    const exact = brandText.trim().toLocaleLowerCase();
+    if (!exact) return;
+    const typedKey = normalizeBrandKey(brandText);
+    const matched =
+      lookups.brands.find((option) => (option.name ?? '').trim().toLocaleLowerCase() === exact)
+      ?? lookups.brands.find((option) => normalizeBrandKey(option.name) === typedKey);
     if (!matched) return;
     setForm((prev) => {
       if (prev.brandId) return prev;
