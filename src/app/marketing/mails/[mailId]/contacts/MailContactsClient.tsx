@@ -5,6 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import type { ColDef, CellValueChangedEvent } from 'ag-grid-community';
 import { showToastMessage } from '../../../../../lib/toast';
+import { openMailFolder } from '../../../../../lib/openMailFolder';
 import { formatBooleanValue } from '../../../../lib/formatBooleanValue';
 import LookupModal from '../../../../components/LookupModal';
 import modalStyles from '../../../../components/LookupModal.module.css';
@@ -201,6 +202,13 @@ export default function MailContactsClient({ mailId, description }: Props) {
               disabled={exporting}
             >
               {exporting ? 'Exporting…' : 'Export List'}
+            </button>
+            <button
+              type="button"
+              className="page-header-button"
+              onClick={() => void openMailFolder(Number(mailId))}
+            >
+              Open Folder
             </button>
             <button
               type="button"

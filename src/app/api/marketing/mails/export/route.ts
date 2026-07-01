@@ -5,6 +5,7 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { buildMailFolderPath } from "../../../../../lib/mailsExportFolder";
 import * as XLSX from "xlsx";
 
 export const runtime = "nodejs";
@@ -56,41 +57,6 @@ function buildEmailText(rows: ContactRow[]): string {
   if (emails.length === 0) return "";
   return ";" + emails.join(";");
 }
-
-// Marketing list exports are written into a per-list folder on the shared drive,
-// so everyone works from the same canonical copy instead of scattered downloads.
-const requireMailsExportRoot = (): string => {
-  const raw = process.env.MAILS_EXPORT_ROOT;
-  const value = typeof raw === "string" ? raw.trim() : "";
-  if (!value) {
-    throw new Error(
-      "Missing MAILS_EXPORT_ROOT. Set it in your environment (e.g. .env.local) to the marketing list export folder.",
-    );
-  }
-  return value;
-};
-
-// Characters that are illegal in Windows file/folder names: < > : " / \ | ? *
-const ILLEGAL_FOLDER_CHARS = /[<>:"/\\|?*]/g;
-// ASCII control characters (U+0000–U+001F), built via fromCharCode to keep the source ASCII.
-const CONTROL_CHARS = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(0x1f)}]`, "g");
-
-// Strip characters illegal in Windows folder names, collapse whitespace, and drop
-// trailing dots/spaces (also illegal on Windows).
-const sanitizeFolderSegment = (value: string): string =>
-  value
-    .replace(ILLEGAL_FOLDER_CHARS, "")
-    .replace(CONTROL_CHARS, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[. ]+$/, "");
-
-// Folder name: "<MailID> - <Description>" (or just "<MailID>" when there is no usable description).
-const buildMailFolderName = (mailId: number, description: string | null | undefined): string => {
-  const cleaned = sanitizeFolderSegment(description ?? "");
-  const namePart = (cleaned.length > 100 ? cleaned.slice(0, 100) : cleaned).replace(/[. ]+$/, "");
-  return namePart ? `${mailId} - ${namePart}` : `${mailId}`;
-};
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/marketing/mails/export');
@@ -160,11 +126,7 @@ export async function POST(req: NextRequest) {
     const greekRows = allRows.filter((r) => isGreek(r.LastName) || isGreek(r.FirstName));
     const englishRows = allRows.filter((r) => !isGreek(r.LastName) && !isGreek(r.FirstName));
 
-    const folderName = buildMailFolderName(mailId, mailRow.Description);
-    // The export root is a runtime env var (an external network share), not a build-time
-    // path. Without these turbopackIgnore hints, NFT tries to statically resolve the
-    // unknown base and ends up globbing the whole project into the route's file trace.
-    const folderPath = path.join(/*turbopackIgnore: true*/ requireMailsExportRoot(), folderName);
+    const folderPath = buildMailFolderPath(mailId, mailRow.Description);
 
     const filesToWrite: Array<{ name: string; data: Buffer | string }> = [
       { name: "MailCustomerEmailList.xlsx", data: Buffer.from(buildExcelBuffer(allRows, "All Contacts")) },

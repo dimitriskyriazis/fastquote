@@ -26,6 +26,7 @@ import { normalizeBoolean } from '../../lib/normalizeBoolean';
 import { useUndoStack } from '../hooks/useUndoStack';
 import { pushCellEditUndo, makePatternAUndoFn } from '../../lib/undoHelpers';
 import { useAddModal } from '../lib/useAddModal';
+import { openMailFolder } from '../../lib/openMailFolder';
 import {
   createMail,
   EMPTY_MAIL_FORM,
@@ -256,6 +257,7 @@ export default function MailsClient() {
       const groupsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>';
       const contactsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>';
       const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const folderIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg></span>';
       const viewGroupsItem: MenuItemDef<RowData, unknown> = {
         name: 'View Mail Contact Group List',
         icon: groupsIcon,
@@ -290,7 +292,12 @@ export default function MailsClient() {
           },
         ],
       };
-      return [viewGroupsItem, viewContactsItem, 'separator', ...normalized];
+      const openFolderItem: MenuItemDef<RowData, unknown> = {
+        name: 'Open Export Folder',
+        icon: folderIcon,
+        action: () => { void openMailFolder(mailId); },
+      };
+      return [viewGroupsItem, viewContactsItem, openFolderItem, 'separator', ...normalized];
     },
     [mailRowDeletion],
   );
