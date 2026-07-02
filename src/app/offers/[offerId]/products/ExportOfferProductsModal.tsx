@@ -14,7 +14,7 @@ import styles from './AddRequestedProductsModal.module.css';
 import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { showToastMessage } from '../../../../lib/toast';
 import type { OfferProductsTemplateExportRow } from '../OfferProductsPanel';
-import type { ExportFieldKey, ExportFieldConfig, ExportTemplateConfig } from './offerExportTemplates';
+import type { AdminSheetConfig, ExportFieldKey, ExportFieldConfig, ExportTemplateConfig, SecondaryRowSheetConfig } from './offerExportTemplates';
 
 type XlsxModule = typeof import('xlsx');
 
@@ -24,6 +24,9 @@ type Props = {
   onClose: () => void;
   onRequestRows: () => Promise<OfferProductsTemplateExportRow[]>;
   template: ExportTemplateConfig;
+  // Values for the template's admin form sheet (template.adminSheet), keyed by
+  // AdminSheetFieldConfig.key. Null/empty values leave the cell untouched.
+  adminValues?: Record<string, string | null | undefined>;
 };
 
 type ColumnOption = {
@@ -293,7 +296,7 @@ const padExportRowsForAlignment = (
       padded.push(existing);
     } else {
       padded.push({
-        no: n, productReference: '', manufacturer: '', descriptionType: '',
+        no: n, productReference: '', manufacturer: '', epLincManufacturer: '', descriptionType: '', productName: '', freeDescription: '',
         qty: '', unitPrice: '', additionalDiscount: '', cost: '', delayForDelivery: '', comments: '', skipRow: true,
       });
     }
@@ -312,8 +315,14 @@ const resolveFieldValue = (
       return row.productReference;
     case 'manufacturer':
       return row.manufacturer;
+    case 'epLincManufacturer':
+      return row.epLincManufacturer;
     case 'descriptionType':
       return row.descriptionType;
+    case 'productName':
+      return row.productName;
+    case 'freeDescription':
+      return row.freeDescription;
     case 'qty':
       return row.qty === '' ? null : row.qty;
     case 'unitPrice':
@@ -793,6 +802,243 @@ const patchWorksheetXmlWithAppendedRows = (
   };
 };
 
+/* ── Admin form sheet (e.g. EP LINC Offer_Admin) ─────────────────────── */
+
+// A single value write on the template's admin form sheet. `row` is 1-based
+// (Excel/XML row number), `col` is 0-based.
+type AdminSheetEdit = { row: number; col: number; text: string };
+
+const normalizeAdminCellText = (value: unknown): string =>
+  value == null ? '' : String(value).trim().toLowerCase();
+
+// Locates the admin sheet's value cells from the already-analyzed sheet grids
+// (SheetMapping.rawRows — available for BOTH .xlsx and .xls files). Each field
+// is anchored primarily by its exact machine-key cell (e.g. OF_CP — strict
+// equality so OF_CP can't match OF_CPY), falling back to a label cell that
+// contains every labelKeyword; the value lands in config.valueColumn of the
+// matched row. Fields with empty values are skipped (cell left untouched).
+const resolveAdminSheetEdits = (
+  sheets: SheetMapping[],
+  config: AdminSheetConfig,
+  adminValues: Record<string, string | null | undefined>,
+): { sheetName: string | null; edits: AdminSheetEdit[]; missing: string[] } => {
+  const wanted = config.fields
+    .map((field) => ({ field, value: adminValues[field.key] }))
+    .filter((entry): entry is { field: AdminSheetConfig['fields'][number]; value: string } =>
+      typeof entry.value === 'string' && entry.value.trim() !== '');
+  if (wanted.length === 0) return { sheetName: null, edits: [], missing: [] };
+
+  const targetName = config.sheetName.trim().toLowerCase();
+  const adminSheet = sheets.find((sheet) => sheet.name.trim().toLowerCase() === targetName) ?? null;
+  if (!adminSheet) {
+    return { sheetName: null, edits: [], missing: wanted.map((entry) => entry.field.label) };
+  }
+
+  const cellTexts: Array<{ row: number; col: number; text: string }> = [];
+  adminSheet.rawRows.forEach((row, rowIdx) => {
+    if (!Array.isArray(row)) return;
+    row.forEach((value, colIdx) => {
+      const text = normalizeAdminCellText(value);
+      if (text) cellTexts.push({ row: rowIdx, col: colIdx, text });
+    });
+  });
+
+  const edits: AdminSheetEdit[] = [];
+  const missing: string[] = [];
+  for (const { field, value } of wanted) {
+    const keyCell = cellTexts.find((cell) => field.cellKeys.includes(cell.text));
+    const anchorCell = keyCell
+      ?? cellTexts.find((cell) => field.labelKeywords.every((keyword) => cell.text.includes(keyword)));
+    if (!anchorCell) {
+      missing.push(field.label);
+      continue;
+    }
+    edits.push({ row: anchorCell.row + 1, col: config.valueColumn, text: value });
+  }
+  return { sheetName: adminSheet.name, edits, missing };
+};
+
+// Resolves the template's second product-rows sheet (e.g. EP LINC
+// Request_List_Supplies) into a synthetic SheetMapping the two row-write
+// paths can consume as-is. Columns are matched by EXACT normalized header
+// text against each field's headerKeys; the header row is the sheet row that
+// matches the most fields (the machine-key row wins over the human-label row,
+// which typically matches few or none of the keys). Rows land at the sheet's
+// own Excel Table data start (tableDataStartRow overlay), falling back to
+// headerRow + 2 — the same convention as the main sheet.
+const resolveSecondaryRowSheetMapping = (
+  sheets: SheetMapping[],
+  config: SecondaryRowSheetConfig,
+): { mapping: SheetMapping | null; fields: ExportFieldConfig[]; missing: string[] } => {
+  const targetName = config.sheetName.trim().toLowerCase();
+  const sourceSheet = sheets.find((sheet) => sheet.name.trim().toLowerCase() === targetName) ?? null;
+  if (!sourceSheet) {
+    return { mapping: null, fields: [], missing: config.fields.map((field) => field.label) };
+  }
+
+  // Per row: which fields match which columns (exact normalized header text).
+  const matchesByRow = new Map<number, Map<ExportFieldKey, number>>();
+  sourceSheet.rawRows.forEach((row, rowIdx) => {
+    if (!Array.isArray(row)) return;
+    row.forEach((value, colIdx) => {
+      const text = normalizeAdminCellText(value);
+      if (!text) return;
+      config.fields.forEach((field) => {
+        if (!field.headerKeys.includes(text)) return;
+        const rowMatches = matchesByRow.get(rowIdx) ?? new Map<ExportFieldKey, number>();
+        if (!rowMatches.has(field.key)) rowMatches.set(field.key, colIdx);
+        matchesByRow.set(rowIdx, rowMatches);
+      });
+    });
+  });
+
+  let headerRowIndex = -1;
+  let bestMatches: Map<ExportFieldKey, number> | null = null;
+  matchesByRow.forEach((rowMatches, rowIdx) => {
+    if (!bestMatches || rowMatches.size > bestMatches.size) {
+      bestMatches = rowMatches;
+      headerRowIndex = rowIdx;
+    }
+  });
+  if (!bestMatches || headerRowIndex < 0) {
+    return { mapping: null, fields: [], missing: config.fields.map((field) => field.label) };
+  }
+
+  const resolvedMatches: Map<ExportFieldKey, number> = bestMatches;
+  const selection: Partial<Record<ExportFieldKey, number | null>> = {};
+  const fields: ExportFieldConfig[] = [];
+  const missing: string[] = [];
+  config.fields.forEach((field) => {
+    const columnIndex = resolvedMatches.get(field.key);
+    if (columnIndex == null) {
+      missing.push(field.label);
+      return;
+    }
+    selection[field.key] = columnIndex;
+    fields.push({ key: field.key, label: field.label, keywords: [] });
+  });
+  if (fields.length === 0) {
+    return { mapping: null, fields: [], missing };
+  }
+
+  const mapping: SheetMapping = {
+    name: sourceSheet.name,
+    headerRowIndex,
+    columns: [],
+    suggestions: {} as Record<ExportFieldKey, ColumnOption[]>,
+    selection,
+    rowCount: sourceSheet.rowCount,
+    rawRows: sourceSheet.rawRows,
+    tableDataStartRow: sourceSheet.tableDataStartRow,
+  };
+  return { mapping, fields, missing };
+};
+
+// Writes plain-text values into specific cells of a worksheet's XML, keeping
+// each cell's existing style attribute (the minimal form-sheet edition of
+// patchWorksheetXmlWithAppendedRows — same DOM technique, no Table handling).
+const patchWorksheetXmlCells = (sheetXml: string, edits: AdminSheetEdit[]): string => {
+  const xmlDoc = new DOMParser().parseFromString(sheetXml, 'application/xml');
+  if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+    throw new Error('Unable to parse worksheet XML.');
+  }
+  const worksheetElement = xmlDoc.documentElement;
+  const ns = worksheetElement.namespaceURI ?? 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const sheetDataElement = worksheetElement.getElementsByTagNameNS(ns, 'sheetData')[0]
+    ?? worksheetElement.getElementsByTagName('sheetData')[0];
+  if (!sheetDataElement) {
+    throw new Error('Worksheet XML is missing sheetData.');
+  }
+
+  const listRows = (): Element[] => uniqueElements((
+    Array.from(sheetDataElement.getElementsByTagNameNS(ns, 'row')) as Element[]
+  ).concat(Array.from(sheetDataElement.getElementsByTagName('row')) as Element[]));
+
+  const getOrCreateRow = (rowIndex: number): Element => {
+    const rows = listRows();
+    const existing = rows.find((element) => Number.parseInt(element.getAttribute('r') ?? '', 10) === rowIndex);
+    if (existing) return existing;
+    const created = xmlDoc.createElementNS(ns, 'row');
+    created.setAttribute('r', String(rowIndex));
+    const nextRow = rows.find((element) => (Number.parseInt(element.getAttribute('r') ?? '', 10) || 0) > rowIndex);
+    if (nextRow?.parentNode) {
+      nextRow.parentNode.insertBefore(created, nextRow);
+    } else {
+      sheetDataElement.appendChild(created);
+    }
+    return created;
+  };
+
+  const getOrCreateCell = (rowElement: Element, rowIndex: number, columnIndex: number): Element => {
+    const cells = uniqueElements((
+      Array.from(rowElement.getElementsByTagNameNS(ns, 'c')) as Element[]
+    ).concat(Array.from(rowElement.getElementsByTagName('c')) as Element[]));
+    const existing = cells.find((element) => {
+      const parsed = parseCellReference(element.getAttribute('r'));
+      return parsed != null && parsed.row === rowIndex && parsed.col === columnIndex;
+    });
+    if (existing) return existing;
+    const created = xmlDoc.createElementNS(ns, 'c');
+    created.setAttribute('r', `${columnIndexToLetters(columnIndex)}${rowIndex}`);
+    const nextCell = cells.find((element) => {
+      const parsed = parseCellReference(element.getAttribute('r'));
+      return parsed != null && parsed.col > columnIndex;
+    });
+    if (nextCell?.parentNode) {
+      nextCell.parentNode.insertBefore(created, nextCell);
+    } else {
+      rowElement.appendChild(created);
+    }
+    return created;
+  };
+
+  edits.forEach((edit) => {
+    const rowElement = getOrCreateRow(edit.row);
+    const cellElement = getOrCreateCell(rowElement, edit.row, edit.col);
+    while (cellElement.firstChild) {
+      cellElement.removeChild(cellElement.firstChild);
+    }
+    cellElement.setAttribute('t', 'inlineStr');
+    const inlineStringElement = xmlDoc.createElementNS(ns, 'is');
+    const textElement = xmlDoc.createElementNS(ns, 't');
+    if (edit.text.trim() !== edit.text) {
+      textElement.setAttribute('xml:space', 'preserve');
+    }
+    textElement.textContent = edit.text;
+    inlineStringElement.appendChild(textElement);
+    cellElement.appendChild(inlineStringElement);
+  });
+
+  return new XMLSerializer().serializeToString(xmlDoc);
+};
+
+// .xls twin: SheetJS cell mutation preserving the existing cell's style; grows
+// !ref when an edit lands outside the recorded range.
+const applyAdminEditsToXlsSheet = (
+  xlsx: XlsxModule,
+  sheet: XLSXTypes.WorkSheet,
+  edits: AdminSheetEdit[],
+) => {
+  edits.forEach((edit) => {
+    const address = xlsx.utils.encode_cell({ r: edit.row - 1, c: edit.col });
+    const existing = sheet[address] as XLSXTypes.CellObject | undefined;
+    const next = { ...(existing ?? {}) } as XLSXTypes.CellObject;
+    next.t = 's';
+    next.v = edit.text;
+    delete (next as { w?: unknown }).w;
+    delete (next as { f?: unknown }).f;
+    sheet[address] = next;
+  });
+  if (sheet['!ref']) {
+    const range = xlsx.utils.decode_range(sheet['!ref'] as string);
+    edits.forEach((edit) => {
+      range.e.r = Math.max(range.e.r, edit.row - 1);
+      range.e.c = Math.max(range.e.c, edit.col);
+    });
+    sheet['!ref'] = xlsx.utils.encode_range(range);
+  }
+};
+
 const applyRowsToSheet = (
   xlsx: XlsxModule,
   sheet: XLSXTypes.WorkSheet,
@@ -924,7 +1170,7 @@ const toArrayBuffer = (value: ArrayBuffer | Uint8Array): ArrayBuffer => {
   return output;
 };
 
-export default function ExportOfferProductsModal({ onClose, onRequestRows, template }: Props) {
+export default function ExportOfferProductsModal({ onClose, onRequestRows, template, adminValues }: Props) {
   const fields = template.fields;
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [file, setFile] = useState<File | null>(null);
@@ -1206,6 +1452,17 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
       let outputBuffer: ArrayBuffer;
       const alignedRows = padExportRowsForAlignment(exportRows);
 
+      // Admin form sheet (e.g. EP LINC Offer_Admin): locate the labelled value
+      // cells once from the analyzed sheet grids; applied per write path below.
+      const adminResolution = template.adminSheet && adminValues
+        ? resolveAdminSheetEdits(validation.sheets, template.adminSheet, adminValues)
+        : null;
+      // Second product-rows sheet (e.g. EP LINC Request_List_Supplies): same
+      // aligned row set, columns auto-resolved by exact header keys.
+      const secondaryResolution = template.secondaryRowSheet
+        ? resolveSecondaryRowSheetMapping(validation.sheets, template.secondaryRowSheet)
+        : null;
+
       if (workbookType === 'xls') {
         // Legacy .xls is not ZIP-based, so use workbook rewrite fallback.
         const workbook = xlsx.read(workbookBuffer, { type: 'array' });
@@ -1214,6 +1471,18 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
           throw new Error(`Worksheet "${activeSheet.name}" was not found in the selected file.`);
         }
         writeResult = applyRowsToSheet(xlsx, sheet, activeSheet, alignedRows, fields);
+        if (adminResolution?.sheetName && adminResolution.edits.length > 0) {
+          const adminXlsSheet = workbook.Sheets?.[adminResolution.sheetName];
+          if (adminXlsSheet) {
+            applyAdminEditsToXlsSheet(xlsx, adminXlsSheet, adminResolution.edits);
+          }
+        }
+        if (secondaryResolution?.mapping && secondaryResolution.fields.length > 0) {
+          const secondaryXlsSheet = workbook.Sheets?.[secondaryResolution.mapping.name];
+          if (secondaryXlsSheet) {
+            applyRowsToSheet(xlsx, secondaryXlsSheet, secondaryResolution.mapping, alignedRows, secondaryResolution.fields);
+          }
+        }
         // Force Excel to recalculate all formulas when the file is opened.
         if (!workbook.Workbook) workbook.Workbook = {};
         const wbProps = workbook.Workbook as Record<string, unknown>;
@@ -1238,6 +1507,30 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
         const patchResult = patchWorksheetXmlWithAppendedRows(worksheetXml, activeSheet, alignedRows, fields);
         writeResult = { startRow: patchResult.startRow, mappedColumnCount: patchResult.mappedColumnCount };
         archive.file(worksheetPath, patchResult.sheetXml);
+
+        if (adminResolution?.sheetName && adminResolution.edits.length > 0) {
+          const adminSheetPath = await resolveWorksheetXmlPath(archive, adminResolution.sheetName);
+          const adminSheetFile = archive.file(adminSheetPath);
+          if (adminSheetFile) {
+            const adminSheetXml = await adminSheetFile.async('string') as string;
+            archive.file(adminSheetPath, patchWorksheetXmlCells(adminSheetXml, adminResolution.edits));
+          }
+        }
+
+        if (secondaryResolution?.mapping && secondaryResolution.fields.length > 0) {
+          const secondarySheetPath = await resolveWorksheetXmlPath(archive, secondaryResolution.mapping.name);
+          const secondarySheetFile = archive.file(secondarySheetPath);
+          if (secondarySheetFile) {
+            const secondarySheetXml = await secondarySheetFile.async('string') as string;
+            const secondaryPatch = patchWorksheetXmlWithAppendedRows(
+              secondarySheetXml,
+              secondaryResolution.mapping,
+              alignedRows,
+              secondaryResolution.fields,
+            );
+            archive.file(secondarySheetPath, secondaryPatch.sheetXml);
+          }
+        }
 
         // Force Excel to recalculate all formulas when the file is opened.
         const workbookXmlFile = archive.file('xl/workbook.xml');
@@ -1291,6 +1584,19 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
         `Exported ${writtenCount} row${writtenCount === 1 ? '' : 's'} to "${activeSheet.name}" (from row ${writeResult.startRow}).`,
         'success',
       );
+      const missingNotes: string[] = [];
+      if (adminResolution && adminResolution.missing.length > 0) {
+        missingNotes.push(`${template.adminSheet?.sheetName ?? 'admin sheet'}: ${adminResolution.missing.join(', ')}`);
+      }
+      if (secondaryResolution && secondaryResolution.missing.length > 0) {
+        missingNotes.push(`${template.secondaryRowSheet?.sheetName ?? 'second sheet'}: ${secondaryResolution.missing.join(', ')}`);
+      }
+      if (missingNotes.length > 0) {
+        showToastMessage(
+          `Could not fill ${missingNotes.join('; ')} — please fill manually.`,
+          'error',
+        );
+      }
       onClose();
     } catch (err) {
       console.error('Failed to export offer products template', err);
@@ -1302,7 +1608,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
     } finally {
       setSubmitting(false);
     }
-  }, [activeSheet, exportRows, fields, file, onClose, rowsError, rowsStatus, validation.status]);
+  }, [activeSheet, adminValues, exportRows, fields, file, onClose, rowsError, rowsStatus, template.adminSheet, template.secondaryRowSheet, validation.sheets, validation.status]);
 
   const handleOverlayPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     overlayPointerDownOnOverlayRef.current = event.target === event.currentTarget;

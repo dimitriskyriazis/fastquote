@@ -47,6 +47,7 @@ type BrandAuditRow = {
   SoftOneID: number | null;
   SoftOneCode: string | null;
   AVC4Name: string | null;
+  EPLINCName: string | null;
   Enabled: boolean | number | null;
   PartNumberSuffix: string | null;
   PartNumberPattern1: string | null;
@@ -61,6 +62,7 @@ type NormalizedBrandUpdate = {
     | "SoftOneID"
     | "SoftOneCode"
     | "AVC4Name"
+    | "EPLINCName"
     | "Enabled"
     | "PartNumberSuffix"
     | "PartNumberPattern1"
@@ -150,6 +152,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
       SoftOneID,
       SoftOneCode,
       AVC4Name,
+      EPLINCName,
       Enabled,
       PartNumberSuffix,
       PartNumberPattern1,
@@ -165,6 +168,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
     SoftOneID: row.SoftOneID ?? null,
     SoftOneCode: normalizeTextOutput(row.SoftOneCode),
     AVC4Name: normalizeTextOutput(row.AVC4Name),
+    EPLINCName: normalizeTextOutput(row.EPLINCName),
     Enabled: normalizeBooleanOutput(row.Enabled),
     PartNumberSuffix: normalizeTextOutput(row.PartNumberSuffix),
     PartNumberPattern1: normalizeTextOutput(row.PartNumberPattern1),
@@ -318,6 +322,7 @@ export async function PATCH(req: NextRequest) {
             field !== "SoftOneID" &&
             field !== "SoftOneCode" &&
             field !== "AVC4Name" &&
+            field !== "EPLINCName" &&
             field !== "Enabled" &&
             field !== "PartNumberSuffix" &&
             field !== "PartNumberPattern1" &&
@@ -384,6 +389,15 @@ export async function PATCH(req: NextRequest) {
         await request.query(`
           UPDATE dbo.Brands
           SET AVC4Name = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "EPLINCName") {
+        request.input("value", sql.NVarChar(200), normalizeNullableTextValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET EPLINCName = @value,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @userId
           WHERE ID = @brandId
@@ -521,6 +535,7 @@ export async function DELETE(req: NextRequest) {
       SoftOneID: number | null;
       SoftOneCode: string | null;
       AVC4Name: string | null;
+      EPLINCName: string | null;
       Enabled: boolean | number | null;
     }>(`
       DELETE FROM dbo.Brands
@@ -531,6 +546,7 @@ export async function DELETE(req: NextRequest) {
         DELETED.SoftOneID,
         DELETED.SoftOneCode,
         DELETED.AVC4Name,
+        DELETED.EPLINCName,
         DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
@@ -559,6 +575,7 @@ export async function DELETE(req: NextRequest) {
         SoftOneID: row.SoftOneID,
         SoftOneCode: row.SoftOneCode,
         AVC4Name: row.AVC4Name,
+        EPLINCName: row.EPLINCName,
         Enabled: row.Enabled,
       })),
     });

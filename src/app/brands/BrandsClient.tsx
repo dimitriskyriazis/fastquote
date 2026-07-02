@@ -47,6 +47,7 @@ type BrandRow = {
   SoftOneID: number | null;
   SoftOneCode: string | null;
   AVC4Name: string | null;
+  EPLINCName: string | null;
   PartNumberSuffix: string | null;
   PartNumberPattern1: string | null;
   PartNumberPattern2: string | null;
@@ -81,6 +82,7 @@ const BRAND_FIELD_LABELS: Record<string, string> = {
   SoftOneCode: "ERP Code",
   Comment: "Comment",
   AVC4Name: "AVC4 Name",
+  EPLINCName: "EP LINC Name",
   Enabled: "Enabled",
   PartNumberSuffix: "Part Number Suffix",
   PartNumberPattern1: "Part Number Pattern 1",
@@ -256,6 +258,15 @@ export default function BrandsClient() {
       {
         field: "AVC4Name",
         headerName: "AVC4 Name",
+        filter: "agTextColumnFilter",
+        width: 180,
+        editable: canEditAdminOnly,
+      },
+      {
+        // Manufacturer name the EP LINC Request_List_Supplies export writes
+        // instead of the brand name when set.
+        field: "EPLINCName",
+        headerName: "EP LINC Name",
         filter: "agTextColumnFilter",
         width: 180,
         editable: canEditAdminOnly,

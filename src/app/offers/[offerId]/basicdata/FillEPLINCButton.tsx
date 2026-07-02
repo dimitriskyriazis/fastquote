@@ -14,12 +14,20 @@ const ExportOfferProductsModal = dynamic(
   { ssr: false },
 );
 
+// Telmaco's fixed contact phone for EP LINC tenders — written into the
+// Offer_Admin sheet's Phone cell.
+const EP_LINC_CONTACT_PHONE = '+30 2106784100';
+
 interface Props {
   offerId: string;
+  // Offer salesperson full name → Offer_Admin "Contact person".
+  salesPersonName?: string | null;
+  // Offer ERP project code → Offer_Admin "Contractor's Offer reference".
+  erpProjectCode?: string | null;
   className?: string;
 }
 
-export default function FillEPLINCButton({ offerId, className }: Props) {
+export default function FillEPLINCButton({ offerId, salesPersonName, erpProjectCode, className }: Props) {
   const [showModal, setShowModal] = useState(false);
 
   const handleRequestRows = useCallback(async (): Promise<OfferProductsTemplateExportRow[]> => {
@@ -58,6 +66,11 @@ export default function FillEPLINCButton({ offerId, className }: Props) {
           onClose={() => setShowModal(false)}
           onRequestRows={handleRequestRows}
           template={EP_LINC_EXPORT_TEMPLATE}
+          adminValues={{
+            contactPerson: salesPersonName ?? null,
+            phone: EP_LINC_CONTACT_PHONE,
+            contractorOfferReference: erpProjectCode ?? null,
+          }}
         />
       )}
     </>

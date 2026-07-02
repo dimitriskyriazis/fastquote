@@ -28,6 +28,7 @@ type BrandRow = {
   SoftOneID: number | null;
   SoftOneCode: string | null;
   AVC4Name: string | null;
+  EPLINCName: string | null;
   PartNumberSuffix: string | null;
   PartNumberPattern1: string | null;
   PartNumberPattern2: string | null;
@@ -43,6 +44,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   SoftOneID: "dbo.Brands.SoftOneID",
   SoftOneCode: "dbo.Brands.SoftOneCode",
   AVC4Name: "dbo.Brands.AVC4Name",
+  EPLINCName: "dbo.Brands.EPLINCName",
   PartNumberSuffix: "dbo.Brands.PartNumberSuffix",
   PartNumberPattern1: "dbo.Brands.PartNumberPattern1",
   PartNumberPattern2: "dbo.Brands.PartNumberPattern2",
@@ -137,6 +139,7 @@ export async function POST(req: NextRequest) {
         dbo.Brands.SoftOneID,
         dbo.Brands.SoftOneCode,
         dbo.Brands.AVC4Name,
+        dbo.Brands.EPLINCName,
         dbo.Brands.PartNumberSuffix,
         dbo.Brands.PartNumberPattern1,
         dbo.Brands.PartNumberPattern2

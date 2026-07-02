@@ -15,27 +15,58 @@ import styles from '../../offersDetail.module.css';
 const buildHeading = (offerId: string) =>
   /^[0-9]+$/.test(offerId) ? `Offer ${offerId}` : offerId;
 
-async function fetchOrderSignedDate(offerId: string): Promise<string | null> {
+type OfferHeaderData = {
+  orderSignedDate: string | null;
+  // Salesperson full name + ERP project code — the Fill EP LINC export writes
+  // them into the workbook's Offer_Admin sheet (Contact person / Contractor's
+  // Offer reference).
+  salesPersonName: string | null;
+  erpProjectCode: string | null;
+};
+
+async function fetchOfferHeaderData(offerId: string): Promise<OfferHeaderData> {
+  const empty: OfferHeaderData = { orderSignedDate: null, salesPersonName: null, erpProjectCode: null };
   const numericId = Number.parseInt(offerId, 10);
-  if (!Number.isFinite(numericId)) return null;
+  if (!Number.isFinite(numericId)) return empty;
   const pool = await getPool();
   const request = pool.request();
   request.input('offerId', sql.Int, numericId);
-  const result = await request.query<{ OrderSignedDate: Date | string | null }>(
-    'SELECT OrderSignedDate FROM dbo.Offer WHERE ID = @offerId',
-  );
-  const raw = result.recordset?.[0]?.OrderSignedDate ?? null;
-  if (!raw) return null;
-  const d = raw instanceof Date ? raw : new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
+  const result = await request.query<{
+    OrderSignedDate: Date | string | null;
+    SalesPersonName: string | null;
+    ERPProjectCode: string | null;
+  }>(`
+    SELECT
+      o.OrderSignedDate,
+      sales.FullName AS SalesPersonName,
+      o.ERPProjectCode
+    FROM dbo.Offer o
+    LEFT JOIN dbo.AspNetUsers AS sales ON o.SalesPersonId = sales.Id
+    WHERE o.ID = @offerId
+  `);
+  const row = result.recordset?.[0] ?? null;
+  if (!row) return empty;
+  let orderSignedDate: string | null = null;
+  if (row.OrderSignedDate) {
+    const d = row.OrderSignedDate instanceof Date ? row.OrderSignedDate : new Date(row.OrderSignedDate);
+    if (!Number.isNaN(d.getTime())) orderSignedDate = d.toISOString().slice(0, 10);
+  }
+  const normalizeText = (value: string | null): string | null => {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    return trimmed.length > 0 ? trimmed : null;
+  };
+  return {
+    orderSignedDate,
+    salesPersonName: normalizeText(row.SalesPersonName),
+    erpProjectCode: normalizeText(row.ERPProjectCode),
+  };
 }
 
 export default async function Page({ params }: { params: Promise<{ offerId: string }> }) {
   const { offerId } = await params;
   const decodedId = decodeURIComponent(offerId);
   const headingText = `${buildHeading(decodedId)} - Basic Data`;
-  const orderSignedDate = await fetchOrderSignedDate(decodedId);
+  const { orderSignedDate, salesPersonName, erpProjectCode } = await fetchOfferHeaderData(decodedId);
 
   return (
     <main className={styles.page}>
@@ -86,6 +117,8 @@ export default async function Page({ params }: { params: Promise<{ offerId: stri
             />
             <FillEPLINCButton
               offerId={decodedId}
+              salesPersonName={salesPersonName}
+              erpProjectCode={erpProjectCode}
               className={`${styles.headerActionButton} page-header-button`}
             />
             <Link

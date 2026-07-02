@@ -41,6 +41,7 @@ const ALL_FIELD_DEFINITIONS: FieldDefinition[] = [
   { id: 'softOneId', label: 'ERP ID', section: 'general', recordKey: 'SoftOneID', apiField: 'SoftOneID', isInt: true },
   { id: 'softOneCode', label: 'ERP Code', section: 'general', recordKey: 'SoftOneCode', apiField: 'SoftOneCode' },
   { id: 'avc4Name', label: 'AVC4 Name', section: 'general', recordKey: 'AVC4Name', apiField: 'AVC4Name' },
+  { id: 'epLincName', label: 'EP LINC Name', section: 'general', recordKey: 'EPLINCName', apiField: 'EPLINCName' },
   { id: 'enabled', label: 'Enabled', section: 'general', recordKey: 'Enabled', apiField: 'Enabled', isSelect: true },
   { id: 'partNumberSuffix', label: 'Part Number Suffix', section: 'advanced', recordKey: 'PartNumberSuffix', apiField: 'PartNumberSuffix', adminOnly: true },
   { id: 'partNumberPattern1', label: 'Part Number Pattern 1', section: 'advanced', recordKey: 'PartNumberPattern1', apiField: 'PartNumberPattern1', adminOnly: true },

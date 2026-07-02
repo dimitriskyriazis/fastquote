@@ -6,6 +6,7 @@ import { getPool } from '../../../../../../lib/sql';
 import { buildAuditContext } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
+import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
 import { parseLocaleNumber } from '../../../../../../lib/localeNumber';
 import {
   comparePaths,
@@ -1052,6 +1053,15 @@ export async function POST(
     transaction = null;
 
     if (insertedOfferDetailIds.length > 0) {
+      // EP LINC: pasted lines can push a brand's RRP total over the €25.000
+      // COMPARISON threshold — enforce the method pricing offer-wide before
+      // the grids refetch (rows-refresh below). No-op for other policies.
+      try {
+        await applyEpLincMethodRepricing(() => pool.request(), offerId, buildAuditContext(req).userId ?? null);
+      } catch (epLincErr) {
+        console.error('Paste EP LINC repricing failed', epLincErr);
+      }
+
       realtimeEvents.emit(
         `offer:${offerId}:products`,
         'rows-refresh',

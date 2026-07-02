@@ -23,6 +23,7 @@ import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
 import { ALL_ROWS_LIMIT } from '../../../../../lib/constants';
 import { isEpLincPricingPolicyName } from '../../../../../lib/epLincPricing';
+import { applyEpLincMethodRepricing } from '../../../../../lib/epLincRepriceSql';
 import type {
   TextCondition as TextFilterModel,
   CompoundTextFilter as CompoundTextFilterModel,
@@ -295,6 +296,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   BrandID: 'od.BrandID',
   BrandName: 'b.Name',
   AVC4BrandName: 'b.AVC4Name',
+  EPLINCBrandName: 'b.EPLINCName',
   PartNumber: 'od.PartNumber',
   WebLink: 'p.WebLink',
   Origin: 'p.Origin',
@@ -3347,6 +3349,59 @@ export async function PATCH(
       } // end updateChunk loop
     }
 
+    // EP LINC: enforce the method pricing (RRP / UPLIFT / COMPARISON-min) over
+    // the whole offer now that the edit landed — an edit can move a brand's
+    // RRP total across the €25.000 threshold and re-price EVERY line of that
+    // brand, not just the edited one. Rows the pass touched among THIS PATCH's
+    // rows get their echoed values refreshed (so the response and the per-cell
+    // broadcasts below carry the final nets); rows outside it trigger a silent
+    // rows-refresh so all grids (including the editor's) refetch.
+    let epLincRepricedOutsidePatch = false;
+    if (isEpLincOffer) {
+      try {
+        const repricedIds = await applyEpLincMethodRepricing(() => pool.request(), offerId, audit.userId);
+        if (repricedIds.length > 0) {
+          const repricedIdSet = new Set(repricedIds);
+          const patchedIdSet = new Set(normalizedUpdates.map((u) => u.OfferDetailID));
+          epLincRepricedOutsidePatch = repricedIds.some((id) => !patchedIdSet.has(id));
+
+          const staleResolved = resolvedRows.filter((row) => repricedIdSet.has(row.OfferDetailID));
+          if (staleResolved.length > 0) {
+            const rereadRequest = pool.request();
+            const rereadParams: string[] = [];
+            staleResolved.forEach((row, i) => {
+              const param = `__epReread${i}`;
+              rereadRequest.input(param, sql.Int, row.OfferDetailID);
+              rereadParams.push(`@${param}`);
+            });
+            const rereadRes = await rereadRequest.query<{
+              ID: number;
+              NetUnitPrice: number | null;
+              TotalNet: number | null;
+              Margin: number | null;
+              GrossProfit: number | null;
+            }>(`
+              SELECT ID, NetUnitPrice, TotalNet, Margin, GrossProfit
+              FROM dbo.OfferDetails
+              WHERE ID IN (${rereadParams.join(', ')})
+            `);
+            const rereadById = new Map((rereadRes.recordset ?? []).map((row) => [row.ID, row]));
+            for (const row of staleResolved) {
+              const fresh = rereadById.get(row.OfferDetailID);
+              if (!fresh) continue;
+              row.NetUnitPrice = fresh.NetUnitPrice;
+              row.TotalNet = fresh.TotalNet;
+              row.Margin = fresh.Margin;
+              row.GrossProfit = fresh.GrossProfit;
+            }
+          }
+        }
+      } catch (epLincErr) {
+        // Enforcement is retried on the next edit / Update Prices — don't fail the PATCH.
+        console.error('EP LINC method repricing failed', epLincErr);
+      }
+    }
+
     // Emit realtime events for updated rows. Use resolvedRows so derived fields
     // (NetUnitPrice, Margin, totals) recomputed server-side are broadcast too,
     // not just the raw field(s) the user edited.
@@ -3380,6 +3435,17 @@ export async function PATCH(
           );
         }
       }
+    }
+
+    // EP LINC repricing touched rows beyond this PATCH — ask every grid
+    // (including the editor's; the refresh is silent and keeps scroll) to
+    // refetch so the sibling rows' nets update without a manual refresh.
+    if (epLincRepricedOutsidePatch) {
+      realtimeEvents.emit(
+        `offer:${offerId}:products`,
+        'rows-refresh',
+        { reason: 'eplinc-reprice', updatedBy: audit.userId },
+      );
     }
 
     if (affected > 0) {

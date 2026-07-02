@@ -78,6 +78,14 @@ export type OfferProductsTemplateExportRow = {
   productReference: string;
   manufacturer: string;
   descriptionType: string;
+  // Model number and description as SEPARATE fields (descriptionType is their
+  // joined form) — the EP LINC Request_List_Supplies sheet writes them into
+  // distinct columns (Product Name / Free description).
+  productName: string;
+  freeDescription: string;
+  // Manufacturer for the EP LINC request sheet: Brands.EPLINCName when set,
+  // else the plain brand name.
+  epLincManufacturer: string;
   qty: number | '';
   unitPrice: number | '';
   additionalDiscount: number | '';
@@ -94,6 +102,9 @@ export type OfferExportRow = {
   PartNumber: string | null;
   BrandName: string | null;
   AVC4BrandName: string | null;
+  // Brands.EPLINCName — the manufacturer name the EP LINC Request_List_Supplies
+  // export writes instead of the brand name when set.
+  EPLINCBrandName: string | null;
   ModelNumber: string | null;
   Description: string | null;
   Quantity: number | null;

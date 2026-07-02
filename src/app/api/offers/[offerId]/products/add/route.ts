@@ -15,6 +15,7 @@ import {
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
+import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
 import { performRerank, type RerankCandidate } from '../../../../../../lib/rerank';
 import {
   buildTreeFromRows,
@@ -2029,6 +2030,20 @@ async function handleAddProducts(
       );
     }
 
+    // EP LINC: the added lines can push a brand's RRP total over the €25.000
+    // COMPARISON threshold, re-pricing existing lines of that brand — enforce
+    // the method pricing offer-wide before the grids refetch (rows-refresh
+    // below). No-op for non-EP LINC offers.
+    try {
+      await applyEpLincMethodRepricing(() => pool.request(), offerId, auditUserId ?? null);
+    } catch (epLincErr) {
+      logger.error(
+        `[add-products] EP LINC repricing failed for offerId=${offerId}`,
+        { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+        epLincErr instanceof Error ? epLincErr : undefined,
+      );
+    }
+
     realtimeEvents.emit(
       `offer:${offerId}:products`,
       'rows-refresh',
@@ -2824,6 +2839,19 @@ async function handleAssignProductToRequestedRow(
   const similarUnassignedCount = typeof pricingRow?.SimilarUnassignedCount === 'number'
     ? pricingRow.SimilarUnassignedCount
     : 0;
+
+  // EP LINC: assigning products (Populate) can push a brand's RRP total over
+  // the €25.000 COMPARISON threshold — enforce the method pricing offer-wide
+  // before the grids refetch (rows-refresh below). No-op otherwise.
+  try {
+    await applyEpLincMethodRepricing(() => pool.request(), offerId, auditUserId ?? null);
+  } catch (epLincErr) {
+    logger.error(
+      `[assign-requested] EP LINC repricing failed for offerId=${offerId}`,
+      { endpoint: `/api/offers/${offerId}/products/add`, method: 'POST', category: 'mutation' },
+      epLincErr instanceof Error ? epLincErr : undefined,
+    );
+  }
 
   realtimeEvents.emit(
     `offer:${offerId}:products`,
