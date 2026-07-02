@@ -81,20 +81,16 @@ export const epLincComparisonPicksUplift = (line: {
 };
 
 /**
- * Whether a line's price comes from the UPLIFT side — either the pure UPLIFT
- * method, or COMPARISON where the uplift net beats the RRP net. This is what
- * decides whether the Fill EP LINC export reveals the line's cost.
+ * Whether the Fill EP LINC export reveals the line's cost: UPLIFT lines and
+ * ALL COMPARISON lines do (EP LINC needs the cost to run the comparison on
+ * their side, whichever way it lands); plain RRP lines never do.
  */
-export const epLincLineUsesUplift = (line: {
+export const epLincLineRevealsCost = (line: {
   customerDiscount: number | null;
   brandRrpNetTotal: number | null;
-  listPrice: number | null;
-  netCost: number | null;
 }): boolean => {
   const method = resolveEpLincPriceMethod(line.customerDiscount, line.brandRrpNetTotal);
-  if (method === 'UPLIFT') return line.netCost != null;
-  if (method === 'COMPARISON') return epLincComparisonPicksUplift(line);
-  return false;
+  return method === 'UPLIFT' || method === 'COMPARISON';
 };
 
 /**

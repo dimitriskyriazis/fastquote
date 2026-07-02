@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   EP_LINC_COMPARISON_THRESHOLD,
   computeEpLincBrandRrpTotals,
-  epLincLineUsesUplift,
+  epLincLineRevealsCost,
   epLincRrpNetUnitPrice,
   epLincUpliftNetUnitPrice,
   formatEpLincPriceMethodLabel,
@@ -62,23 +62,19 @@ describe('resolveEpLincPriceMethod', () => {
   });
 });
 
-describe('epLincLineUsesUplift', () => {
-  it('UPLIFT lines reveal cost only when a cost exists', () => {
-    expect(epLincLineUsesUplift({ customerDiscount: 0, brandRrpNetTotal: null, listPrice: 100, netCost: 60 })).toBe(true);
-    expect(epLincLineUsesUplift({ customerDiscount: null, brandRrpNetTotal: null, listPrice: 100, netCost: null })).toBe(false);
+describe('epLincLineRevealsCost', () => {
+  it('UPLIFT lines reveal cost', () => {
+    expect(epLincLineRevealsCost({ customerDiscount: 0, brandRrpNetTotal: null })).toBe(true);
+    expect(epLincLineRevealsCost({ customerDiscount: null, brandRrpNetTotal: 50000 })).toBe(true);
   });
 
   it('RRP lines never reveal cost', () => {
-    expect(epLincLineUsesUplift({ customerDiscount: 20, brandRrpNetTotal: 10000, listPrice: 100, netCost: 10 })).toBe(false);
+    expect(epLincLineRevealsCost({ customerDiscount: 20, brandRrpNetTotal: 10000 })).toBe(false);
+    expect(epLincLineRevealsCost({ customerDiscount: 20, brandRrpNetTotal: null })).toBe(false);
   });
 
-  it('COMPARISON lines reveal cost only when uplift beats RRP', () => {
-    // RRP net = 80, uplift net = 69 → uplift wins.
-    expect(epLincLineUsesUplift({ customerDiscount: 20, brandRrpNetTotal: 30000, listPrice: 100, netCost: 60 })).toBe(true);
-    // RRP net = 80, uplift net = 92 → RRP wins.
-    expect(epLincLineUsesUplift({ customerDiscount: 20, brandRrpNetTotal: 30000, listPrice: 100, netCost: 80 })).toBe(false);
-    // Equal (RRP net = 80, uplift net = 80) → RRP wins the tie, cost stays hidden.
-    expect(epLincLineUsesUplift({ customerDiscount: 20, brandRrpNetTotal: 30000, listPrice: 100, netCost: 69.5652 })).toBe(false);
+  it('COMPARISON lines always reveal cost, whichever side is cheaper', () => {
+    expect(epLincLineRevealsCost({ customerDiscount: 20, brandRrpNetTotal: 30000 })).toBe(true);
   });
 });
 

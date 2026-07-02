@@ -8,7 +8,7 @@ import type {
 } from 'ag-grid-community';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableComment } from '../../../lib/offerProductRows';
 import { roundPriceByMagnitude } from '../../../lib/pricing';
-import { epLincLineUsesUplift } from '../../../lib/epLincPricing';
+import { epLincLineRevealsCost } from '../../../lib/epLincPricing';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -2071,10 +2071,10 @@ export const normalizeNoForExport = (value: unknown): string | number => {
 };
 
 export type OfferProductTemplateExportOptions = {
-  // Fill EP LINC: reveal the cost only on lines priced from the cost side —
-  // the UPLIFT method (policy customer discount null/0) or a COMPARISON line
-  // where the uplift net beats the RRP net (see lib/epLincPricing.ts). Every
-  // other line gets a truly-blank cost cell.
+  // Fill EP LINC: reveal the cost only on UPLIFT lines (policy customer
+  // discount null/0) and COMPARISON lines — EP LINC needs the cost to run the
+  // comparison on their side, whichever way it lands (see lib/epLincPricing.ts).
+  // Plain RRP lines get a truly-blank cost cell.
   epLincCostGating?: boolean;
 };
 
@@ -2106,23 +2106,21 @@ export function buildOfferProductTemplateExportRows(
     const listPrice = coerceNumber(row.ListPrice);
     const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
     const rawCost = coerceNumber(row.NetCost);
-    // Under EP LINC cost gating, only uplift-priced product lines reveal their
-    // cost; RRP lines (and non-product rows) get a truly-blank cost cell.
-    // The manufacturer's whole-offer RRP net total (COMPARISON threshold)
-    // comes server-computed on each row (EpLincBrandRrpTotal) so the export
-    // can never disagree with the grid or the stored nets. Only ASSIGNED
-    // product lines (ProductID set) qualify — unlinked archive/requested
-    // lines are never uplift-priced by the server passes.
+    // Under EP LINC cost gating, only UPLIFT and COMPARISON product lines
+    // reveal their cost; plain RRP lines (and non-product rows) get a
+    // truly-blank cost cell. The manufacturer's whole-offer RRP net total
+    // (COMPARISON threshold) comes server-computed on each row
+    // (EpLincBrandRrpTotal) so the export can never disagree with the grid or
+    // the stored nets. Only ASSIGNED product lines (ProductID set) qualify —
+    // unlinked archive/requested lines are never method-priced by the server.
     const revealCost = !epLincCostGating
       || (
         rowType === 'product'
         && hasAssignedProductId(row as unknown as Record<string, unknown>)
         && !isOfferProductService(row as unknown as Record<string, unknown>)
-        && epLincLineUsesUplift({
+        && epLincLineRevealsCost({
           customerDiscount: coerceNumber(row.CustomerDiscount),
           brandRrpNetTotal: coerceNumber(row.EpLincBrandRrpTotal),
-          listPrice,
-          netCost: rawCost,
         })
       );
     const cost = revealCost ? rawCost : null;
