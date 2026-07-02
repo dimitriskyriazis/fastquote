@@ -617,6 +617,115 @@ export async function POST(
     const standardUpdatedBrands = parseBrandList(result.recordset?.[0]?.updatedBrandsCsv);
     const failedBrands = parseBrandList(result.recordset?.[0]?.failedBrandsCsv);
 
+    // Step 2b: EP LINC pricing policies price lines by method (see
+    // src/lib/epLincPricing.ts — the client mirror of these formulas):
+    //   UPLIFT     — policy CustomerDiscount null/0 → NetUnitPrice = NetCost × 1.15
+    //   COMPARISON — discounted brand whose whole-offer RRP net total exceeds
+    //                25.000 → each line takes the cheaper of RRP net and uplift net
+    //   RRP        — everything else keeps the standard calculation from above.
+    // Only lines whose method deviates from RRP are rewritten; the brand totals
+    // are evaluated on the RRP basis (ListPrice × (1 − CD%) × Qty) over the WHOLE
+    // offer regardless of a partial selection, so partial updates can't shift the
+    // threshold. Runs after the standard/Farnell passes (their freshly written
+    // ListPrice/CustomerDiscount/NetCost are the inputs) and before the services
+    // pass (service rows are excluded here and re-normalized there anyway).
+    const epLincRequest = pool.request();
+    epLincRequest.input('offerId', sql.Int, normalizedId);
+    epLincRequest.input('modifiedBy', sql.NVarChar(450), auditUserId);
+    const epLincSelectedFilterSql = selectedOfferDetailIds.length > 0
+      ? ` AND od.ID IN (${selectedOfferDetailIds.map((_, idx) => `@epSelId${idx}`).join(', ')})`
+      : '';
+    selectedOfferDetailIds.forEach((id, idx) => {
+      epLincRequest.input(`epSelId${idx}`, sql.Int, id);
+    });
+
+    const epLincResult = await epLincRequest.query<{ epLincUpdated: number }>(`
+      DECLARE @PricingPolicyID INT = (
+        SELECT TOP (1) o.PricingPolicyID
+        FROM dbo.Offer o
+        WHERE o.ID = @offerId
+      );
+      DECLARE @epLincUpdated INT = 0;
+
+      IF EXISTS (
+        SELECT 1
+        FROM dbo.PricingPolicies pp
+        WHERE pp.ID = @PricingPolicyID
+          AND UPPER(pp.Name) LIKE '%LINC%'
+      )
+      BEGIN
+        WITH EpLincLines AS (
+          SELECT
+            od.ID,
+            COALESCE(od.BrandID, p.BrandID) AS EffectiveBrandID,
+            od.CustomerDiscount,
+            od.Quantity,
+            ISNULL(od.IsOption, 0) AS IsOptionFlag,
+            CASE
+              WHEN od.ListPrice IS NULL THEN NULL
+              ELSE ROUND(
+                od.ListPrice
+                * (CAST(1 AS DECIMAL(18, 8)) - (CAST(COALESCE(od.CustomerDiscount, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))),
+                4
+              )
+            END AS RrpNet,
+            CASE
+              WHEN od.NetCost IS NULL THEN NULL
+              ELSE ROUND(CAST(od.NetCost AS DECIMAL(18, 8)) * CAST(1.15 AS DECIMAL(18, 8)), 4)
+            END AS UpliftNet
+          FROM dbo.OfferDetails od
+          LEFT JOIN dbo.Products p ON od.ProductID = p.ID
+          WHERE od.OfferID = @offerId
+            AND od.ProductID IS NOT NULL
+            AND ISNULL(od.IsCategory, 0) = 0
+            AND ISNULL(od.IsComment, 0) = 0
+            AND ISNULL(od.IsService, 0) = 0
+        ),
+        BrandTotals AS (
+          SELECT
+            EffectiveBrandID,
+            SUM(COALESCE(RrpNet, 0) * COALESCE(Quantity, 0)) AS BrandRrpNetTotal
+          FROM EpLincLines
+          WHERE IsOptionFlag = 0
+          GROUP BY EffectiveBrandID
+        )
+        UPDATE od
+        SET
+          [NetUnitPrice] = line.UpliftNet,
+          [TotalNet] = CASE WHEN od.Quantity IS NULL THEN NULL ELSE ROUND(line.UpliftNet * od.Quantity, 4) END,
+          [GrossProfit] = CASE
+            WHEN od.Quantity IS NULL OR od.NetCost IS NULL THEN NULL
+            ELSE ROUND((line.UpliftNet - od.NetCost) * od.Quantity, 4)
+          END,
+          [Margin] = CASE
+            WHEN line.UpliftNet = 0 OR od.NetCost IS NULL THEN NULL
+            ELSE ROUND(
+              (CAST(1 AS DECIMAL(18, 8)) - (CAST(od.NetCost AS DECIMAL(18, 8)) / CAST(line.UpliftNet AS DECIMAL(18, 8)))) * 100,
+              4
+            )
+          END,
+          [ModifiedOn] = SYSUTCDATETIME(),
+          [ModifiedBy] = @modifiedBy
+        FROM dbo.OfferDetails od
+        INNER JOIN EpLincLines line ON line.ID = od.ID
+        LEFT JOIN BrandTotals bt ON bt.EffectiveBrandID = line.EffectiveBrandID
+        WHERE line.UpliftNet IS NOT NULL
+          AND (
+            COALESCE(line.CustomerDiscount, 0) = 0
+            OR (
+              COALESCE(bt.BrandRrpNetTotal, 0) > 25000
+              AND line.RrpNet IS NOT NULL
+              AND line.UpliftNet < line.RrpNet
+            )
+          )
+          ${epLincSelectedFilterSql};
+        SET @epLincUpdated = @@ROWCOUNT;
+      END;
+
+      SELECT @epLincUpdated AS epLincUpdated;
+    `);
+    const epLincAdjusted = Number(epLincResult.recordset?.[0]?.epLincUpdated ?? 0);
+
     // Step 3: Update service product rows using ServicesLocation-aware pricing
     const locationLookup = pool.request();
     locationLookup.input('offerId', sql.Int, normalizedId);
@@ -682,7 +791,10 @@ export async function POST(
 
     const updatedBrands = Array.from(new Set([...farnellUpdated.updatedBrands, ...standardUpdatedBrands]));
     const totalUpdated = standardUpdated + farnellUpdated.updatedCount + serviceUpdated;
-    if (totalUpdated > 0) {
+    // epLincAdjusted rows usually overlap standardUpdated, so they are not added
+    // to the count — but they can be the ONLY change (e.g. uplift on rows with no
+    // enabled price-list match), so they still must trigger the refresh.
+    if (totalUpdated > 0 || epLincAdjusted > 0) {
       realtimeEvents.emit(
         `offer:${normalizedId}:products`,
         'rows-refresh',
@@ -695,6 +807,7 @@ export async function POST(
       updatedBrands,
       failedBrands,
       serviceUpdated,
+      epLincAdjusted,
     });
   } catch (err) {
     console.error('Failed to update offer prices', err);

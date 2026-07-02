@@ -14,6 +14,7 @@ import styles from './AddRequestedProductsModal.module.css';
 import { useModalDragResize } from '../../../hooks/useModalDragResize';
 import { showToastMessage } from '../../../../lib/toast';
 import { parseLocaleNumber } from '../../../../lib/localeNumber';
+import { isEpLincPricingPolicyName as isEpLincPricingPolicy } from '../../../../lib/epLincPricing';
 
 type XlsxModule = typeof import('xlsx');
 
@@ -23,9 +24,19 @@ type Props = {
   offerId: string;
   onClose: () => void;
   onImported: (result: { inserted?: number; updated?: number; total?: number }) => void;
+  // Name of the offer's pricing policy (dbo.PricingPolicies.Name). When it is an
+  // EP LINC policy, the uploaded workbook is assumed to follow the EP LINC
+  // "Request_List_Supplies" template and its columns are auto-mapped by exact
+  // header name (see EP_LINC_REQUEST_HEADER_MAP).
+  pricingPolicyName?: string | null;
 };
 
 type HeaderColumnKey = 'itemNo' | 'brand' | 'modelNumber' | 'partNumber' | 'webLink' | 'description' | 'description2' | 'description3' | 'quantity';
+
+// Per-field lists of exact worksheet header names (already normalized: trimmed +
+// lowercased) that should be matched verbatim, taking priority over the generic
+// keyword matcher. Used for template-specific auto-mapping (e.g. EP LINC).
+type ExactHeaderMap = Partial<Record<HeaderColumnKey, string[]>>;
 
 type ColumnOption = { index: number; label: string; normalized: string };
 
@@ -73,6 +84,23 @@ const columnKeywords: Record<HeaderColumnKey, string[]> = {
   description2: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   description3: ['description', 'desc', 'name', 'details', 'information', 'info', 'specs', 'specifications'],
   quantity: ['qty', 'quantity', 'amount', 'pcs', 'pieces'],
+};
+
+// The EP LINC request workbook keeps its product list on this sheet.
+const EP_LINC_REQUEST_SHEET_NAME = 'request_list_supplies';
+
+// Exact (normalized: trimmed + lowercased) header names for the EP LINC
+// "Request_List_Supplies" template. Keyword matching can't disambiguate
+// Product_name (Model No) from Product_reference (Part No) — both contain
+// "product" — and "No" matches no keyword at all, so EP LINC offers map by
+// exact header instead. Space variants are included defensively.
+const EP_LINC_REQUEST_HEADER_MAP: ExactHeaderMap = {
+  itemNo: ['no'],
+  brand: ['manufacturer_name', 'manufacturer name'],
+  modelNumber: ['product_name', 'product name'],
+  partNumber: ['product_reference', 'product reference'],
+  description: ['description'],
+  quantity: ['product_qty', 'product qty'],
 };
 
 const COLUMN_DISPLAY: Array<{ key: HeaderColumnKey; label: string }> = [
@@ -153,10 +181,24 @@ const buildColumns = (headerRow: unknown[], columnCount: number): ColumnOption[]
   return columns;
 };
 
-const buildSuggestions = (columns: ColumnOption[]) => {
+const buildSuggestions = (columns: ColumnOption[], exactHeaderMap?: ExactHeaderMap | null) => {
   const makeSuggestions = (key: HeaderColumnKey) => {
+    // Exact header matches (e.g. EP LINC template) lead the suggestion list so
+    // the first-suggestion auto-selector picks them over ambiguous keyword hits.
+    const exactHeaders = exactHeaderMap?.[key];
+    const exactMatches = exactHeaders
+      ? columns.filter((col) => exactHeaders.includes(col.normalized))
+      : [];
     const keywords = columnKeywords[key].map((kw) => kw.toLowerCase());
-    return columns.filter((col) => keywords.some((kw) => col.normalized.includes(kw)));
+    const keywordMatches = columns.filter((col) => keywords.some((kw) => col.normalized.includes(kw)));
+    const seen = new Set<number>();
+    const combined: ColumnOption[] = [];
+    for (const col of [...exactMatches, ...keywordMatches]) {
+      if (seen.has(col.index)) continue;
+      seen.add(col.index);
+      combined.push(col);
+    }
+    return combined;
   };
   return {
     itemNo: makeSuggestions('itemNo'),
@@ -173,11 +215,16 @@ const buildSuggestions = (columns: ColumnOption[]) => {
 
 const autoSelectUniqueSuggestions = (
   suggestions: Record<HeaderColumnKey, ColumnOption[]>,
+  allowedKeys?: Set<HeaderColumnKey> | null,
 ): Partial<Record<HeaderColumnKey, number | null>> => {
   const selection: Partial<Record<HeaderColumnKey, number | null>> = {};
   const usedIndexes = new Set<number>();
 
   COLUMN_DISPLAY.forEach((column) => {
+    // Under a fixed template (allowedKeys), only auto-map the template's own
+    // fields. Extra columns like "Description_FMS" keyword-match Description 2/3,
+    // but those aren't part of the template, so they must stay empty.
+    if (allowedKeys && !allowedKeys.has(column.key)) return;
     const match = (suggestions[column.key] ?? []).find((opt) => !usedIndexes.has(opt.index));
     if (!match) return;
     selection[column.key] = match.index;
@@ -205,17 +252,25 @@ const analyzeSheet = (
   fallbackIndex: number,
   enabled: boolean,
   hyperlinkTargets: Record<string, string> = {},
+  exactHeaderMap?: ExactHeaderMap | null,
 ): SheetMapping => {
   const headerRowIndex = detectHeaderRowIndex(rows);
   const headerRow = Array.isArray(rows[headerRowIndex]) ? rows[headerRowIndex] : [];
   const columnCount = Math.max(determineColumnCount(rows), headerRow.length);
   const baseColumns = columnCount > 0 ? buildColumns(headerRow, columnCount) : [];
   const columns = baseColumns.filter((column) => columnHasValue(rows, headerRow, column.index));
-  const suggestions = buildSuggestions(columns);
+  const suggestions = buildSuggestions(columns, exactHeaderMap);
   const includeHeaderRow = Object.values(suggestions).some((match) => match.length > 0);
-  
+
+  // With a fixed template, restrict auto-mapping to the template's own fields so
+  // fields it doesn't cover (e.g. Description 2/3) stay empty even when other
+  // columns keyword-match them.
+  const allowedKeys = exactHeaderMap
+    ? new Set(Object.keys(exactHeaderMap) as HeaderColumnKey[])
+    : null;
+
   // Auto-select suggested columns, but do not map the same source column twice.
-  const selection = autoSelectUniqueSuggestions(suggestions);
+  const selection = autoSelectUniqueSuggestions(suggestions, allowedKeys);
   
   const baseSheet: SheetMapping = {
     name: sheetName || `Sheet ${fallbackIndex + 1}`,
@@ -232,7 +287,11 @@ const analyzeSheet = (
   return enrichSheet(baseSheet);
 };
 
-const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetMapping[] => {
+const analyzeWorkbook = (
+  workbook: XLSXTypes.WorkBook,
+  xlsx: XlsxModule,
+  exactHeaderMap?: ExactHeaderMap | null,
+): SheetMapping[] => {
   const sheets: SheetMapping[] = [];
   for (const sheetName of workbook.SheetNames ?? []) {
     const sheet = workbook.Sheets?.[sheetName];
@@ -240,7 +299,7 @@ const analyzeWorkbook = (workbook: XLSXTypes.WorkBook, xlsx: XlsxModule): SheetM
     const rows = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
     if (!Array.isArray(rows)) continue;
     const hyperlinkTargets = extractSheetHyperlinkTargets(sheet, xlsx);
-    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0, hyperlinkTargets));
+    sheets.push(analyzeSheet(sheetName, rows, sheets.length, sheets.length === 0, hyperlinkTargets, exactHeaderMap));
   }
   return sheets;
 };
@@ -408,7 +467,7 @@ const extractSheetHyperlinkTargets = (
   return targets;
 };
 
-export default function AddRequestedProductsModal({ offerId, onClose, onImported }: Props) {
+export default function AddRequestedProductsModal({ offerId, onClose, onImported, pricingPolicyName }: Props) {
   const { cardRef: setCardRef, cardStyle: dragCardStyle, headerProps: dragHeaderProps, resizeHandles } = useModalDragResize({ draggable: true, resizable: true });
   const [file, setFile] = useState<File | null>(null);
   const [fileValidation, setFileValidation] = useState<FileValidation>(INITIAL_VALIDATION);
@@ -423,18 +482,34 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
   const [manualRow, setManualRow] = useState<PayloadRow>({});
   const [existingItemNos, setExistingItemNos] = useState<Set<string>>(new Set());
 
+  // EP LINC offers: the uploaded workbook follows the EP LINC request template,
+  // so map its columns by exact header name and prefer its known product sheet.
+  const isEpLinc = useMemo(() => isEpLincPricingPolicy(pricingPolicyName), [pricingPolicyName]);
+  const requestColumnMap = useMemo(() => (isEpLinc ? EP_LINC_REQUEST_HEADER_MAP : null), [isEpLinc]);
+  const preferredSheetName = useMemo(() => (isEpLinc ? EP_LINC_REQUEST_SHEET_NAME : null), [isEpLinc]);
+
   const applySheets = useCallback((sheets: SheetMapping[]) => {
     let normalizedSheets = sheets.map(enrichSheet);
 
     let activeIndex = 0;
     if (normalizedSheets.length > 1) {
-      let biggestRowCount = -1;
-      normalizedSheets.forEach((sheet, idx) => {
-        if (sheet.rowCount > biggestRowCount) {
-          biggestRowCount = sheet.rowCount;
-          activeIndex = idx;
-        }
-      });
+      // Prefer the template's named sheet (e.g. EP LINC -> "Request_List_Supplies")
+      // so the auto-mapped columns are on the active sheet; otherwise fall back
+      // to the largest sheet.
+      const preferredIndex = preferredSheetName
+        ? normalizedSheets.findIndex((sheet) => sheet.name.trim().toLowerCase() === preferredSheetName)
+        : -1;
+      if (preferredIndex >= 0) {
+        activeIndex = preferredIndex;
+      } else {
+        let biggestRowCount = -1;
+        normalizedSheets.forEach((sheet, idx) => {
+          if (sheet.rowCount > biggestRowCount) {
+            biggestRowCount = sheet.rowCount;
+            activeIndex = idx;
+          }
+        });
+      }
       normalizedSheets = normalizedSheets.map((sheet, idx) => ({
         ...sheet,
         enabled: idx === activeIndex,
@@ -454,7 +529,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
     if (normalizedSheets.length > 1) {
       setShowSheetSelector(true);
     }
-  }, []);
+  }, [preferredSheetName]);
 
   const activeSheet = useMemo(
     () => fileValidation.sheets[fileValidation.activeSheetIndex] ?? null,
@@ -535,12 +610,12 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         if (include) {
           const baseColumns = columnCount > 0 ? buildColumns(headerRow, columnCount) : [];
           columns = baseColumns.filter((col) => columnHasValue(sheet.rawRows, headerRow, col.index));
-          suggestions = buildSuggestions(columns);
+          suggestions = buildSuggestions(columns, requestColumnMap);
         } else {
           const emptyRow: unknown[] = Array.from({ length: columnCount }, () => null);
           const baseColumns = columnCount > 0 ? buildColumns(emptyRow, columnCount) : [];
           columns = baseColumns.filter((col) => columnHasValue(sheet.rawRows, emptyRow, col.index));
-          suggestions = buildSuggestions(columns);
+          suggestions = buildSuggestions(columns, requestColumnMap);
         }
 
         // Preserve existing column selections where the index is still valid
@@ -565,7 +640,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
       const evaluation = evaluateSelection(sheets, prev.activeSheetIndex);
       return { ...prev, ...evaluation, sheets };
     });
-  }, []);
+  }, [requestColumnMap]);
 
   const updateManualRowField = useCallback((key: HeaderColumnKey, value: string) => {
     setManualRow((prev) => ({ ...prev, [key]: value || null }));
@@ -616,7 +691,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
         try {
           const xlsx = await loadXlsx();
           const workbook = xlsx.read(buffer, { type: 'array' });
-          sheets = analyzeWorkbook(workbook, xlsx);
+          sheets = analyzeWorkbook(workbook, xlsx, requestColumnMap);
         } catch (err) {
           console.error('Failed to parse workbook', err);
           sheets = [];
@@ -640,7 +715,7 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
           message: 'Unable to read the file. Please try another upload.',
         });
       });
-  }, [applySheets]);
+  }, [applySheets, requestColumnMap]);
 
   const handlePasteInput = useCallback((value: string) => {
     setPasteText(value);
@@ -659,11 +734,11 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
       });
       return;
     }
-    const sheet = analyzeSheet('Pasted data', rows, 0, true);
+    const sheet = analyzeSheet('Pasted data', rows, 0, true, {}, requestColumnMap);
     applySheets([sheet]);
     setFile(null);
     setError(null);
-  }, [applySheets]);
+  }, [applySheets, requestColumnMap]);
 
   const handleFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
@@ -1172,11 +1247,14 @@ export default function AddRequestedProductsModal({ offerId, onClose, onImported
           {(() => {
             const enabled = fileValidation.sheets.filter((s) => s.enabled);
             if (enabled.length === 1) {
+              const matchedPreferred = preferredSheetName != null
+                && enabled[0].name.trim().toLowerCase() === preferredSheetName;
+              const reason = matchedPreferred ? 'matched template' : 'largest sheet';
               return (
                 <div className={styles.sheetSelectorDescription}>
                   {'Auto-selected '}
                   <strong>{enabled[0].name}</strong>
-                  {` with ${enabled[0].rowCount} rows (largest sheet).`}
+                  {` with ${enabled[0].rowCount} rows (${reason}).`}
                 </div>
               );
             }

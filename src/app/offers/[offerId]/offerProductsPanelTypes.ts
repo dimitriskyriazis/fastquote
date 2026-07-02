@@ -98,6 +98,12 @@ export type OfferExportRow = {
   Description: string | null;
   Quantity: number | null;
   ListPrice: number | null;
+  // Policy customer discount — drives the EP LINC price method (null/0 →
+  // UPLIFT) and the export's cost gating.
+  CustomerDiscount: number | null;
+  // Server-computed whole-offer RRP net total of the row's manufacturer (the
+  // EP LINC COMPARISON threshold input); null on non-EP LINC fetches.
+  EpLincBrandRrpTotal?: number | null;
   AdditionalCustomerDiscount: number | null;
   NetCost: number | null;
   Delivery: string | null;

@@ -1427,6 +1427,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       // ('cust') layout must never expose it, but the cost layouts must NOT force
       // it visible — leave its visibility to the user / saved state there.
       if (!showCostAnalysis) state.push({ colId: 'Markup', hide: true });
+      // The EP LINC Price Method column reveals the internal pricing method
+      // (UPLIFT = cost-based) — never expose it in the customer layout either.
+      if (!showCostAnalysis) state.push({ colId: 'PriceMethod', hide: true });
       api.applyColumnState({ state, applyOrder: false });
     } catch {
       /* noop */
@@ -3593,24 +3596,27 @@ const requestedColumnDefsMap = useMemo(
 
           // Fetch product summary early so we can check for brand mismatch before assignment
           const productMeta = await fetchProductSummary(productId);
-          // Defer to the manual matcher only when the resolved product's
-          // brand is GENUINELY different from the requested brand. Compare
-          // with a case/space/hyphen/punctuation-insensitive key (the same
-          // part-number clearing, which also normalizes accents and keeps
-          // letters of any script, e.g. Greek) so cosmetic formatting
-          // differences are reconciled: a requested "PENN ELCOM" matches a
-          // catalogued "Penn-Elcom" and auto-assigns instead of opening the
-          // modal. This matters because /api/products/resolve falls back to a
-          // brand-less TOP-1 match when the requested brand key doesn't line
-          // up (match 'fallbackNoBrand'), so a strong brand comparison here is
-          // what stops us silently assigning a different-vendor product that
-          // merely reuses the same part number (e.g. a "Sony" request
-          // resolving to a same-code "Bosch" product).
-          const requestedBrandKey = lookupInfo.brand ? clearPartModelNumberUpper(lookupInfo.brand) : '';
-          const matchedBrandKey = productMeta?.BrandName ? clearPartModelNumberUpper(productMeta.BrandName) : '';
-          if (requestedBrandKey && matchedBrandKey && requestedBrandKey !== matchedBrandKey) {
-            unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
-            continue;
+          // Products.PartNumber is UNIQUE, so an exact part-number match
+          // identifies exactly one product — auto-assign it regardless of
+          // brand. The requested brand is often imprecise or formatted
+          // differently ("PENN ELCOM" vs "Penn-Elcom", or an outright
+          // different distributor name), and none of that can make a unique
+          // part number point at the wrong product. We only fall back to a
+          // brand check when the resolver matched via a NON-unique field
+          // (ModelNumber / legacy code) rather than the part number — there a
+          // wrong-brand top-1 is possible, so a strong (case/space/hyphen/
+          // punctuation-insensitive, any-script) brand key guards it and
+          // otherwise defers the row to the manual matcher.
+          const requestedPartKey = lookupInfo.partNumber ? clearPartModelNumberUpper(lookupInfo.partNumber) : '';
+          const matchedPartKey = productMeta?.PartNumber ? clearPartModelNumberUpper(productMeta.PartNumber) : '';
+          const isExactPartMatch = Boolean(requestedPartKey && matchedPartKey && requestedPartKey === matchedPartKey);
+          if (!isExactPartMatch) {
+            const requestedBrandKey = lookupInfo.brand ? clearPartModelNumberUpper(lookupInfo.brand) : '';
+            const matchedBrandKey = productMeta?.BrandName ? clearPartModelNumberUpper(productMeta.BrandName) : '';
+            if (requestedBrandKey && matchedBrandKey && requestedBrandKey !== matchedBrandKey) {
+              unmatchedRequestedRows.push(buildRequestedProductMatchEntry(data, offerDetailId));
+              continue;
+            }
           }
 
           const parentCategoryId = normalizeOfferDetailId(
@@ -7273,6 +7279,36 @@ const requestedColumnDefsMap = useMemo(
     void runUpdate();
   }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo]);
 
+  // EP LINC: pricing/quantity PATCH responses echo the fresh per-manufacturer
+  // RRP net totals (epLincBrandRrpTotals, keyed by BrandID). Apply them to
+  // every loaded row of the affected brands — writing row data directly (NOT
+  // setDataValue, which would re-fire handleCellEdit) — and repaint the
+  // derived Price Method cells so the RRP/COMPARISON split updates live,
+  // without a grid refetch.
+  const applyEpLincBrandTotalsFromResponse = useCallback((payload: unknown) => {
+    const totals = (payload as { epLincBrandRrpTotals?: Record<string, number | null> } | null | undefined)?.epLincBrandRrpTotals;
+    if (!totals || typeof totals !== 'object') return;
+    const api = gridApiRef.current;
+    if (!api || api.isDestroyed?.()) return;
+    const changedNodes: IRowNode<Record<string, unknown>>[] = [];
+    api.forEachNode((node) => {
+      const data = node.data as Record<string, unknown> | undefined;
+      if (!data) return;
+      const brandId = coerceNumber(data.BrandID);
+      if (brandId == null) return;
+      const next = totals[String(brandId)];
+      if (next === undefined) return;
+      const normalizedNext = next ?? null;
+      const currentTotal = coerceNumber(data.EpLincBrandRrpTotal);
+      if (currentTotal === normalizedNext || (currentTotal != null && normalizedNext != null && Object.is(currentTotal, normalizedNext))) return;
+      data.EpLincBrandRrpTotal = normalizedNext;
+      changedNodes.push(node);
+    });
+    if (changedNodes.length > 0) {
+      try { api.refreshCells({ rowNodes: changedNodes, columns: ['PriceMethod'], force: true }); } catch { /* noop */ }
+    }
+  }, []);
+
   const handleQuantityEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Quantity') return;
     const pasteUndoToken = pasteUndoTokenRef.current;
@@ -7354,6 +7390,8 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update quantity (status ${res.status})`);
         }
+        // Quantity moves the EP LINC per-brand RRP totals — repaint Price Method.
+        applyEpLincBrandTotalsFromResponse(payload);
         pushUndo({
           label: 'Quantity updated',
           groupToken: pasteUndoToken ?? undefined,
@@ -7406,7 +7444,7 @@ const requestedColumnDefsMap = useMemo(
       }
     };
     void runUpdate();
-  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, snapshotRowTotals, applyRowTotalsDelta]);
+  }, [resolvedEndpoint, shouldSkipRealtimeCellEdit, pushUndo, performUndo, snapshotRowTotals, applyRowTotalsDelta, applyEpLincBrandTotalsFromResponse]);
 
   const handleHoursFieldEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const editedField = event.colDef.field;
@@ -8233,6 +8271,9 @@ const requestedColumnDefsMap = useMemo(
         if (!res.ok || !payload?.ok) {
           throw new Error(payload?.error ?? `Failed to update ${label} (status ${res.status})`);
         }
+        // Pricing edits (List Price in particular) move the EP LINC per-brand
+        // RRP totals — repaint the Price Method cells from the echoed totals.
+        applyEpLincBrandTotalsFromResponse(payload);
         const resolved = payload.resolvedRows?.find(
           (row) => normalizeOfferDetailId(row?.OfferDetailID ?? null) === offerDetailId,
         );
@@ -8337,7 +8378,7 @@ const requestedColumnDefsMap = useMemo(
     };
 
     void runUpdate();
-  }, [resolvedEndpoint, addProductsEndpoint, refreshOfferProductGrid, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta, openCostCurrencyPrompt]);
+  }, [resolvedEndpoint, addProductsEndpoint, refreshOfferProductGrid, shouldSkipRealtimeCellEdit, pushUndo, performUndo, registerRealtimeCellUpdate, snapshotRowTotals, applyRowTotalsDelta, openCostCurrencyPrompt, applyEpLincBrandTotalsFromResponse]);
 
   const handleOriginEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     if (event.colDef.field !== 'Origin') return;
@@ -8784,8 +8825,12 @@ const requestedColumnDefsMap = useMemo(
     // it when an underlying pricing field changes (whether from a user edit or a
     // realtime collaborator update, both of which land here). Force a re-render of
     // the Markup cell for this row whenever a value it derives from moves.
+    // The derived EP LINC Price Method cell rides along: its label hinges on
+    // CustomerDiscount / ListPrice / NetCost (all in MARKUP_SOURCE_FIELDS),
+    // which AG Grid won't associate with the column's own field
+    // (EpLincBrandRrpTotal).
     if (MARKUP_SOURCE_FIELDS.has(event.colDef.field ?? '')) {
-      try { event.api?.refreshCells({ rowNodes: [event.node!], columns: ['Markup'], force: true }); } catch { /* noop */ }
+      try { event.api?.refreshCells({ rowNodes: [event.node!], columns: ['Markup', 'PriceMethod'], force: true }); } catch { /* noop */ }
     }
   }, [isProgrammaticCellEdit, handleDescriptionEdit, handleCommentEdit, handleDeliveryEdit, handleRequestedFieldEdit, handleQuantityEdit, handlePricingEdit, handlePartModelNumberEdit, handleOriginEdit, handleHoursFieldEdit, handleWarrantyFieldEdit, handleTreeOrderingEdit, propagateChangeToDuplicates]);
 

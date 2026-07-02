@@ -2008,6 +2008,7 @@ export default function ClientProductsPage({
           offerId={offerId}
           onClose={handleCloseRequestedModal}
           onImported={handleRequestedImported}
+          pricingPolicyName={pricingPolicyName}
         />
       ) : null}
       {showPasteDialog ? (

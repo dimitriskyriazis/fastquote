@@ -8,6 +8,7 @@ import type {
 } from 'ag-grid-community';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableComment } from '../../../lib/offerProductRows';
 import { roundPriceByMagnitude } from '../../../lib/pricing';
+import { epLincLineUsesUplift } from '../../../lib/epLincPricing';
 import { priceListStatusClassRules } from '../../../lib/priceListStatus';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 import type { RequestedProductMatchEntry } from './products/MatchRequestedProductsModal';
@@ -2042,6 +2043,8 @@ export const OFFER_PRODUCTS_EXPORT_FIELDS = [
   'Description',
   'Quantity',
   'ListPrice',
+  'CustomerDiscount',
+  'EpLincBrandRrpTotal',
   'AdditionalCustomerDiscount',
   'NetCost',
   'Comment',
@@ -2067,6 +2070,14 @@ export const normalizeNoForExport = (value: unknown): string | number => {
   return trimmed;
 };
 
+export type OfferProductTemplateExportOptions = {
+  // Fill EP LINC: reveal the cost only on lines priced from the cost side —
+  // the UPLIFT method (policy customer discount null/0) or a COMPARISON line
+  // where the uplift net beats the RRP net (see lib/epLincPricing.ts). Every
+  // other line gets a truly-blank cost cell.
+  epLincCostGating?: boolean;
+};
+
 // Single source of truth for turning raw offer-export rows (as returned by the
 // products API with OFFER_PRODUCTS_EXPORT_FIELDS) into the flat shape consumed
 // by ExportOfferProductsModal. Shared by every "Fill <template>" button so the
@@ -2074,12 +2085,15 @@ export const normalizeNoForExport = (value: unknown): string | number => {
 // templates — each template just selects which of these fields it writes.
 export function buildOfferProductTemplateExportRows(
   rows: OfferExportRow[],
+  options?: OfferProductTemplateExportOptions,
 ): OfferProductsTemplateExportRow[] {
   const displayMap = computeDisplayOrderingMap(rows as unknown as Record<string, unknown>[]);
   const included = rows.filter((row) => {
     const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
     return rowType === 'product' || rowType === 'category' || rowType === 'printable-comment' || rowType === 'printable-service';
   });
+
+  const epLincCostGating = options?.epLincCostGating === true;
 
   return included.map((row): OfferProductsTemplateExportRow => {
     const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
@@ -2091,7 +2105,27 @@ export function buildOfferProductTemplateExportRows(
     const qty = isServLot ? 1 : rawQty;
     const listPrice = coerceNumber(row.ListPrice);
     const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
-    const cost = coerceNumber(row.NetCost);
+    const rawCost = coerceNumber(row.NetCost);
+    // Under EP LINC cost gating, only uplift-priced product lines reveal their
+    // cost; RRP lines (and non-product rows) get a truly-blank cost cell.
+    // The manufacturer's whole-offer RRP net total (COMPARISON threshold)
+    // comes server-computed on each row (EpLincBrandRrpTotal) so the export
+    // can never disagree with the grid or the stored nets. Only ASSIGNED
+    // product lines (ProductID set) qualify — unlinked archive/requested
+    // lines are never uplift-priced by the server passes.
+    const revealCost = !epLincCostGating
+      || (
+        rowType === 'product'
+        && hasAssignedProductId(row as unknown as Record<string, unknown>)
+        && !isOfferProductService(row as unknown as Record<string, unknown>)
+        && epLincLineUsesUplift({
+          customerDiscount: coerceNumber(row.CustomerDiscount),
+          brandRrpNetTotal: coerceNumber(row.EpLincBrandRrpTotal),
+          listPrice,
+          netCost: rawCost,
+        })
+      );
+    const cost = revealCost ? rawCost : null;
     // Blank delivery stays blank in the export (no 'unknown' placeholder).
     const deliveryValue = row.Delivery == null ? '' : String(row.Delivery).trim();
     const isUnmatchedProduct = rowType === 'product'

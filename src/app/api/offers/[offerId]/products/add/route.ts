@@ -1904,6 +1904,29 @@ async function handleAddProducts(
     END
   FROM #PD pd;
 
+  -- Step 3b: EP LINC policy — lines whose policy customer discount is null/0
+  -- are priced by UPLIFT: net = cost × 1.15 instead of the RRP calculation
+  -- (see src/lib/epLincPricing.ts; the cost expression mirrors the NetCost the
+  -- INSERT below stores). Rewriting ComputedNetUnitPrice here cascades into the
+  -- inserted TotalNet/Margin/GrossProfit automatically. COMPARISON re-pricing
+  -- (brand RRP totals over 25.000) is applied by Update Prices, not at insert.
+  IF EXISTS (
+    SELECT 1 FROM dbo.PricingPolicies pp
+    WHERE pp.ID = @pricingPolicyId AND UPPER(pp.Name) LIKE '%LINC%'
+  )
+  BEGIN
+    UPDATE pd SET
+      pd.ComputedNetUnitPrice = ROUND(
+        CAST(COALESCE(pd.ComputedNetCost, pd.CostPrice * COALESCE(pd.CurrencyCostModifier, 1), pd.ListPrice) AS DECIMAL(18, 8))
+        * CAST(1.15 AS DECIMAL(18, 8)),
+        4
+      )
+    FROM #PD pd
+    WHERE pd.CustomerDiscountPct = 0
+      AND ISNULL(pd.IsService, 0) = 0
+      AND COALESCE(pd.ComputedNetCost, pd.CostPrice * COALESCE(pd.CurrencyCostModifier, 1), pd.ListPrice) IS NOT NULL;
+  END;
+
   -- Step 4: Simple INSERT from pre-computed data (no OUTER APPLYs)
   INSERT INTO dbo.OfferDetails (
     OfferID, ParentOfferDetailID, TreeOrdering, Ordering,
@@ -2719,6 +2742,40 @@ async function handleAssignProductToRequestedRow(
           AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'')
         )
       );
+
+    -- EP LINC policy: assigned lines whose policy customer discount is null/0
+    -- are priced by UPLIFT (net = cost × 1.15) instead of the RRP calculation
+    -- just written above (see src/lib/epLincPricing.ts). COMPARISON re-pricing
+    -- (brand RRP totals over 25.000) is applied by Update Prices, not here.
+    IF EXISTS (
+      SELECT 1 FROM dbo.PricingPolicies pp
+      WHERE pp.ID = @pricingPolicyId AND UPPER(pp.Name) LIKE '%LINC%'
+    )
+    BEGIN
+      UPDATE od
+      SET
+        od.NetUnitPrice = uplift.UpliftNet,
+        od.TotalNet = CASE WHEN od.Quantity IS NULL THEN NULL ELSE ROUND(uplift.UpliftNet * od.Quantity, 4) END,
+        od.Margin = CASE
+          WHEN uplift.UpliftNet = 0 THEN NULL
+          ELSE ROUND(
+            (CAST(1 AS DECIMAL(18, 8)) - (CAST(od.NetCost AS DECIMAL(18, 8)) / CAST(uplift.UpliftNet AS DECIMAL(18, 8)))) * 100,
+            4
+          )
+        END,
+        od.GrossProfit = CASE
+          WHEN od.Quantity IS NULL THEN NULL
+          ELSE ROUND((uplift.UpliftNet - od.NetCost) * od.Quantity, 4)
+        END
+      FROM dbo.OfferDetails od
+      INNER JOIN @UpdatedRowPricing urp ON urp.OfferDetailID = od.ID
+      CROSS APPLY (
+        SELECT ROUND(CAST(od.NetCost AS DECIMAL(18, 8)) * CAST(1.15 AS DECIMAL(18, 8)), 4) AS UpliftNet
+      ) uplift
+      WHERE COALESCE(od.CustomerDiscount, 0) = 0
+        AND od.NetCost IS NOT NULL
+        AND ISNULL(od.IsService, 0) = 0;
+    END;
 
     -- Count any other unassigned rows in this offer with identical requested
     -- data so the client can ask the user whether to fill them too.

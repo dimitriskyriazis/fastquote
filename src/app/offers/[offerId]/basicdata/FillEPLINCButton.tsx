@@ -39,7 +39,9 @@ export default function FillEPLINCButton({ offerId, className }: Props) {
       throw new Error(payload?.error ?? `Failed to fetch rows (status ${response.status})`);
     }
 
-    return buildOfferProductTemplateExportRows(payload.rows);
+    // EP LINC pricing policy: only lines priced from the cost side (UPLIFT, or
+    // COMPARISON picking uplift) reveal their cost in the workbook.
+    return buildOfferProductTemplateExportRows(payload.rows, { epLincCostGating: true });
   }, [offerId]);
 
   return (

@@ -22,6 +22,7 @@ import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
 import { ALL_ROWS_LIMIT } from '../../../../../lib/constants';
+import { isEpLincPricingPolicyName } from '../../../../../lib/epLincPricing';
 import type {
   TextCondition as TextFilterModel,
   CompoundTextFilter as CompoundTextFilterModel,
@@ -347,6 +348,12 @@ const SELECT_FIELD_EXPRESSIONS: Record<string, string> = {
   ProductID: 'od.ProductID',
   ProductDescription: 'od.ProductDescription',
   CategoryName: `NULLIF(LTRIM(RTRIM(cat.ProductDescription)), '')`,
+  // Whole-offer RRP net total (ListPrice × (1 − CustomerDiscount%) × Quantity)
+  // of the row's manufacturer — the EP LINC COMPARISON threshold input. Served
+  // per row because the SSRM grid never has the whole offer client-side. Only
+  // joined when actually requested (the Price Method column's field), see
+  // EP_LINC_BRAND_TOTALS_JOIN_SQL.
+  EpLincBrandRrpTotal: 'epLincBrandTotals.BrandRrpNetTotal',
 };
 
 // Category rows store no total of their own; their displayed subtotal is the
@@ -406,6 +413,42 @@ const CATEGORY_TOTALS_APPLY_SQL = `
             AND odc.OfferID = od.OfferID
             AND NULLIF(LTRIM(RTRIM(odc.TreeOrdering)), '') LIKE ${TREE_ORDERING_RAW_EXPRESSION} + '.%'
         ) catTotals`;
+
+// Per-manufacturer whole-offer RRP net totals for the EP LINC pricing policy
+// (feeds the EpLincBrandRrpTotal field / the grid's Price Method column). The
+// RRP basis is deliberately ListPrice × (1 − CustomerDiscount%) recomputed from
+// the stored discount — NOT the stored TotalNet — so uplift-adjusted nets can't
+// drag a brand back under the €25.000 COMPARISON threshold and oscillate
+// between recalculations. Counted lines mirror src/lib/epLincPricing.ts:
+// assigned products only, excluding categories/comments/services and options.
+// @__id must be bound to the offer id.
+const EP_LINC_BRAND_RRP_TOTALS_SELECT_SQL = `
+            SELECT
+              COALESCE(odb.BrandID, pb.BrandID) AS EffectiveBrandID,
+              SUM(CASE
+                WHEN odb.ListPrice IS NULL THEN 0
+                ELSE ROUND(
+                  odb.ListPrice
+                  * (CAST(1 AS DECIMAL(18, 8)) - (CAST(COALESCE(odb.CustomerDiscount, 0) AS DECIMAL(18, 8)) / CAST(100 AS DECIMAL(18, 8)))),
+                  4
+                ) * COALESCE(odb.Quantity, 0)
+              END) AS BrandRrpNetTotal
+            FROM dbo.OfferDetails odb
+            LEFT OUTER JOIN dbo.Products pb ON odb.ProductID = pb.ID
+            WHERE odb.OfferID = @__id
+              AND odb.ProductID IS NOT NULL
+              AND ISNULL(odb.IsCategory, 0) = 0
+              AND ISNULL(odb.IsComment, 0) = 0
+              AND ISNULL(odb.IsService, 0) = 0
+              AND ISNULL(odb.IsOption, 0) = 0
+            GROUP BY COALESCE(odb.BrandID, pb.BrandID)`;
+
+// The GROUP BY makes the join key unique, so when the field isn't selected the
+// optimizer prunes this join entirely; we additionally only splice it into the
+// row query when the field is requested.
+const EP_LINC_BRAND_TOTALS_JOIN_SQL = `
+          LEFT OUTER JOIN (${EP_LINC_BRAND_RRP_TOTALS_SELECT_SQL}
+          ) epLincBrandTotals ON epLincBrandTotals.EffectiveBrandID = COALESCE(od.BrandID, p.BrandID)`;
 
 const ORDER_EXPRESSION_OVERRIDES: Record<string, string | string[]> = {
   TreeOrdering: ['TreeOrderingHierarchy', 'od.TreeOrdering'],
@@ -1618,6 +1661,9 @@ export async function POST(
     const selectedColumnSql = selectedFields
       .map((field) => `${CATEGORY_TOTAL_SELECT_EXPRESSIONS[field] ?? SELECT_FIELD_EXPRESSIONS[field]} AS ${field}`)
       .join(',\n          ');
+    const epLincBrandTotalsJoinSql = selectedFields.includes('EpLincBrandRrpTotal')
+      ? EP_LINC_BRAND_TOTALS_JOIN_SQL
+      : '';
     const query = `
         SELECT
           COUNT_BIG(1) OVER () AS __totalCount,
@@ -1667,6 +1713,7 @@ export async function POST(
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.Warning END AS PriceListItemWarning,
           CASE WHEN od.PriceListItemID IS NULL THEN NULL ELSE pli.MOQ END AS PriceListItemMOQ
         ${productsFromSql}
+        ${epLincBrandTotalsJoinSql}
         ${CATEGORY_TOTALS_APPLY_SQL}
         ${combinedWhereSql}
           ${orderSql}
@@ -2310,12 +2357,19 @@ export async function PATCH(
     // Fetch offer-level pricing behaviour defaults once for the entire PATCH.
     const offerDefaultsRes = await pool.request()
       .input('__offerIdDefaults', sql.Int, offerId)
-      .query<{ PricingSellAnchor: string | null; PricingHoldMarginOnCost: boolean | null }>(`
-        SELECT PricingSellAnchor, PricingHoldMarginOnCost
-        FROM dbo.Offer WHERE ID = @__offerIdDefaults
+      .query<{ PricingSellAnchor: string | null; PricingHoldMarginOnCost: boolean | null; PricingPolicyName: string | null }>(`
+        SELECT o.PricingSellAnchor, o.PricingHoldMarginOnCost, pp.Name AS PricingPolicyName
+        FROM dbo.Offer o
+        LEFT JOIN dbo.PricingPolicies pp ON pp.ID = o.PricingPolicyID
+        WHERE o.ID = @__offerIdDefaults
       `);
     const offerDefaults = offerDefaultsRes.recordset?.[0] ?? null;
     const offerHoldMarginOnCost = offerDefaults?.PricingHoldMarginOnCost ?? false;
+    // EP LINC offers pin the Customer Discount: it is the policy's value, the
+    // grid cell is locked, and no edit cascade may recalculate it (nets under
+    // EP LINC deliberately deviate from ListPrice × (1 − CD%), so back-deriving
+    // CD from a price edit would corrupt the stored policy discount).
+    const isEpLincOffer = isEpLincPricingPolicyName(offerDefaults?.PricingPolicyName ?? null);
 
     const chunkSize = 400;
     let affected = 0;
@@ -2520,6 +2574,15 @@ export async function PATCH(
           return;
         }
 
+        // EP LINC: ignore direct CustomerDiscount writes (the cell is locked;
+        // anything arriving here is a stale bulk path) so the pricing engine
+        // never anchors a cascade on a non-policy discount. The resolved CD is
+        // additionally pinned back to the stored value after resolution below.
+        if (isEpLincOffer && entry.hasCustomerDiscount) {
+          entry.hasCustomerDiscount = false;
+          entry.customerDiscount = null;
+        }
+
         // Resolve cost-side pricing behaviour (Keep Net / Keep Margin):
         // row override → offer default → built-in default (Keep Net = false).
         const effectiveHoldMarginOnCost =
@@ -2711,6 +2774,16 @@ export async function PATCH(
             netUnitPrice: normalizeMoneyValue(current.NetUnitPrice ?? null, { allowNegative: true }),
             netCost: normalizeMoneyValue(current.NetCost ?? null, { allowNegative: true }),
             margin: normalizePercentValue(current.Margin ?? null, { allowNegative: true }),
+          };
+        }
+
+        // EP LINC: whatever the cascade resolved, the persisted (and echoed)
+        // Customer Discount stays the stored policy value. Non-printable rows
+        // keep their cost-only semantics (CD forced null above).
+        if (isEpLincOffer && !isNonPrintableRow) {
+          resolvedPricing = {
+            ...resolvedPricing,
+            customerDiscount: normalizeDiscountValue(current.CustomerDiscount ?? null),
           };
         }
 
@@ -3390,11 +3463,35 @@ export async function PATCH(
       }
     }
 
+    // EP LINC: pricing/quantity edits move the per-manufacturer RRP net totals
+    // that drive the Price Method column (RRP vs COMPARISON). Echo the fresh
+    // totals so the client can repaint the method cells of every loaded row of
+    // the affected brands without a grid refetch.
+    let epLincBrandRrpTotals: Record<string, number | null> | undefined;
+    if (isEpLincOffer) {
+      try {
+        const totalsRes = await pool.request()
+          .input('__id', sql.Int, offerId)
+          .query<{ EffectiveBrandID: number | null; BrandRrpNetTotal: number | null }>(
+            EP_LINC_BRAND_RRP_TOTALS_SELECT_SQL,
+          );
+        epLincBrandRrpTotals = {};
+        for (const row of totalsRes.recordset ?? []) {
+          if (row.EffectiveBrandID == null) continue;
+          epLincBrandRrpTotals[String(row.EffectiveBrandID)] = row.BrandRrpNetTotal ?? null;
+        }
+      } catch {
+        // Totals echo is best-effort; the next grid refetch self-corrects.
+        epLincBrandRrpTotals = undefined;
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       updated: normalizedUpdates.length,
       rowsAffected: affected,
       resolvedRows,
+      ...(epLincBrandRrpTotals ? { epLincBrandRrpTotals } : {}),
     });
   } catch (err) {
     console.error(err);

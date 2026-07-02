@@ -818,6 +818,41 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
       LEFT JOIN dbo.OfferDetails parent ON parent.OfferID = @__offerId AND NULLIF(LTRIM(RTRIM(parent.TreeOrdering)), '') = p.ParentTree
       WHERE child.OfferID = @__offerId;
 
+      -- EP LINC policy: pasted lines whose policy customer discount is null/0
+      -- are priced by UPLIFT (net = cost × 1.15) instead of the RRP calculation
+      -- written by the INSERT above (see src/lib/epLincPricing.ts). COMPARISON
+      -- re-pricing (brand RRP totals over 25.000) is applied by Update Prices.
+      IF EXISTS (
+        SELECT 1 FROM dbo.PricingPolicies pp
+        WHERE pp.ID = @pricingPolicyId AND UPPER(pp.Name) LIKE '%LINC%'
+      )
+      BEGIN
+        UPDATE od
+        SET
+          od.NetUnitPrice = uplift.UpliftNet,
+          od.TotalNet = CASE WHEN od.Quantity IS NULL THEN NULL ELSE ROUND(uplift.UpliftNet * od.Quantity, 4) END,
+          od.Margin = CASE
+            WHEN uplift.UpliftNet = 0 THEN NULL
+            ELSE ROUND(
+              (CAST(1 AS DECIMAL(18, 8)) - (CAST(od.NetCost AS DECIMAL(18, 8)) / CAST(uplift.UpliftNet AS DECIMAL(18, 8)))) * 100,
+              4
+            )
+          END,
+          od.GrossProfit = CASE
+            WHEN od.Quantity IS NULL THEN NULL
+            ELSE ROUND((uplift.UpliftNet - od.NetCost) * od.Quantity, 4)
+          END
+        FROM dbo.OfferDetails od
+        INNER JOIN @i ins ON ins.OfferDetailID = od.ID
+        CROSS APPLY (
+          SELECT ROUND(CAST(od.NetCost AS DECIMAL(18, 8)) * CAST(1.15 AS DECIMAL(18, 8)), 4) AS UpliftNet
+        ) uplift
+        WHERE COALESCE(od.CustomerDiscount, 0) = 0
+          AND od.NetCost IS NOT NULL
+          AND od.ProductID IS NOT NULL
+          AND ISNULL(od.IsService, 0) = 0;
+      END;
+
       SELECT OfferDetailID FROM @i;
     `);
     (result.recordset ?? []).forEach((row) => { if (typeof row.OfferDetailID === 'number') inserted.push(row.OfferDetailID); });

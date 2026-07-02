@@ -32,6 +32,7 @@ import {
   normalizeRequestedItemNoValue,
   isRequestedRow,
   isUnassignedRequestedRow,
+  hasAssignedProductId,
   isOfferProductCommentOrProduct,
   categoryTotalPriceGetter,
   categoryTotalNetGetter,
@@ -46,6 +47,7 @@ import {
 import { isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductService, isOfferProductOption, isNonPrintableOfferProductRow, resolveOfferProductRowType } from '../../../lib/offerProductRows';
 import { CELL_PAINT_MARKER_CLASS, isDarkColor, type ResolvePaintColor } from './products/offerCellPaint';
 import { deriveMarkupFactor, markupFactorFromMargin } from '../../../lib/pricing';
+import { isEpLincPricingPolicyName, formatEpLincPriceMethodLabel } from '../../../lib/epLincPricing';
 import { getUserNumberLocale } from '../../../lib/localeNumber';
 
 const otherCurrencyAmountFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
@@ -365,6 +367,11 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
     onMarkupEdit,
   } = deps;
   const additionalDiscountVisibleByDefault = pricingPolicyName === 'AVC4';
+  // EP LINC offers price lines by RRP / UPLIFT / COMPARISON (see
+  // lib/epLincPricing.ts): the Customer Discount cell is locked (it holds the
+  // policy discount, which the net price may deviate from) and the derived
+  // Price Method column becomes visible.
+  const epLincPolicy = isEpLincPricingPolicyName(pricingPolicyName);
 
   const offerCurrencyFormatter = buildCurrencyFormatter(offerCurrencySymbol);
 
@@ -843,6 +850,50 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: actualNumericCellStyle,
     },
     {
+      // EP LINC-only informational column: which pricing method the policy
+      // applies to the line (RRP / UPLIFT / COMPARISON). Derived — never
+      // stored, never editable. Its `field` is the server-computed
+      // EpLincBrandRrpTotal (the manufacturer's whole-offer RRP net total),
+      // which both feeds the COMPARISON threshold and makes AgGridAll request
+      // the data whenever the column is visible. Always included with a
+      // policy-driven `hide` (like AdditionalCustomerDiscount for AVC4) so the
+      // column fingerprint stays identical across offers and saved layouts
+      // don't get wiped when switching policies.
+      colId: 'PriceMethod',
+      field: 'EpLincBrandRrpTotal',
+      headerName: 'Price Method',
+      hide: !epLincPolicy,
+      editable: false,
+      sortable: false,
+      filter: false,
+      width: 165,
+      valueGetter: (params: ValueGetterParams<Record<string, unknown>>) => {
+        if (!epLincPolicy) return '';
+        const row = params.data as Record<string, unknown> | null | undefined;
+        if (!row) return '';
+        // Only ASSIGNED product lines get a method — unlinked rows (requested
+        // or archive imports without a ProductID) are never repriced by the
+        // EP LINC server passes, so showing a method there would mislead.
+        if (
+          resolveOfferProductRowType(row) !== 'product'
+          || !hasAssignedProductId(row)
+          || isOfferProductService(row)
+        ) {
+          return '';
+        }
+        // COMPARISON lines are labelled with the cheaper side: "(UPLIFT)" when
+        // cost × 1.15 beats the RRP net, "(RRP)" otherwise.
+        return formatEpLincPriceMethodLabel({
+          customerDiscount: coerceNumber(row.CustomerDiscount),
+          brandRrpNetTotal: coerceNumber(row.EpLincBrandRrpTotal),
+          listPrice: coerceNumber(row.ListPrice),
+          netCost: coerceNumber(row.NetCost),
+        });
+      },
+      cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+      cellStyle: truncateCellStyle,
+    },
+    {
       field: 'ListPrice',
       headerName: 'List Price',
       filter: 'agNumberColumnFilter',
@@ -886,7 +937,10 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      // Locked under an EP LINC policy: the cell holds the policy's customer
+      // discount, which drives the Price Method (RRP/UPLIFT/COMPARISON) and
+      // must not be hand-edited per line.
+      editable: (params) => !epLincPolicy && !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueParser: parseDiscountValue,
       // Display the stored discount, except surface a -100% flag on priced rows
       // that have a net price but no list price (see flagMissingListPriceDiscount).
@@ -945,7 +999,10 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       filter: 'agNumberColumnFilter',
       type: 'numericColumn',
       headerClass: 'ag-right-aligned-header',
-      editable: (params) => !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
+      // Locked under an EP LINC policy: the net price is dictated by the
+      // RRP / UPLIFT / COMPARISON method and must not be hand-edited (a manual
+      // net edit would also back-derive Customer Discount, which is pinned).
+      editable: (params) => !epLincPolicy && !isUnassignedRequestedRow(params.data ?? null) && !isNonPrintableOfferProductRow(params.data ?? null) && isOfferProductCommentOrProduct(params.data ?? null),
       valueFormatter: offerCurrencyFormatter,
       cellClass: actualNumericCellClass,
       cellStyle: actualNumericCellStyle,
@@ -1331,6 +1388,19 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       const [markupColumn] = ordered.splice(markupIdx, 1);
       const insertAt = ordered.findIndex((column) => column.field === 'Margin') + 1;
       ordered.splice(insertAt, 0, markupColumn);
+    }
+  }
+
+  // Same treatment for the EP LINC Price Method column: with no saved-order
+  // entry it would land at the far right, but it belongs directly before
+  // List Price.
+  if (!savedColumnOrder.includes('PriceMethod')) {
+    const priceMethodIdx = ordered.findIndex((column) => column.colId === 'PriceMethod');
+    const listPriceIdx = ordered.findIndex((column) => column.field === 'ListPrice');
+    if (priceMethodIdx !== -1 && listPriceIdx !== -1 && priceMethodIdx !== listPriceIdx - 1) {
+      const [priceMethodColumn] = ordered.splice(priceMethodIdx, 1);
+      const insertAt = ordered.findIndex((column) => column.field === 'ListPrice');
+      ordered.splice(insertAt, 0, priceMethodColumn);
     }
   }
 

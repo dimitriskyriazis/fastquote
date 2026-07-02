@@ -724,12 +724,10 @@ const patchWorksheetXmlWithAppendedRows = (
           clearCellContents(cellElement);
           const styleId = cellElement.getAttribute('s') ?? styleByColumn.get(columnIndex) ?? null;
           if (styleId != null && styleId !== '') cellElement.setAttribute('s', styleId);
-          cellElement.setAttribute('t', 'inlineStr');
-          const inlineStringElement = xmlDoc.createElementNS(ns, 'is');
-          const textElement = xmlDoc.createElementNS(ns, 't');
-          textElement.textContent = '';
-          inlineStringElement.appendChild(textElement);
-          cellElement.appendChild(inlineStringElement);
+          // Leave the cell truly blank. Writing an empty inline string here makes
+          // it a TEXT "" cell, which #VALUE!s any pricing formula that sums this
+          // padded gap row. clearCellContents() already removed the old value and
+          // `t`, so a style-only <c/> remains — Excel treats it as 0.
         });
       }
       return;
@@ -744,12 +742,12 @@ const patchWorksheetXmlWithAppendedRows = (
         cellElement.setAttribute('s', styleId);
       }
       if (value == null || value === '') {
-        cellElement.setAttribute('t', 'inlineStr');
-        const inlineStringElement = xmlDoc.createElementNS(ns, 'is');
-        const textElement = xmlDoc.createElementNS(ns, 't');
-        textElement.textContent = '';
-        inlineStringElement.appendChild(textElement);
-        cellElement.appendChild(inlineStringElement);
+        // Leave a truly-blank cell (style only: no `t`, no <v>/<is>). An empty
+        // inline string would be TEXT "", which makes Excel arithmetic that
+        // references the cell (e.g. TOTAL DISCOUNT = DISCOUNT-CONTRACT +
+        // DISCOUNT-ADDITIONAL) return #VALUE! and cascade through UNIT NET PRICE
+        // and the totals. clearCellContents() already stripped the old value and
+        // `t`, so doing nothing yields <c r=".." s=".."/>, treated as 0.
       } else if (typeof value === 'number' && Number.isFinite(value)) {
         const valueElement = xmlDoc.createElementNS(ns, 'v');
         valueElement.textContent = String(value);
@@ -868,8 +866,13 @@ const applyRowsToSheet = (
     const templateCell = getTemplateCellForColumn(columnIndex);
     const baseCell = cloneCellBase(existingCell ?? templateCell ?? undefined);
     if (value == null || value === '') {
-      baseCell.t = 's';
-      baseCell.v = '';
+      // Emit a truly-blank stub cell, not an empty string. A string cell holding
+      // "" is TEXT and makes Excel arithmetic over it return #VALUE! (same bug as
+      // the .xlsx path). SheetJS only writes a BIFF Blank record when `v == null`,
+      // so we must clear v (a 'z' cell that still carries v='' serializes as text).
+      // cloneCellBase already dropped v and kept the number-format style.
+      baseCell.t = 'z';
+      delete (baseCell as { v?: unknown }).v;
       sheet[address] = baseCell;
       return;
     }
