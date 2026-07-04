@@ -33,6 +33,7 @@ type PriceListProductRow = {
   PartNumber: string | null;
   LegacyPartNo: string | null;
   ModelNumber: string | null;
+  WebLink: string | null;
   PriceListID: number | null;
   PriceListItemID: number | null;
 };
@@ -68,6 +69,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Enabled: "dbo.PriceListItems.Enabled",
   PartNumber: "dbo.Products.PartNumber",
   LegacyPartNo: "dbo.Products.LegacyPartNo",
+  WebLink: "dbo.Products.WebLink",
   PriceListID: "dbo.PriceListItems.PriceListID",
   PriceListItemID: "dbo.PriceListItems.ID" };
 
@@ -316,6 +318,7 @@ export async function POST(
         dbo.PriceListItems.Enabled,
         dbo.Products.PartNumber,
         NULLIF(LTRIM(RTRIM(dbo.Products.LegacyPartNo)), '') AS LegacyPartNo,
+        dbo.Products.WebLink,
         dbo.PriceListItems.ID AS PriceListItemID,
         dbo.PriceListItems.PriceListID
     `;

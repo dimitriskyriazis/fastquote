@@ -69,3 +69,35 @@ export const showToastMessage = (
   window.setTimeout(removeToast, effectiveDuration);
   return removeToast;
 };
+
+export type ProgressToast = {
+  update: (message: string) => void;
+  dismiss: () => void;
+};
+
+/**
+ * A long-lived toast whose text can be updated in place — for multi-step progress
+ * (chunked requests etc.) where re-creating the toast per step would flicker and
+ * re-trigger the entry animation each time.
+ */
+export const showProgressToast = (message: string, tone: ToastTone = 'info'): ProgressToast => {
+  const dismiss = showToastMessage(message, tone, 600000);
+  if (typeof document === 'undefined') return { update: () => {}, dismiss };
+
+  const container = document.getElementById('fastquote-drop-toast-container');
+  const toast = container
+    ? (Array.from(container.children) as HTMLElement[]).find(
+        (el) => el.dataset.message === message && el.dataset.tone === tone,
+      )
+    : undefined;
+
+  return {
+    update: (next: string) => {
+      if (toast && toast.isConnected) {
+        toast.textContent = next;
+        toast.dataset.message = next;
+      }
+    },
+    dismiss,
+  };
+};

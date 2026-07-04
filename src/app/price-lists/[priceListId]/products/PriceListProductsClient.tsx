@@ -16,12 +16,13 @@ import type { ServerRequestWithQuickFilter } from "../../../components/AgGridAll
 import layoutStyles from "../../priceListDetail.module.css";
 import pageStyles from "./PriceListProductsPage.module.css";
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds } from "../../../../lib/gridRowDeletion";
-import { showConfirmDialog, showMultiChoiceDialog } from "../../../../lib/confirm";
 import { checkDeletePermissionForClient } from "../../../../lib/deletePermissions";
 import { useAuditUser } from "../../../components/AuditUserProvider";
 import { getUserNumberLocale } from "../../../../lib/localeNumber";
 import { normalizeBoolean } from "../../../../lib/normalizeBoolean";
 import { showToastMessage } from "../../../../lib/toast";
+import { buildAddWebLinksMenuItem } from "../../../../lib/addWebLinksClient";
+import { coerceRoles, roleHasPermission } from "../../../../lib/roles";
 import { useUndoStack } from "../../../hooks/useUndoStack";
 import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
 import { openLinkInNewTab } from "../../../../lib/navigation";
@@ -51,6 +52,7 @@ type PriceListProductRowGrid = {
   Warning?: string | number | boolean | null;
   MOQ?: number | null;
   Enabled?: boolean | number | null;
+  WebLink?: string | null;
   PriceListID?: number | null;
 };
 
@@ -143,6 +145,7 @@ export default function PriceListProductsClient({
   priceListLabel,
 }: Props) {
   const { roles } = useAuditUser();
+  const canUseAiFeatures = roleHasPermission(coerceRoles([...roles]), 'manageBrandsSuppliers');
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
@@ -527,109 +530,39 @@ export default function PriceListProductsClient({
       const selectedNodes = getContextMenuSelectionSnapshot(params.api);
       const targetNodes = selectedNodes.length > 0 ? selectedNodes : (params.node ? [params.node] : []);
       const targetProducts = targetNodes.map((n) => n.data).filter(Boolean) as Record<string, unknown>[];
-      const targetIds = targetProducts
-        .map((p) => normalizeProductId(p.ProductID))
-        .filter((id): id is number => id !== null);
 
-      if (targetIds.length > 0 || isSelectAllActive) {
-        const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
-        const webLinkItem: MenuItemDef = {
-          name: isSelectAllActive
-            ? "Add web links (all filtered)"
-            : targetIds.length > 1
-              ? `Add web links (${targetIds.length})`
-              : "Add web link",
+      if (canUseAiFeatures) {
+        const webLinkItem = buildAddWebLinksMenuItem({
+          targetProducts,
+          isSelectAllActive,
+          fetchAllFilteredProductIds,
+          busy: isAddingWebLinks,
+          setBusy: setIsAddingWebLinks,
           icon: addWebLinkMenuIcon,
-          disabled: isAddingWebLinks,
-          action: async () => {
-            let idsToProcess: number[] = [];
-            if (isSelectAllActive) {
-              const confirmed = await showConfirmDialog({
-                title: "Add web links for all filtered products",
-                message: "This will overwrite any existing web links for the filtered rows. Continue?",
-                confirmLabel: "Continue",
-                cancelLabel: "Cancel",
-              });
-              if (!confirmed) return;
-              try {
-                idsToProcess = await fetchAllFilteredProductIds();
-              } catch (err) {
-                showToastMessage(
-                  err instanceof Error ? err.message : "Failed to resolve selected products.",
-                  "error",
-                );
-                return;
-              }
-            } else {
-              idsToProcess = [...targetIds];
-
-              if (productsWithLinks.length > 0) {
-                const choice = await showMultiChoiceDialog({
-                  title: "Existing web links found",
-                  message:
-                    productsWithLinks.length === targetIds.length
-                      ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                      : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-                  choices: [
-                    { label: "Overwrite all", value: "overwrite" },
-                    { label: "Skip existing", value: "skip" },
-                    { label: "Cancel", value: "cancel" },
-                  ],
-                });
-                if (!choice || choice === "cancel") return;
-                if (choice === "skip") {
-                  idsToProcess = targetProducts
-                    .filter((p) => !p.WebLink)
-                    .map((p) => normalizeProductId(p.ProductID))
-                    .filter((id): id is number => id !== null);
-                }
-              }
-            }
-
-            if (idsToProcess.length === 0) {
-              showToastMessage("No products selected for web link lookup.", "info");
-              return;
-            }
-
-            setIsAddingWebLinks(true);
-            const dismissLoadingToast = showToastMessage("Searching for web links\u2026", "info", 60000);
-            try {
-              const res = await fetch("/api/products/add-weblinks", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productIds: idsToProcess }),
-              });
-              const data = (await res.json()) as {
-                ok: boolean;
-                updatedCount?: number;
-                failedCount?: number;
-                error?: string;
-              };
-              dismissLoadingToast();
-              if (data.ok) {
-                const msg = data.failedCount
-                  ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
-                  : `Updated ${data.updatedCount} web link(s).`;
-                showToastMessage(msg, "success");
+          onApplied: () => {
+            gridApiRef.current?.refreshServerSide({ purge: false });
+            router.refresh();
+          },
+          registerUndo: (revert, appliedCount) => {
+            pushUndo({
+              label: `Add web links (${appliedCount})`,
+              undo: async () => {
+                await revert();
                 gridApiRef.current?.refreshServerSide({ purge: false });
                 router.refresh();
-              } else {
-                showToastMessage(data.error ?? "Failed to find web links. Please try again.", "error");
-              }
-            } catch {
-              dismissLoadingToast();
-              showToastMessage("Failed to find web links. Please try again.", "error");
-            } finally {
-              setIsAddingWebLinks(false);
-            }
+              },
+            });
           },
-        };
-        items.splice(deleteIndex >= 0 ? deleteIndex : items.length, 0, webLinkItem);
+        }) as MenuItemDef | null;
+
+        if (webLinkItem) {
+          items.splice(deleteIndex >= 0 ? deleteIndex : items.length, 0, webLinkItem);
+        }
       }
 
       return items;
     },
-    [fetchAllFilteredProductIds, historyBackHref, historyBackLabel, isAddingWebLinks, priceListRowDeletion, router],
+    [canUseAiFeatures, fetchAllFilteredProductIds, historyBackHref, historyBackLabel, isAddingWebLinks, priceListRowDeletion, pushUndo, router],
   );
 
   return (

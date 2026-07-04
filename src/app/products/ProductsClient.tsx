@@ -20,8 +20,10 @@ import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { useAuditUser } from "../components/AuditUserProvider";
 import { openLinkInNewTab } from "../../lib/navigation";
 import { showToastMessage } from "../../lib/toast";
+import { buildAddWebLinksMenuItem } from "../../lib/addWebLinksClient";
+import { coerceRoles, roleHasPermission } from "../../lib/roles";
 import { useUndoStack } from "../hooks/useUndoStack";
-import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from "../../lib/confirm";
+import { showConfirmDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from "../../lib/confirm";
 import styles from "./ProductsClient.module.css";
 import AddProductModal from "./AddProductModal";
 import PageHeader from "../components/PageHeader";
@@ -172,6 +174,10 @@ export default function ProductsClient() {
   const searchParams = useSearchParams();
   const initialPartNumberFilterRef = useRef((searchParams.get("partNumber") ?? "").trim());
   const { roles } = useAuditUser();
+  const canUseAiFeatures = useMemo(
+    () => roleHasPermission(coerceRoles([...roles]), "manageBrandsSuppliers"),
+    [roles],
+  );
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [isAddProductOpen, setIsAddProductOpen] = useState(false);
   const [isAddingWebLinks, setIsAddingWebLinks] = useState(false);
@@ -538,107 +544,38 @@ export default function ProductsClient() {
         .map((p) => normalizeProductId(p.ProductID))
         .filter((id): id is number => id !== null);
 
-      if (targetIds.length > 0 || isSelectAllActive) {
-        const webLinkItem: MenuItemDef = {
-          name: isSelectAllActive
-            ? "Add web links (all filtered)"
-            : targetIds.length > 1
-              ? `Add web links (${targetIds.length})`
-              : "Add web link",
+      if (canUseAiFeatures) {
+        const webLinkItem = buildAddWebLinksMenuItem({
+          targetProducts,
+          isSelectAllActive,
+          fetchAllFilteredProductIds,
+          busy: isAddingWebLinks,
+          setBusy: setIsAddingWebLinks,
           icon: addWebLinkMenuIcon,
-          disabled: isAddingWebLinks,
-          action: async () => {
-            let idsToProcess: number[] = [];
-            if (isSelectAllActive) {
-              const confirmed = await showConfirmDialog({
-                title: "Add web links for all filtered products",
-                message: "This will overwrite any existing web links for the filtered rows. Continue?",
-                confirmLabel: "Continue",
-                cancelLabel: "Cancel",
-              });
-              if (!confirmed) return;
-              try {
-                idsToProcess = await fetchAllFilteredProductIds();
-              } catch (err) {
-                showToastMessage(
-                  err instanceof Error ? err.message : "Failed to resolve selected products.",
-                  "error",
-                );
-                return;
-              }
-            } else {
-              const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
-              idsToProcess = [...targetIds];
-
-              if (productsWithLinks.length > 0) {
-                const choice = await showMultiChoiceDialog({
-                  title: "Existing web links found",
-                  message:
-                    productsWithLinks.length === targetIds.length
-                      ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                      : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-                  choices: [
-                    { label: "Overwrite all", value: "overwrite" },
-                    { label: "Skip existing", value: "skip" },
-                    { label: "Cancel", value: "cancel" },
-                  ],
-                });
-                if (!choice || choice === "cancel") return;
-                if (choice === "skip") {
-                  idsToProcess = targetProducts
-                    .filter((p) => !p.WebLink)
-                    .map((p) => normalizeProductId(p.ProductID))
-                    .filter((id): id is number => id !== null);
-                }
-              }
-            }
-
-            if (idsToProcess.length === 0) {
-              showToastMessage("No products selected for web link lookup.", "info");
-              return;
-            }
-
-            setIsAddingWebLinks(true);
-            const dismissLoadingToast = showToastMessage("Searching for web links\u2026", "info", 60000);
-            try {
-              const res = await fetch("/api/products/add-weblinks", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productIds: idsToProcess }),
-              });
-              const data = (await res.json()) as {
-                ok: boolean;
-                updatedCount?: number;
-                failedCount?: number;
-                error?: string;
-              };
-              dismissLoadingToast();
-              if (data.ok) {
-                const msg =
-                  data.failedCount
-                    ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
-                    : `Updated ${data.updatedCount} web link(s).`;
-                showToastMessage(msg, "success");
+          onApplied: () => {
+            productsApiRef.current?.refreshServerSide({ purge: true });
+            router.refresh();
+          },
+          registerUndo: (revert, appliedCount) => {
+            pushUndo({
+              label: `Add web links (${appliedCount})`,
+              undo: async () => {
+                await revert();
                 productsApiRef.current?.refreshServerSide({ purge: true });
                 router.refresh();
-              } else {
-                showToastMessage(data.error ?? "Failed to find web links. Please try again.", "error");
-              }
-            } catch {
-              dismissLoadingToast();
-              showToastMessage("Failed to find web links. Please try again.", "error");
-            } finally {
-              setIsAddingWebLinks(false);
-            }
+              },
+            });
           },
-        };
+        }) as MenuItemDef | null;
 
-        const insertAt = deleteIndex >= 0 ? deleteIndex : items.length;
-        items.splice(insertAt, 0, webLinkItem);
+        if (webLinkItem) {
+          const insertAt = deleteIndex >= 0 ? deleteIndex : items.length;
+          items.splice(insertAt, 0, webLinkItem);
+        }
       }
 
       // --- Enhance description item ---
-      if (targetIds.length > 0 || isSelectAllActive) {
+      if (canUseAiFeatures && (targetIds.length > 0 || isSelectAllActive)) {
         const enhanceDescItem: MenuItemDef = {
           name: isSelectAllActive
             ? "Enhance descriptions (all filtered)"
@@ -901,7 +838,7 @@ export default function ProductsClient() {
 
       return items;
     },
-    [fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, isFixingCapitalisation, pushUndo, productRowDeletion, router],
+    [canUseAiFeatures, fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, isFixingCapitalisation, pushUndo, productRowDeletion, router],
   );
 
   const openAddProduct = useCallback(() => {

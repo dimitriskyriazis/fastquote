@@ -2,120 +2,223 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from "../../../../lib/apiHelpers";
 import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
+import type { ConnectionPool } from "mssql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
+import { Semaphore } from "../../../../lib/concurrency";
+import { normalizeId } from "../../../../lib/normalize";
+import { proposeWebLinks } from "../../../../lib/webLinkProposer";
 import OpenAI from "openai";
+import {
+  isRealWebLink,
+  normalizeIdentifier,
+  hostMatchesDomain,
+  isEnglishSegment,
+  localePrefixIndex,
+  PREFERRED_ENGLISH_LOCALES,
+  EUROPEAN_REGIONS,
+  parseRegionLangPrefix,
+  buildRegionLangEnglishCandidates,
+  scoreCandidateUrl,
+  extractPageContent,
+  looksLikeSoftNotFound,
+  isHomepageLanding,
+  pageMatchStrength,
+  isArticleOrNewsPath,
+  hasHeadlineSlug,
+  looksLikeArticlePage,
+  pageLanguage,
+  isEnglishResult,
+  urlLanguageIsNonEnglish,
+  parentDocSectionUrl,
+  extractPartPrefix,
+  identifierAppearsInText,
+  type ExtractedPage,
+  type WebLinkStatus,
+  type WebLinkVerification,
+} from "../../../../lib/webLinkResolution";
 
 export const runtime = "nodejs";
 
+// This route follows the enhance-descriptions three-phase contract:
+//   POST { productIds, dryRun: true }            → SEARCH ONLY. Finds and verifies links,
+//                                                  returns per-product proposals. Never writes
+//                                                  product data (it may persist a VERIFIED brand
+//                                                  domain to dbo.Brands.WebDomain — see below).
+//   POST { applyPrecomputed: [{productId, webLink}] } → writes reviewed links.
+//   PUT  { items: [{productId, webLink|null}] }  → revert helper for client-side undo.
+// dryRun is REQUIRED for search so that stale client bundles built against the old contract
+// (where POST { productIds } wrote links directly) fail loudly instead of silently searching.
+
 const MAX_PRODUCT_IDS = 200;
+const PER_PRODUCT_TIME_BUDGET_MS = 90_000;
 
-// Limits concurrent outgoing Serper API calls to avoid 429 rate-limit errors.
-class Semaphore {
-  private queue: Array<() => void> = [];
-  private active = 0;
-  constructor(private readonly max: number) {}
+// Model for the per-product web-search proposal (see lib/webLinkProposer.ts). The proposal
+// stage finds candidate URLs; the fetch-and-verify pipeline below gates every one.
+const WEBLINK_SEARCH_MODEL = process.env.WEBLINK_SEARCH_MODEL || "gpt-5.4-mini";
+const MAX_CANDIDATES_PER_TIER = 6;
+const PAGE_FETCH_TIMEOUT_MS = 12_000;
+const PAGE_BYTE_CAP = 500_000;
 
-  async acquire(): Promise<void> {
-    if (this.active < this.max) {
-      this.active++;
-      return;
-    }
-    return new Promise<void>((resolve) => {
-      this.queue.push(() => {
-        this.active++;
-        resolve();
-      });
-    });
-  }
+// Bound concurrent outgoing work. Module-global so simultaneous requests share the caps.
+const openaiSemaphore = new Semaphore(4);
+// Sized >= the client chunk size (10) so a chunk runs as a single wave and one HTTP
+// request stays comfortably inside the IIS/ARR proxy timeout.
+const productSemaphore = new Semaphore(10);
 
-  release(): void {
-    this.active--;
-    const next = this.queue.shift();
-    if (next) next();
-  }
-}
-
-const serperSemaphore = new Semaphore(5);
-
-// Hardcoded domain cache for brands where GPT-4o resolution is unreliable or slow.
-// Keys are lowercase brand names; values are the canonical bare domain.
-const KNOWN_BRAND_DOMAINS: Record<string, string> = {
-  "grass valley": "grassvalley.com",
-  "grassvalley": "grassvalley.com",
-  "bosch": "commerce.keenfinity.tech",
-};
-
-const normalizeProductId = (value: unknown): number | null => {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-};
-
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 type ProductRow = {
   ID: number;
   Brand: string | null;
+  BrandID: number | null;
+  BrandWebDomain: string | null;
   ModelNumber: string | null;
   PartNumber: string | null;
   Description: string | null;
+  WebLink: string | null;
 };
 
+type ProductResult = {
+  productId: number;
+  brand: string | null;
+  partNumber: string | null;
+  modelNumber: string | null;
+  oldWebLink: string | null;
+  webLink: string | null;
+  status: WebLinkStatus;
+  verification?: WebLinkVerification;
+  note?: string;
+};
 
-// Verify a URL resolves to an existing page.
-// Tries HEAD first; falls back to a minimal GET if the server doesn't allow HEAD.
-// Accepts any 2xx or 3xx (after following redirects). Rejects 404/410/451.
-const verifyUrl = async (url: string): Promise<boolean> => {
-  // Use a realistic browser User-Agent — portal sites (e.g. community.grassvalley.com)
-  // block bot-like UAs or return unexpected responses.
-  const UA =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+// --- Outbound call wrappers -------------------------------------------------
 
-  const tryFetch = async (method: "HEAD" | "GET"): Promise<number | null> => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    try {
-      const res = await fetch(url, {
-        method,
-        signal: controller.signal,
-        redirect: "follow",
-        headers: {
-          "User-Agent": UA,
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-          ...(method === "GET" ? { Range: "bytes=0-0" } : {}),
-        },
-      });
-      return res.status;
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
+/** OpenAI call through a shared semaphore with retry on 429/5xx. Throws on final failure —
+ *  callers decide whether that fails open (domain resolution → skip) or closed (validation → reject). */
+const openaiText = async (openai: OpenAI, model: string, input: string): Promise<string> => {
+  const MAX_RETRIES = 3;
+  await openaiSemaphore.acquire();
+  try {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const res = await openai.responses.create({ model, input, temperature: 0, stream: false });
+        return res.output_text?.trim() ?? "";
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status;
+        if ((status === 429 || (status !== undefined && status >= 500)) && attempt < MAX_RETRIES - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+          continue;
+        }
+        throw err;
+      }
     }
-  };
-
-  const NOT_FOUND_STATUSES = new Set([404, 410, 451]);
-
-  const headStatus = await tryFetch("HEAD");
-  if (headStatus !== null) {
-    if (NOT_FOUND_STATUSES.has(headStatus)) return false;
-    if (headStatus === 405 || headStatus === 403) {
-      // Server doesn't allow HEAD — fall back to GET
-      const getStatus = await tryFetch("GET");
-      if (getStatus === null) return true; // network error on GET, assume reachable
-      return !NOT_FOUND_STATUSES.has(getStatus);
-    }
-    return true; // any other status (200, 301 after redirect, etc.)
+    throw lastErr;
+  } finally {
+    openaiSemaphore.release();
   }
-
-  // HEAD timed out / network error — try GET
-  const getStatus = await tryFetch("GET");
-  if (getStatus === null) return false;
-  return !NOT_FOUND_STATUSES.has(getStatus);
 };
+
+// --- Page fetching -----------------------------------------------------------
+
+type FetchedPage =
+  | { kind: "ok"; finalUrl: string; status: number; page: ExtractedPage }
+  | { kind: "not_found" }
+  | { kind: "not_html" }
+  | { kind: "blocked"; status: number | null };
+
+/** GET the candidate page with a browser UA, following redirects, capping the body size.
+ *  Distinguishes hard not-founds, bot-blocks/network failures, and readable pages. */
+const fetchPage = async (url: string): Promise<FetchedPage> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      redirect: "follow",
+      headers: {
+        "User-Agent": BROWSER_UA,
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+      },
+    });
+
+    if ([404, 410, 451].includes(res.status)) return { kind: "not_found" };
+    if (!res.ok) return { kind: "blocked", status: res.status };
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (contentType && !/text\/html|application\/xhtml/i.test(contentType)) {
+      return { kind: "not_html" };
+    }
+
+    let html = "";
+    const reader = res.body?.getReader();
+    if (reader) {
+      const decoder = new TextDecoder();
+      let bytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        html += decoder.decode(value, { stream: true });
+        if (bytes >= PAGE_BYTE_CAP) {
+          void reader.cancel().catch(() => {});
+          break;
+        }
+      }
+    } else {
+      html = (await res.text()).slice(0, PAGE_BYTE_CAP);
+    }
+
+    return { kind: "ok", finalUrl: res.url || url, status: res.status, page: extractPageContent(html) };
+  } catch {
+    return { kind: "blocked", status: null };
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// --- Shared write helper --------------------------------------------------------
+
+/** Single write path for apply and revert, so audit semantics can't drift between them.
+ *  Returns true when a row was updated. */
+const updateProductWebLink = async (
+  pool: ConnectionPool,
+  auditUserId: string | null,
+  productId: number,
+  webLink: string | null,
+): Promise<boolean> => {
+  const updateReq = pool.request();
+  updateReq.input("ProductID", sql.Int, productId);
+  updateReq.input("WebLink", sql.NVarChar(2000), webLink);
+  updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+  const result = await updateReq.query(`
+    UPDATE dbo.Products
+    SET WebLink = @WebLink,
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @ModifiedBy
+    WHERE ID = @ProductID
+  `);
+  return (result.rowsAffected?.[0] ?? 0) > 0;
+};
+
+const validateItemCount = (count: number): NextResponse | null => {
+  if (count === 0) {
+    return NextResponse.json({ ok: false, error: "No items provided." }, { status: 400 });
+  }
+  if (count > MAX_PRODUCT_IDS) {
+    return NextResponse.json(
+      { ok: false, error: `Cannot process more than ${MAX_PRODUCT_IDS} products at once.` },
+      { status: 400 },
+    );
+  }
+  return null;
+};
+
+// --- Request handlers ---------------------------------------------------------
 
 export async function POST(req: NextRequest) {
   logRequest(req, "/api/products/add-weblinks");
@@ -124,235 +227,310 @@ export async function POST(req: NextRequest) {
     if (!auth.ok) return auth.response;
 
     const body = await req.json();
-    const rawIds: unknown = body?.productIds;
 
-    if (!Array.isArray(rawIds) || rawIds.length === 0) {
-      return NextResponse.json({ ok: false, error: "No product IDs provided." }, { status: 400 });
+    if (Array.isArray(body?.applyPrecomputed)) {
+      return await handleApply(req, body.applyPrecomputed as unknown[]);
     }
-
-    const productIds = rawIds
-      .map(normalizeProductId)
-      .filter((id): id is number => id !== null);
-
-    if (productIds.length === 0) {
-      return NextResponse.json({ ok: false, error: "No valid product IDs provided." }, { status: 400 });
-    }
-
-    if (productIds.length > MAX_PRODUCT_IDS) {
+    if (body?.dryRun !== true) {
+      // Old clients POSTed { productIds } expecting a direct write; refuse loudly rather
+      // than silently searching (they would show "Updated undefined web link(s)").
       return NextResponse.json(
-        { ok: false, error: `Cannot process more than ${MAX_PRODUCT_IDS} products at once.` },
+        { ok: false, error: "The Add web links feature was updated — please hard-refresh the page (Ctrl+F5) and try again." },
         { status: 400 },
       );
+    }
+    return await handleSearch(req, body?.productIds);
+  } catch (err) {
+    console.error("Failed to add web links", err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+/** Revert helper used by client-side undo: restores previous WebLink values. */
+export async function PUT(req: NextRequest) {
+  logRequest(req, "/api/products/add-weblinks");
+  try {
+    const auth = await requirePermission(req, "manageBrandsSuppliers");
+    if (!auth.ok) return auth.response;
+
+    const body = await req.json();
+    const rawItems: unknown = body?.items;
+    if (!Array.isArray(rawItems)) {
+      return NextResponse.json({ ok: false, error: "No items provided." }, { status: 400 });
+    }
+    const countError = validateItemCount(rawItems.length);
+    if (countError) return countError;
+
+    const items = rawItems
+      .map((raw) => {
+        const productId = normalizeId((raw as { productId?: unknown })?.productId);
+        const webLinkRaw = (raw as { webLink?: unknown })?.webLink;
+        const webLink = typeof webLinkRaw === "string" && webLinkRaw.trim() ? webLinkRaw.slice(0, 2000) : null;
+        return productId !== null ? { productId, webLink } : null;
+      })
+      .filter((x): x is { productId: number; webLink: string | null } => x !== null);
+
+    if (items.length === 0) {
+      return NextResponse.json({ ok: false, error: "No valid items provided." }, { status: 400 });
     }
 
     const auditUserId = resolveAuditUserId(req);
     const pool = await getPool();
-
-    // Fetch product data from DB
-    const idList = productIds.join(",");
-    const fetchReq = pool.request();
-    const fetchResult = await fetchReq.query<ProductRow>(`
-      SELECT p.ID, b.Name AS Brand, p.ModelNumber, p.PartNumber, p.Description
-      FROM dbo.Products p
-      LEFT JOIN dbo.Brands b ON b.ID = p.BrandID
-      WHERE p.ID IN (${idList})
-    `);
-
-    const products = fetchResult.recordset;
-    if (products.length === 0) {
-      return NextResponse.json({ ok: false, error: "No matching products found." }, { status: 404 });
+    let revertedCount = 0;
+    for (const item of items) {
+      if (await updateProductWebLink(pool, auditUserId, item.productId, item.webLink)) revertedCount++;
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    return NextResponse.json({ ok: true, revertedCount });
+  } catch (err) {
+    console.error("Failed to revert web links", err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
 
-    type ProductResult = { productId: number; webLink: string | null; status: "updated" | "not_found" | "error" };
+// --- Apply mode ----------------------------------------------------------------
 
-    const settled = await Promise.allSettled(
-      products.map(async (product): Promise<ProductResult> => {
+async function handleApply(req: NextRequest, rawItems: unknown[]) {
+  const countError = validateItemCount(rawItems.length);
+  if (countError) return countError;
+
+  const items = rawItems
+    .map((raw) => {
+      const productId = normalizeId((raw as { productId?: unknown })?.productId);
+      const webLink = (raw as { webLink?: unknown })?.webLink;
+      if (productId === null || !isRealWebLink(webLink)) return null;
+      return { productId, webLink: webLink.trim().slice(0, 2000) };
+    })
+    .filter((x): x is { productId: number; webLink: string } => x !== null);
+
+  if (items.length === 0) {
+    return NextResponse.json({ ok: false, error: "No valid links provided." }, { status: 400 });
+  }
+
+  const auditUserId = resolveAuditUserId(req);
+  const pool = await getPool();
+
+  const results: Array<{ productId: number; status: "updated" | "error" }> = [];
+  for (const item of items) {
+    try {
+      const updated = await updateProductWebLink(pool, auditUserId, item.productId, item.webLink);
+      results.push({ productId: item.productId, status: updated ? "updated" : "error" });
+    } catch (err) {
+      console.error(`Failed to apply web link for product ${item.productId}:`, err);
+      results.push({ productId: item.productId, status: "error" });
+    }
+  }
+
+  const updatedCount = results.filter((r) => r.status === "updated").length;
+  const errorCount = results.filter((r) => r.status === "error").length;
+  return NextResponse.json({ ok: true, updatedCount, errorCount, results });
+}
+
+// --- Search mode (never writes product data) --------------------------------------
+
+async function handleSearch(req: NextRequest, rawIds: unknown) {
+  if (!Array.isArray(rawIds) || rawIds.length === 0) {
+    return NextResponse.json({ ok: false, error: "No product IDs provided." }, { status: 400 });
+  }
+
+  const productIds = rawIds.map(normalizeId).filter((id): id is number => id !== null);
+  if (productIds.length === 0) {
+    return NextResponse.json({ ok: false, error: "No valid product IDs provided." }, { status: 400 });
+  }
+  if (productIds.length > MAX_PRODUCT_IDS) {
+    return NextResponse.json(
+      { ok: false, error: `Cannot process more than ${MAX_PRODUCT_IDS} products at once.` },
+      { status: 400 },
+    );
+  }
+
+  const auditUserId = resolveAuditUserId(req);
+  const pool = await getPool();
+  const fetchReq = pool.request();
+  const fetchResult = await fetchReq.query<ProductRow>(`
+    SELECT p.ID, b.Name AS Brand, p.BrandID, b.WebDomain AS BrandWebDomain,
+           p.ModelNumber, p.PartNumber, p.Description, p.WebLink
+    FROM dbo.Products p
+    LEFT JOIN dbo.Brands b ON b.ID = p.BrandID
+    WHERE p.ID IN (${productIds.join(",")})
+  `);
+
+  // Missing IDs are reported per-product below (never a blanket 404 — a chunk of stale
+  // grid rows must not abort the client's whole chunked run).
+  const products = fetchResult.recordset;
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  // Brand → domain memoization for this batch: one resolution per brand, not per product.
+  const domainCache = new Map<string, Promise<string | null>>();
+
+  // Probe a resolved/proposed domain (any HTTP response — even 403 — proves it exists;
+  // DNS/network failure on bare and www forms rejects it), then persist to Brands.WebDomain
+  // ONLY when the homepage was readable and actually mentions the brand — an unverifiable
+  // guess stays batch-local instead of becoming a curated-looking domain. Never clobbers
+  // an existing value.
+  const verifyAndPersistDomain = async (
+    domain: string,
+    brand: string,
+    brandId: number | null,
+  ): Promise<string | null> => {
+    let probe = await fetchPage(`https://${domain}/`);
+    if (probe.kind === "blocked" && probe.status === null) {
+      probe = await fetchPage(`https://www.${domain}/`);
+      if (probe.kind === "blocked" && probe.status === null) {
+        console.warn(`[weblink] resolved domain "${domain}" for brand "${brand}" does not respond — discarding`);
+        return null;
+      }
+    }
+
+    let brandVerified = false;
+    if (probe.kind === "ok") {
+      const haystack = `${probe.page.title} ${probe.page.metaDescription} ${probe.page.bodyText.slice(0, 5000)}`;
+      const brandTokens = Array.from(new Set([brand, brand.split(/\s+/)[0]]))
+        .filter((t) => t && normalizeIdentifier(t).length >= 3);
+      brandVerified = brandTokens.some((t) => identifierAppearsInText(haystack, t));
+    }
+    if (brandVerified && brandId !== null) {
+      try {
+        const persistReq = pool.request();
+        persistReq.input("BrandID", sql.Int, brandId);
+        persistReq.input("WebDomain", sql.NVarChar(255), domain);
+        persistReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+        await persistReq.query(`
+          UPDATE dbo.Brands
+          SET WebDomain = @WebDomain,
+              ModifiedOn = SYSUTCDATETIME(),
+              ModifiedBy = @ModifiedBy
+          WHERE ID = @BrandID AND (WebDomain IS NULL OR LTRIM(RTRIM(WebDomain)) = '')
+        `);
+        console.log(`[weblink] persisted WebDomain "${domain}" for brand "${brand}" (homepage mentions brand)`);
+      } catch (err) {
+        console.warn(`[weblink] failed to persist WebDomain for brand "${brand}":`, err);
+      }
+    } else {
+      console.log(`[weblink] domain "${domain}" for brand "${brand}" used for this batch only (not verified against homepage)`);
+    }
+    return domain;
+  };
+
+  // Legacy (serper-mode) domain resolution: GPT answers from memory, then the domain is
+  // probed/verified like any other. Websearch mode skips this entirely — the proposer
+  // identifies the domain by actually searching (catches rebrands GPT can't know about).
+  // Memoize per brand, but NEVER memoize failures — a transient probe timeout under batch
+  // load must not poison every remaining product of that brand in the run.
+  const memoizeDomain = (key: string, resolve: () => Promise<string | null>): Promise<string | null> => {
+    let cached = domainCache.get(key);
+    if (!cached) {
+      cached = resolve().then((result) => {
+        if (result === null) domainCache.delete(key);
+        return result;
+      });
+      domainCache.set(key, cached);
+    }
+    return cached;
+  };
+
+  // Verify (and persist) the domain the proposer identified, memoized per brand so 10
+  // products of one brand don't re-probe it 10 times.
+  const verifyProposedDomain = (
+    brand: string,
+    brandId: number | null,
+    domain: string,
+  ): Promise<string | null> =>
+    memoizeDomain(brand.toLowerCase(), () => verifyAndPersistDomain(domain, brand, brandId));
+
+  const requestedIds = new Set(productIds);
+  const foundIds = new Set(products.map((p) => p.ID));
+
+  const settled = await Promise.allSettled(
+    products.map(async (product): Promise<ProductResult> => {
+      const base = {
+        productId: product.ID,
+        brand: product.Brand,
+        partNumber: product.PartNumber,
+        modelNumber: product.ModelNumber,
+        oldWebLink: product.WebLink,
+      };
+
+      await productSemaphore.acquire();
+      const startedAt = Date.now();
+      const timeLeft = () => PER_PRODUCT_TIME_BUDGET_MS - (Date.now() - startedAt);
+      try {
         const brand = product.Brand?.trim() ?? "";
         const modelNumber = product.ModelNumber?.trim() ?? "";
         const partNumber = product.PartNumber?.trim() ?? "";
         const description = product.Description?.trim() ?? "";
 
         if (!brand && !modelNumber && !partNumber && !description) {
-          return { productId: product.ID, webLink: null, status: "not_found" };
+          return { ...base, webLink: null, status: "not_found", note: "Product has no searchable data." };
         }
 
-        // Step 1: Resolve the manufacturer's domain.
-        // Check the hardcoded cache first to avoid intermittent GPT-4o failures for known brands.
-        let domain: string | null = null;
-        if (brand) {
-          const cached = KNOWN_BRAND_DOMAINS[brand.toLowerCase()];
-          if (cached) {
-            domain = cached;
-            console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain} (cached)`);
+        // Step 1: propose candidate URLs. One agentic web-search call per product finds
+        // candidate product pages (scoped to the curated Brands.WebDomain when set) and, when
+        // we don't have a domain, identifies the manufacturer's official site by searching.
+        const curatedDomain = product.BrandWebDomain?.trim().toLowerCase().replace(/^www\./, "") || null;
+        let domain: string | null = curatedDomain;
+        let proposedCandidates: Array<{ link: string }> = [];
+
+        try {
+          await openaiSemaphore.acquire();
+          let proposal;
+          try {
+            proposal = await proposeWebLinks(
+              openai,
+              WEBLINK_SEARCH_MODEL,
+              { brand, partNumber, modelNumber, description },
+              domain,
+            );
+          } finally {
+            openaiSemaphore.release();
           }
-        }
-        if (!domain && brand) {
-          const domainRes = await openai.responses.create({
-            model: "gpt-4o",
-            input:
-              `What is the official website domain for the manufacturer "${brand}"?\n` +
-              `Return ONLY the bare domain (e.g. extron.com, sony.com, yamaha.com). ` +
-              `No www prefix, no https://, no path, no explanation.\n` +
-              `If you are not certain, respond exactly: NOT_FOUND`,
-            stream: false,
-          });
-          const raw = domainRes.output_text?.trim() ?? "";
-          if (raw && raw !== "NOT_FOUND") {
-            try {
-              const host = raw.includes("://") ? new URL(raw).hostname : raw.split("/")[0];
-              const cleaned = host.replace(/^www\./i, "").toLowerCase();
-              if (cleaned.includes(".")) domain = cleaned;
-            } catch {
-              // ignore malformed response
-            }
+          proposedCandidates = proposal.candidates.map((url) => ({ link: url }));
+          if (!domain && proposal.resolvedDomain && brand) {
+            domain = await verifyProposedDomain(brand, product.BrandID, proposal.resolvedDomain);
+            // The probe can time out transiently under batch load. The domain came from
+            // real search results (not model memory) and every candidate is fetch-verified
+            // below anyway — so still use it batch-locally; it just isn't persisted.
+            if (!domain) domain = proposal.resolvedDomain;
           }
+        } catch (err) {
+          console.error(`[weblink] product ${product.ID}: web-search proposal failed:`, err);
+          return { ...base, webLink: null, status: "error", note: "Web search failed — please retry." };
         }
 
         if (!domain) {
           console.log(`[weblink] product ${product.ID} (${brand}): domain not resolved`);
-          return { productId: product.ID, webLink: null, status: "not_found" };
+          return {
+            ...base,
+            webLink: null,
+            status: "not_found",
+            note: brand
+              ? `Could not resolve a website domain for brand "${brand}". Set it on the Brands page and retry.`
+              : "Product has no brand — cannot pick a manufacturer site.",
+          };
         }
+        console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain}${curatedDomain ? " (curated)" : ""}`);
 
-        console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain}`);
+        const partPrefix = extractPartPrefix(partNumber);
+        const identifiers = [partNumber, modelNumber, partPrefix].filter(Boolean);
+        const scoreIds = { modelNumber, partNumber, partPrefix };
 
-        // Score a candidate URL — higher is better.
-        // Prefers URLs whose path contains the model/part number over generic category pages.
-        const scoreUrl = (link: string): number => {
-          let score = 0;
-          try {
-            const parsed = new URL(link);
-            const host = parsed.hostname.toLowerCase();
-            const path = parsed.pathname.toLowerCase();
-            const segments = path.split("/").filter(Boolean);
-            // Penalise staging, auth, or non-production subdomains
-            if (/stage|staging|auth|dev|test|sandbox/.test(host)) score -= 10;
-            // Penalise shop/cart/brand-filter pages — not product spec pages
-            if (/shop|cart|brand-filter|checkout|account/.test(path)) score -= 6;
-            // Exact part/model number in URL path — strong signal this is the right product page
-            const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]+/g, "");
-            if (modelNumber) {
-              const normModel = normalize(modelNumber);
-              if (path.replace(/[\s\-_]+/g, "").includes(normModel)) score += 5;
-            }
-            if (partNumber) {
-              const normPart = normalize(partNumber);
-              const normPrefix = usePartPrefix ? normalize(partPrefix) : "";
-              // Full exact match of part number in path (e.g. ecom-item/911.1520.900)
-              if (path.includes(partNumber.toLowerCase())) score += 6;
-              else if (path.replace(/[\s\-_]+/g, "").includes(normPart)) score += 3;
-              // Part number prefix in URL path (e.g. Z5012 from Z5012.500 matches /accessories/z5012/)
-              else if (normPrefix && path.includes(normPrefix)) score += 4;
-              else {
-                // If a different numeric product code appears in the URL path, this is likely the wrong product.
-                // Skip UUID-like segments to avoid false positives from GUID-based category filters
-                // (e.g. /category/327C3621-DB53-... or pipe-joined GUIDs like UUID|UUID|UUID).
-                const isUuidLike = (s: string) =>
-                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s) ||
-                  s.includes("|") ||
-                  (s.length > 20 && /^[0-9a-f\-]+$/.test(s));
-                const partPattern = /\d{3}[.\-]\d{4}[.\-]\d{3}|\d{6,}/g;
-                const pathCodes = segments
-                  .filter(s => !isUuidLike(s))
-                  .flatMap(s => s.match(partPattern) ?? []);
-                if (pathCodes.length > 0 && !pathCodes.some(c => normalize(c) === normPart)) score -= 8;
-              }
-            }
-            if (segments.length >= 2) score += 1; // deeper path = more specific page
-            const lastSeg = segments[segments.length - 1] ?? "";
-            if (/search|results|catalog|category|products?$/.test(lastSeg)) score -= 4;
-            // Prefer English URLs over other languages, and EU/UK English over en-US
-            // (the company is EU-based, so regional pricing/availability is correct there).
-            const localePattern = /^[a-z]{2}(-[a-zA-Z]{2,8})?$/;
-            const firstSeg = segments[0] ?? "";
-            const secondSeg = segments[1] ?? "";
-            const locSeg = (localePattern.test(firstSeg) ? firstSeg
-              : (/^(global|region|site)$/i.test(firstSeg) && localePattern.test(secondSeg)) ? secondSeg
-              : null)?.toLowerCase() ?? null;
-            if (locSeg) {
-              if (locSeg !== "en" && !locSeg.startsWith("en-")) score -= 3; // non-English locale
-              else if (/^en-(eu|gb|ie)$/.test(locSeg)) score += 2;          // EU/UK English — preferred
-              else if (locSeg === "en") score += 1;                         // generic global English
-              // en-US and other English regions: neutral
-            }
-            // Penalise documentation, guide, and support paths — prefer product listing/spec pages.
-            // Exception: /support/s/portalproduct/ (e.g. community.grassvalley.com) is a product page.
-            if (/\/support\/s\/portalproduct\//.test(path)) { /* no penalty — this is a product portal page */ }
-            else if (/\/docs\/|\/guide\/|\/guides\/|\/support\/|\/kb\/|\/faq\/|\/help\/|\/articulos\//.test(path)) score -= 5;
-          } catch { /* ignore */ }
-          return score;
-        };
-
-        const serperSearch = async (q: string): Promise<Array<{ link: string }>> => {
-          const MAX_RETRIES = 3;
-          const BASE_DELAY_MS = 1000;
-
-          await serperSemaphore.acquire();
-          try {
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-              const res = await fetch("https://google.serper.dev/search", {
-                method: "POST",
-                headers: {
-                  "X-API-KEY": process.env.SERPER_API_KEY ?? "",
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ q, num: 10, hl: "en", gl: "us" }),
-              });
-
-              if (res.ok) {
-                const data = await res.json() as { organic?: Array<{ link: string }> };
-                return data.organic ?? [];
-              }
-
-              if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES - 1) {
-                const delay = BASE_DELAY_MS * Math.pow(2, attempt);
-                console.warn(
-                  `[weblink] Serper ${res.status} for product ${product.ID}, ` +
-                  `attempt ${attempt + 1}/${MAX_RETRIES}, retrying in ${delay}ms`
-                );
-                await new Promise((resolve) => setTimeout(resolve, delay));
-                continue;
-              }
-
-              console.error(`Serper API error for product ${product.ID}: ${res.status}`);
-              return [];
-            }
-            return [];
-          } finally {
-            serperSemaphore.release();
+        // Per-product page cache: locale/EU swaps and overlapping tiers must not re-fetch
+        // the same URL.
+        const pageCache = new Map<string, Promise<FetchedPage>>();
+        const fetchPageCached = (url: string): Promise<FetchedPage> => {
+          let cached = pageCache.get(url);
+          if (!cached) {
+            cached = fetchPage(url);
+            pageCache.set(url, cached);
           }
+          return cached;
         };
 
-        // Build multiple sets of search terms with decreasing specificity:
-        // 1. Quoted part number (exact match for precision)
-        // 2. Unquoted part number (for recall when exact match fails)
-        // 3. Part number prefix — some manufacturers use shortened codes in URLs
-        //    (e.g. d&b audiotechnik: Z5012.500 → /accessories/z5012/)
-        const quotedPartNumber = partNumber ? `"${partNumber}"` : "";
-        const searchTermsQuoted = [modelNumber, quotedPartNumber].filter(Boolean).join(" ");
-        const searchTermsUnquoted = [modelNumber, partNumber].filter(Boolean).join(" ");
-        // Extract part number prefix (before first dot) if it's meaningful (4+ chars)
-        const partPrefix = partNumber ? partNumber.split(".")[0] : "";
-        const usePartPrefix = partPrefix.length >= 4 && partPrefix !== partNumber;
-        const searchTermsPrefix = usePartPrefix
-          ? [modelNumber, partPrefix].filter(Boolean).join(" ")
-          : "";
-        // Always include description words — part numbers alone (e.g. "910-001390-00") rarely
-        // appear in URLs, but the description contains the human-readable product name that does.
-        const descWords = description ? description.split(/\s+/).slice(0, 10).join(" ") : "";
-        const effectiveTermsQuoted = [searchTermsQuoted, descWords].filter(Boolean).join(" ").trim();
-        const effectiveTermsUnquoted = [searchTermsUnquoted, descWords].filter(Boolean).join(" ").trim();
-        const effectiveTermsPrefix = searchTermsPrefix
-          ? [searchTermsPrefix, descWords].filter(Boolean).join(" ").trim()
-          : "";
-
-        if (!effectiveTermsUnquoted) {
-          return { productId: product.ID, webLink: null, status: "not_found" };
-        }
-
-        // Hard-filter: only keep URLs on the manufacturer's domain, excluding staging subdomains,
-        // non-product pages, and document files (PDFs, datasheets, etc.).
+        // Hard-filter: only keep URLs on the manufacturer's domain, excluding staging
+        // subdomains, non-product pages, and document files.
         const domainFilter = (r: { link: string }) => {
           try {
             const parsed = new URL(r.link);
@@ -361,269 +539,386 @@ export async function POST(req: NextRequest) {
             const subdomain = host.split(".")[0];
             if (/stage|staging|rhythm|dev|test|sandbox/.test(subdomain)) return false;
             if (/\/shop\/|\/brand-filter\/|\/cart\/|\/checkout\/|\/account\//.test(path)) return false;
-            // Reject document/file URLs — we want product web pages, not PDFs or downloads
             if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|csv|zip)(\?[^/]*)?$/i.test(path)) return false;
-            return host.replace(/^www\./i, "").endsWith(domain!);
-          } catch { return false; }
-        };
-
-        // Ask GPT-4o-mini to confirm the URL is an individual product detail page,
-        // not a category, family overview, or search results page.
-        // The LLM does NOT try to match the part number — it has no web access and
-        // manufacturers often use different numbering schemes in URLs (e.g. biamp maps
-        // 912.1946.900 → 920-01946-00001). The heuristic scoring handles product matching;
-        // the LLM's job is only to catch generic/non-product pages that pass the score filter.
-        const validateUrlForProduct = async (url: string): Promise<boolean> => {
-          try {
-            const res = await openai.responses.create({
-              model: "gpt-4o-mini",
-              input: [
-                `Evaluate whether this URL is a useful product page for finding specifications of a specific product.`,
-                `Manufacturer domain: ${domain}`,
-                `URL: ${url}`,
-                ``,
-                `Reply YES if the URL appears to be ANY of the following:`,
-                `- A page for one specific product (product detail, spec sheet, datasheet page)`,
-                `- A product family or product line page that lists individual product variants with their specifications`,
-                `- A product configuration page showing different models or SKUs within a product series`,
-                ``,
-                `Reply NO if the URL is:`,
-                `- A top-level category or catalog page listing many unrelated product families`,
-                `- A search results page`,
-                `- A brand, company, or support homepage`,
-                `- A news, blog, or press release page`,
-                `- A generic "all products" listing with no specific product details`,
-                ``,
-                `The key distinction: YES if the page shows specs/details for a specific product or a closely related`,
-                `group of product variants. NO if it is a broad listing or navigation page with no product-level detail.`,
-                ``,
-                `Do NOT try to match the URL to a specific model or part number — manufacturers`,
-                `often use internal codes in URLs that differ from customer-facing part numbers.`,
-                ``,
-                `Reply YES or NO only.`,
-              ].join("\n"),
-              stream: false,
-            });
-            const valid = (res.output_text?.trim().toUpperCase() ?? "").startsWith("YES");
-            console.log(`[weblink] product ${product.ID}: url=${url} llm_valid=${valid}`);
-            return valid;
+            // Knowledge-base articles / news / community posts are never the product page —
+            // reject by path pattern and by headline-style slugs (blog/press titles).
+            if (isArticleOrNewsPath(path) || hasHeadlineSlug(r.link)) return false;
+            return hostMatchesDomain(host, domain);
           } catch {
-            return true; // if LLM call fails, don't block the URL
+            return false;
           }
         };
 
-        // For domains resolved from the hardcoded cache we trust Google results
-        // even when our server-side fetch can't reach the page (e.g. Salesforce portals
-        // like community.grassvalley.com that block Node.js fetch but work in browsers).
-        const isCachedDomain = !!KNOWN_BRAND_DOMAINS[brand.toLowerCase()];
+        // Ask GPT-4o-mini whether a fetched page is a useful product page for THIS product.
+        // FAIL CLOSED: any LLM error rejects the candidate (a wrong link proposed for saving is
+        // worse than a missing one — the old fail-open default proposed junk during outages).
+        const validatePageForProduct = async (
+          url: string,
+          page: ExtractedPage,
+          opts?: { bodyMatchHint?: boolean },
+        ): Promise<boolean> => {
+          try {
+            const reply = await openaiText(openai, "gpt-4o-mini", [
+              `You are validating a candidate manufacturer web page for a specific product.`,
+              `Product brand: ${brand || "(unknown)"}`,
+              `Part number: ${partNumber || "(none)"}`,
+              `Model number: ${modelNumber || "(none)"}`,
+              `Product description: ${description.slice(0, 300) || "(none)"}`,
+              ``,
+              `Candidate URL: ${url}`,
+              `Page title: ${page.title || "(empty)"}`,
+              `Meta description: ${page.metaDescription || "(empty)"}`,
+              `Page text excerpt: ${page.bodyText.slice(0, 1200) || "(empty)"}`,
+              ``,
+              ...(opts?.bodyMatchHint
+                ? [
+                    `Note: the part number appears somewhere in the page text, but that alone does NOT`,
+                    `prove this is the right page — accessory part numbers are often listed on the PARENT`,
+                    `product's page (accessories/related-products sections).`,
+                    ``,
+                  ]
+                : []),
+              `Reply YES if this page is a product detail page, spec page, or a product family page`,
+              `that plausibly covers this specific product. Manufacturers often use different internal`,
+              `codes in URLs than customer-facing part numbers, so judge by product NAME and TYPE,`,
+              `not by exact code matching.`,
+              `Reply NO if the page is a broad category listing, search results, support/news/blog page,`,
+              `a homepage, or clearly a DIFFERENT product type than the description above.`,
+              `In particular: if the product description is an ACCESSORY (bracket, mount, adapter, cable,`,
+              `case, rigging, cover), the page must be about that accessory itself — a page whose title`,
+              `names the main product the accessory attaches to is NO.`,
+              ``,
+              `Reply YES or NO only.`,
+            ].join("\n"));
+            const valid = reply.toUpperCase().startsWith("YES");
+            console.log(`[weblink] product ${product.ID}: url=${url} llm_page_valid=${valid}`);
+            return valid;
+          } catch (err) {
+            console.warn(`[weblink] product ${product.ID}: page validation failed (rejecting candidate):`, err);
+            return false;
+          }
+        };
 
-        const tryVerifyCandidates = async (candidateList: Array<{ link: string }>): Promise<string | null> => {
-          const sorted = candidateList
-            .map((c) => ({ ...c, score: scoreUrl(c.link) }))
-            .filter((c) => c.score > -5)
-            .sort((a, b) => b.score - a.score);
-          for (const candidate of sorted) {
-            const reachable = await verifyUrl(candidate.link);
-            console.log(`[weblink] product ${product.ID}: url=${candidate.link} reachable=${reachable}`);
-            if (!reachable && !isCachedDomain) continue;
-            if (!reachable && isCachedDomain) {
-              console.log(`[weblink] product ${product.ID}: trusting Google result for cached domain despite verify failure`);
-            }
-            if (await validateUrlForProduct(candidate.link)) return candidate.link;
+        type Accepted = { link: string; verification: WebLinkVerification; pageLang: string };
+        let sawBlockedCandidate = false;
+        // Highest-scored on-domain candidate we couldn't fetch to verify (bot-protected site).
+        // If nothing verifies, this is offered as an "unverified" row for human review rather
+        // than dropped — the URL passed domainFilter + scoring (so it's a plausible non-article
+        // product page) and isn't detectably non-English by its URL.
+        let bestBlockedCandidate: string | null = null;
+
+        // Full verification of one candidate URL: fetch the page, reject hard/soft 404s and
+        // homepage redirects, then verify by content (part/model on the page) or by LLM
+        // judgment of the page text. A page we cannot read is never proposed.
+        const acceptCandidate = async (
+          url: string,
+          opts?: { skipIfFinalUrl?: string },
+        ): Promise<Accepted | null> => {
+          const fetched = await fetchPageCached(url);
+          if (fetched.kind === "not_found") {
+            console.log(`[weblink] product ${product.ID}: url=${url} rejected (not_found)`);
+            return null;
+          }
+          if (fetched.kind === "blocked" || fetched.kind === "not_html") {
+            // We can't read the page (bot-block, challenge page, or non-HTML). A 403 also masks
+            // whether the URL is actually a 404, so accepting it on URL shape alone produced
+            // dead links (e.g. Keenfinity /us/en/… that 404 in a browser). Only propose pages we
+            // could actually fetch and verify — otherwise report "not found".
+            sawBlockedCandidate = true;
+            // Remember the first (best-scored) blocked candidate whose URL isn't obviously
+            // non-English, as a human-review fallback. Only real search/proposal candidates
+            // reach here before an acceptance; guessed locale swaps run post-acceptance.
+            if (!bestBlockedCandidate && !urlLanguageIsNonEnglish(url)) bestBlockedCandidate = url;
+            console.log(`[weblink] product ${product.ID}: url=${url} unreadable (${fetched.kind}) — rejected`);
+            return null;
+          }
+
+          if (opts?.skipIfFinalUrl && fetched.finalUrl === opts.skipIfFinalUrl) {
+            // Redirected onto the already-accepted page — no better variant here.
+            return null;
+          }
+          if (isHomepageLanding(url, fetched.finalUrl)) {
+            console.log(`[weblink] product ${product.ID}: url=${url} redirected to homepage — rejected`);
+            return null;
+          }
+          if (looksLikeSoftNotFound(fetched.page)) {
+            console.log(`[weblink] product ${product.ID}: url=${url} looks like a soft 404 — rejected`);
+            return null;
+          }
+          // News/blog/press posts often carry the model number in their title/slug (so they'd
+          // pass the "strong" content match) but are never the product page — reject outright.
+          if (looksLikeArticlePage(fetched.page, fetched.finalUrl)) {
+            console.log(`[weblink] product ${product.ID}: url=${fetched.finalUrl} looks like an article/blog post — rejected`);
+            return null;
+          }
+          const lang = pageLanguage(fetched.page);
+          const matchStrength = pageMatchStrength(fetched.page, fetched.finalUrl, identifiers);
+          if (matchStrength === "strong") {
+            // Identifier in the title/meta/URL — this page is ABOUT the product.
+            console.log(`[weblink] product ${product.ID}: url=${url} verified by content`);
+            return { link: fetched.finalUrl, verification: "content", pageLang: lang };
+          }
+          // Body-only matches are NOT trusted on their own: accessory part numbers are
+          // routinely listed on the PARENT product's page (e.g. a bracket's part number in
+          // the loudspeaker's accessories section) — the LLM must corroborate.
+          if (await validatePageForProduct(url, fetched.page, { bodyMatchHint: matchStrength === "body" })) {
+            return { link: fetched.finalUrl, verification: "llm", pageLang: lang };
           }
           return null;
         };
 
-        // Step 2a: Site-constrained search — try quoted part number first for precision,
-        // then retry unquoted if quoting yields no results (some sites don't index exact part numbers).
-        let candidates: Array<{ link: string }> = [];
-        const query2aQuoted = `site:${domain} ${effectiveTermsQuoted}`;
-        candidates = (await serperSearch(query2aQuoted)).filter(domainFilter);
-        console.log(`[weblink] product ${product.ID}: query="${query2aQuoted}" candidates=${candidates.length}`);
-
-        if (candidates.length === 0 && effectiveTermsQuoted !== effectiveTermsUnquoted) {
-          const query2aUnquoted = `site:${domain} ${effectiveTermsUnquoted}`;
-          candidates = (await serperSearch(query2aUnquoted)).filter(domainFilter);
-          console.log(`[weblink] product ${product.ID}: unquoted query="${query2aUnquoted}" candidates=${candidates.length}`);
-        }
-
-        // Try with part number prefix — covers manufacturers that use shortened codes in URLs
-        if (candidates.length === 0 && effectiveTermsPrefix) {
-          const query2aPrefix = `site:${domain} ${effectiveTermsPrefix}`;
-          candidates = (await serperSearch(query2aPrefix)).filter(domainFilter);
-          console.log(`[weblink] product ${product.ID}: prefix query="${query2aPrefix}" candidates=${candidates.length}`);
-        }
-
-        let webLink: string | null = null;
-
-        if (candidates.length > 0) {
-          webLink = await tryVerifyCandidates(candidates);
-          if (!webLink) {
-            console.log(`[weblink] product ${product.ID}: site-constrained candidates failed, trying fallback`);
-          }
-        }
-
-        // Step 2b: If no results or all unreachable, broaden without site: constraint.
-        if (!webLink) {
-          const fallbackQuery = `${brand} ${effectiveTermsUnquoted} product specifications`.trim();
-          const fallbackResults = await serperSearch(fallbackQuery);
-          const fallbackCandidates = fallbackResults.filter(domainFilter);
-          console.log(`[weblink] product ${product.ID}: fallback query="${fallbackQuery}" candidates=${fallbackCandidates.length}`);
-          if (fallbackCandidates.length > 0) {
-            webLink = await tryVerifyCandidates(fallbackCandidates);
-          }
-        }
-
-        // Step 2c: Last-resort — search with just the part or model number.
-        if (!webLink) {
-          const identifier = partNumber || modelNumber;
-          if (identifier) {
-            // Try quoted first for precision
-            const lastResortQuery = `${brand} "${identifier}" product specifications`.trim();
-            const lastResortResults = await serperSearch(lastResortQuery);
-            let lastResortCandidates = lastResortResults.filter(domainFilter);
-            console.log(
-              `[weblink] product ${product.ID}: last-resort query="${lastResortQuery}" candidates=${lastResortCandidates.length}`
-            );
-            // Fall back to unquoted if quoted yields nothing
-            if (lastResortCandidates.length === 0) {
-              const unquotedQuery = `${brand} ${identifier} product specifications`.trim();
-              const unquotedResults = await serperSearch(unquotedQuery);
-              lastResortCandidates = unquotedResults.filter(domainFilter);
-              console.log(
-                `[weblink] product ${product.ID}: last-resort unquoted query="${unquotedQuery}" candidates=${lastResortCandidates.length}`
-              );
+        // URLs that were actually fetched/attempted — never pre-poisoned by score cutoffs
+        // or per-tier caps, so a URL sliced off in one tier can still be tried in a later one.
+        const triedUrls = new Set<string>();
+        const tryVerifyCandidates = async (candidateList: Array<{ link: string }>): Promise<Accepted | null> => {
+          const sorted = candidateList
+            .filter((c, i, arr) => arr.findIndex((x) => x.link === c.link) === i && !triedUrls.has(c.link))
+            .map((c) => ({ ...c, score: scoreCandidateUrl(c.link, scoreIds) }))
+            .filter((c) => c.score > -5)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, MAX_CANDIDATES_PER_TIER);
+          for (const candidate of sorted) {
+            if (timeLeft() <= 0) {
+              console.warn(`[weblink] product ${product.ID}: time budget exhausted`);
+              return null;
             }
-            if (lastResortCandidates.length > 0) {
-              webLink = await tryVerifyCandidates(lastResortCandidates);
-            }
+            triedUrls.add(candidate.link);
+            const accepted = await acceptCandidate(candidate.link);
+            if (accepted) return accepted;
           }
+          return null;
+        };
+
+        // Candidates came from the web-search proposal above. The domain filter and the full
+        // fetch-and-verify pipeline still gate every proposal — the model only proposes.
+        let accepted: Accepted | null = null;
+        const filtered = proposedCandidates.filter(domainFilter);
+        console.log(
+          `[weblink] product ${product.ID}: proposals=${proposedCandidates.length} on-domain=${filtered.length}`,
+        );
+        if (filtered.length > 0) {
+          accepted = await tryVerifyCandidates(filtered);
         }
 
-        if (!webLink) {
-          console.log(`[weblink] product ${product.ID}: no reachable URL found`);
-          return { productId: product.ID, webLink: null, status: "not_found" };
+        if (!accepted) {
+          const timedOut = timeLeft() <= 0;
+          console.log(`[weblink] product ${product.ID}: no verifiable URL found`);
+          // Bot-protected site: nothing verified, but we found a plausible on-domain candidate
+          // we couldn't fetch. Offer it for human review (unchecked by default in the dialog)
+          // rather than dropping it — the user's browser can reach what our server can't.
+          if (!timedOut && bestBlockedCandidate) {
+            return {
+              ...base,
+              webLink: bestBlockedCandidate,
+              status: "unverified",
+              note: "The manufacturer site blocked automated verification. Open the link to confirm it is the right page before saving.",
+            };
+          }
+          return {
+            ...base,
+            webLink: null,
+            status: timedOut ? "error" : "not_found",
+            note: timedOut
+              ? "Search timed out before all candidates were checked."
+              : sawBlockedCandidate
+                ? "Could not fetch a working English page (candidate pages were unreachable or non-English)."
+                : undefined,
+          };
         }
+
+        let webLink = accepted.link;
+        let verification = accepted.verification;
+        let pageLang = accepted.pageLang;
 
         // Normalize the chosen URL to an English-language page. Two failure modes:
-        //   (a) Only the locale prefix is localized (e.g. /fr/products/...) — a simple
-        //       prefix swap to English recovers it.
-        //   (b) The whole path is localized (e.g. Shure /it-IT/prodotti/accessori/sbc220,
-        //       whose English page lives at /en-US/products/accessories/sbc220) — a prefix
-        //       swap can't recover this because the path words are translated too, so we
-        //       re-search for the English variant via the locale-neutral product slug.
-        const isLocaleSeg = (s: string) => /^[a-z]{2}(-[a-zA-Z]{2,8})?$/.test(s);
-        const isEnglishSeg = (s: string) => s === "en" || s.startsWith("en-");
-        // Index of the leading locale segment: segs[0], or segs[1] when prefixed by
-        // global/region/site. Returns -1 when the path has no locale prefix.
-        const localePrefixIndex = (segs: string[]): number => {
-          if (segs.length > 1 && /^(global|region|site)$/i.test(segs[0]) && isLocaleSeg(segs[1])) return 1;
-          if (segs.length > 0 && isLocaleSeg(segs[0])) return 0;
-          return -1;
-        };
+        //   (a) Only the locale prefix is localized (e.g. /fr/products/...) — a prefix swap works.
+        //   (b) The whole path is localized (e.g. Shure /it-IT/prodotti/accessori/sbc220) — the
+        //       English page must be re-searched via the locale-neutral product slug.
+        // Swapped/re-searched URLs go through the same full verification as the original.
         try {
           const parsed = new URL(webLink);
           const segs = parsed.pathname.split("/").filter(Boolean);
           const localeIdx = localePrefixIndex(segs);
-          const isNonEnglishLocale = localeIdx >= 0 && !isEnglishSeg(segs[localeIdx]);
+          // Skip when this is a /{region}/{language}/ URL — its first segment can look like a
+          // single-locale code (e.g. "de" in /de/en/); the dedicated region/lang block handles it.
+          const isNonEnglishLocale =
+            !parseRegionLangPrefix(segs) && localeIdx >= 0 && !isEnglishSegment(segs[localeIdx]);
 
-          if (isNonEnglishLocale) {
+          if (isNonEnglishLocale && timeLeft() > 0) {
             const rest = segs.slice(localeIdx + 1);
             const prefix = segs.slice(0, localeIdx);
-            let fixed: string | null = null;
+            let fixed: Accepted | null = null;
 
-            // (a) Cheap prefix swaps — succeed when only the locale prefix is localized.
-            const swaps = Array.from(new Set([
-              `${parsed.origin}/${[...prefix, "en-US", ...rest].join("/")}`,
-              `${parsed.origin}/${[...prefix, "en", ...rest].join("/")}`,
-              `${parsed.origin}/global/en/${rest.join("/")}`,
-              `${parsed.origin}/${rest.join("/")}`,
-            ]));
+            const swaps = Array.from(
+              new Set([
+                `${parsed.origin}/${[...prefix, "en-US", ...rest].join("/")}${parsed.search}`,
+                `${parsed.origin}/${[...prefix, "en", ...rest].join("/")}${parsed.search}`,
+                `${parsed.origin}/global/en/${rest.join("/")}${parsed.search}`,
+                `${parsed.origin}/${rest.join("/")}${parsed.search}`,
+              ]),
+            );
             for (const candidate of swaps) {
               if (candidate === webLink) continue;
-              if (await verifyUrl(candidate)) { fixed = candidate; break; }
+              if (timeLeft() <= 0) break;
+              const result = await acceptCandidate(candidate, { skipIfFinalUrl: webLink });
+              // Only adopt a swap that actually lands on an English page — some sites
+              // geo-redirect a locale swap back to the original localized page.
+              if (result && isEnglishResult(result.link, result.pageLang)) {
+                fixed = result;
+                break;
+              }
             }
 
-            // (b) Fully-localized path — re-search for the English page using the
-            // locale-neutral product slug (last path segment, e.g. "sbc220") plus the
-            // model number, then keep only English-locale results on the same domain.
-            if (!fixed && rest.length > 0) {
-              const slug = rest[rest.length - 1].replace(/\.[a-z0-9]+$/i, "");
-              const reSearchQuery = `site:${domain} ${[modelNumber, slug].filter(Boolean).join(" ")}`.trim();
-              const englishCandidates = (await serperSearch(reSearchQuery))
-                .filter(domainFilter)
-                .filter((r) => {
-                  try {
-                    const segsR = new URL(r.link).pathname.split("/").filter(Boolean);
-                    const li = localePrefixIndex(segsR);
-                    return li >= 0 && isEnglishSeg(segsR[li]);
-                  } catch { return false; }
-                });
-              const englishLink = await tryVerifyCandidates(englishCandidates);
-              if (englishLink) fixed = englishLink;
-            }
-
-            if (fixed) {
-              console.log(`[weblink] product ${product.ID}: localized → English ${webLink} → ${fixed}`);
-              webLink = fixed;
+            if (fixed && isEnglishResult(fixed.link, fixed.pageLang)) {
+              console.log(`[weblink] product ${product.ID}: localized → English ${webLink} → ${fixed.link}`);
+              webLink = fixed.link;
+              verification = fixed.verification;
+              pageLang = fixed.pageLang;
             } else {
               console.log(`[weblink] product ${product.ID}: no English variant found for ${webLink}, keeping original`);
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
-        // Prefer the EU/UK English site over en-US: when the URL already points at an
-        // English page (e.g. /en-US/...), try swapping the locale to en-EU then en-GB
-        // (path words are identical across English regions) and keep the first that exists.
+        // Prefer the EU/UK English site over other English regions, verified like any other
+        // candidate. PREFERRED_ENGLISH_LOCALES keeps this gate in sync with the scorer.
         try {
           const parsed = new URL(webLink);
           const segs = parsed.pathname.split("/").filter(Boolean);
           const localeIdx = localePrefixIndex(segs);
           const loc = localeIdx >= 0 ? segs[localeIdx].toLowerCase() : "";
-          if (loc && isEnglishSeg(loc) && !/^en-(eu|gb)$/.test(loc)) {
+          if (loc && isEnglishSegment(loc) && !PREFERRED_ENGLISH_LOCALES.test(loc) && timeLeft() > 0) {
             for (const target of ["en-EU", "en-GB"]) {
               const swapped = [...segs];
               swapped[localeIdx] = target;
               const candidate = `${parsed.origin}/${swapped.join("/")}${parsed.search}`;
               if (candidate === webLink) continue;
-              if (await verifyUrl(candidate)) {
-                console.log(`[weblink] product ${product.ID}: preferring EU English ${webLink} → ${candidate}`);
-                webLink = candidate;
+              if (timeLeft() <= 0) break;
+              const result = await acceptCandidate(candidate, { skipIfFinalUrl: webLink });
+              // Never downgrade a working English page: a locale swap that geo-redirects to a
+              // non-English page must not be adopted.
+              if (result && isEnglishResult(result.link, result.pageLang)) {
+                console.log(`[weblink] product ${product.ID}: preferring EU English ${webLink} → ${result.link}`);
+                webLink = result.link;
+                verification = result.verification;
+                pageLang = result.pageLang;
                 break;
               }
             }
           }
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
 
-        const updateReq = pool.request();
-        updateReq.input("ProductID", sql.Int, product.ID);
-        updateReq.input("WebLink", sql.NVarChar(2000), webLink.slice(0, 2000));
-        updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-        await updateReq.query(`
-          UPDATE dbo.Products
-          SET WebLink = @WebLink,
-              ModifiedOn = SYSUTCDATETIME(),
-              ModifiedBy = @ModifiedBy
-          WHERE ID = @ProductID
-        `);
+        // /{region}/{language}/ commerce sites (e.g. Keenfinity /tw/en/, /tw/tw/, /au/en/):
+        // normalize the language to English and prefer a European market. Each candidate is
+        // re-verified, so a non-existent variant is skipped and the original is kept.
+        try {
+          const parsed = new URL(webLink);
+          const rl = parseRegionLangPrefix(parsed.pathname.split("/").filter(Boolean));
+          const needsFix = rl && (rl.lang !== "en" || !EUROPEAN_REGIONS.has(rl.region));
+          if (needsFix && timeLeft() > 0) {
+            for (const candidate of buildRegionLangEnglishCandidates(webLink)) {
+              if (timeLeft() <= 0) break;
+              const result = await acceptCandidate(candidate, { skipIfFinalUrl: webLink });
+              // Adopt only when the swap lands on a genuinely English page that actually exists.
+              // Keenfinity bot-blocks fetches, so a guessed /eu/en/ URL can't be read/confirmed
+              // and acceptCandidate rejects it rather than inventing a 404.
+              if (result && isEnglishResult(result.link, result.pageLang)) {
+                console.log(`[weblink] product ${product.ID}: region/lang → English/EU ${webLink} → ${result.link}`);
+                webLink = result.link;
+                verification = result.verification;
+                pageLang = result.pageLang;
+                break;
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
 
-        return { productId: product.ID, webLink, status: "updated" };
-      }),
-    );
+        // Prefer a documentation section's landing page over a deep sub-tab: e.g. a chosen
+        // .../Air/hardware-specifications becomes .../Air (the product overview). The child page
+        // already established this doc section is the right product, so the parent (its general
+        // view) only needs to LOAD and be English — we don't re-run the product-match check,
+        // which would wrongly reject the general Overview for an accessory (e.g. a battery).
+        try {
+          const parent = parentDocSectionUrl(webLink);
+          if (parent && parent !== webLink && timeLeft() > 0) {
+            const fetched = await fetchPageCached(parent);
+            if (
+              fetched.kind === "ok" &&
+              !isHomepageLanding(parent, fetched.finalUrl) &&
+              !looksLikeSoftNotFound(fetched.page)
+            ) {
+              const parentLang = pageLanguage(fetched.page);
+              if (isEnglishResult(fetched.finalUrl, parentLang)) {
+                console.log(`[weblink] product ${product.ID}: doc sub-tab → landing ${webLink} → ${fetched.finalUrl}`);
+                webLink = fetched.finalUrl;
+                pageLang = parentLang;
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
 
-    const results: ProductResult[] = settled.map((outcome, i) => {
-      if (outcome.status === "fulfilled") return outcome.value;
-      console.error(`Failed to get web link for product ${products[i].ID}:`, outcome.reason);
-      return { productId: products[i].ID, webLink: null, status: "error" };
-    });
+        // English-only guard: after all normalization, if the page is still not English —
+        // by its URL language segment or its declared <html lang>/og:locale — reject it.
+        // Better "no link" than a foreign-language page.
+        if (!isEnglishResult(webLink, pageLang)) {
+          console.log(`[weblink] product ${product.ID}: only a non-English page found (${webLink}, lang=${pageLang || "?"}) — skipping`);
+          return {
+            ...base,
+            webLink: null,
+            status: "not_found",
+            note: "Only a non-English page was found; skipped (English pages only).",
+          };
+        }
 
-    const updatedCount = results.filter((r) => r.status === "updated").length;
-    const failedCount = results.filter((r) => r.status !== "updated").length;
+        return { ...base, webLink: webLink.slice(0, 2000), status: "previewed", verification };
+      } finally {
+        productSemaphore.release();
+      }
+    }),
+  );
 
-    return NextResponse.json({ ok: true, updatedCount, failedCount, results });
-  } catch (err) {
-    console.error("Failed to add web links", err);
-    const message = err instanceof Error ? err.message : "Server error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  const results: ProductResult[] = settled.map((outcome, i) => {
+    if (outcome.status === "fulfilled") return outcome.value;
+    console.error(`Failed to find web link for product ${products[i].ID}:`, outcome.reason);
+    return {
+      productId: products[i].ID,
+      brand: products[i].Brand,
+      partNumber: products[i].PartNumber,
+      modelNumber: products[i].ModelNumber,
+      oldWebLink: products[i].WebLink,
+      webLink: null,
+      status: "error",
+      note: outcome.reason instanceof Error ? outcome.reason.message : "Unexpected error.",
+    };
+  });
+
+  // Requested IDs that don't exist in dbo.Products must not silently vanish from the accounting.
+  for (const id of requestedIds) {
+    if (!foundIds.has(id)) {
+      results.push({
+        productId: id,
+        brand: null,
+        partNumber: null,
+        modelNumber: null,
+        oldWebLink: null,
+        webLink: null,
+        status: "error",
+        note: "Product not found in database.",
+      });
+    }
   }
+
+  const foundCount = results.filter((r) => r.status === "previewed").length;
+  const notFoundCount = results.filter((r) => r.status === "not_found").length;
+  const errorCount = results.filter((r) => r.status === "error").length;
+
+  return NextResponse.json({ ok: true, foundCount, notFoundCount, errorCount, results });
 }

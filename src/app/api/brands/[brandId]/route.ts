@@ -58,6 +58,7 @@ export async function GET(
       SoftOneCode: string | null;
       AVC4Name: string | null;
       EPLINCName: string | null;
+      WebDomain: string | null;
       Enabled: boolean | null;
       PartNumberSuffix: string | null;
       PartNumberPattern1: string | null;
@@ -71,6 +72,7 @@ export async function GET(
         NULLIF(LTRIM(RTRIM(SoftOneCode)), '') AS SoftOneCode,
         NULLIF(LTRIM(RTRIM(AVC4Name)), '') AS AVC4Name,
         NULLIF(LTRIM(RTRIM(EPLINCName)), '') AS EPLINCName,
+        NULLIF(LTRIM(RTRIM(WebDomain)), '') AS WebDomain,
         CAST(Enabled AS BIT) AS Enabled,
         NULLIF(LTRIM(RTRIM(PartNumberSuffix)), '') AS PartNumberSuffix,
         NULLIF(LTRIM(RTRIM(PartNumberPattern1)), '') AS PartNumberPattern1,

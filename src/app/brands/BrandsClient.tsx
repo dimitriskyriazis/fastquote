@@ -48,6 +48,7 @@ type BrandRow = {
   SoftOneCode: string | null;
   AVC4Name: string | null;
   EPLINCName: string | null;
+  WebDomain: string | null;
   PartNumberSuffix: string | null;
   PartNumberPattern1: string | null;
   PartNumberPattern2: string | null;
@@ -83,6 +84,7 @@ const BRAND_FIELD_LABELS: Record<string, string> = {
   Comment: "Comment",
   AVC4Name: "AVC4 Name",
   EPLINCName: "EP LINC Name",
+  WebDomain: "Web Domain",
   Enabled: "Enabled",
   PartNumberSuffix: "Part Number Suffix",
   PartNumberPattern1: "Part Number Pattern 1",
@@ -119,6 +121,10 @@ export default function BrandsClient() {
   );
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
+  // Guards against the synchronous onCellValueChanged echo fired by programmatic
+  // setDataValue calls (reverts); without it the revert re-enters handleCellEdit,
+  // issuing a spurious PATCH and registering an undo entry for the rejected value.
+  const suppressCellEditRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
   const [refreshToken, setRefreshToken] = useState(0);
   const [isAddBrandOpen, setIsAddBrandOpen] = useState(false);
@@ -272,6 +278,15 @@ export default function BrandsClient() {
         editable: canEditAdminOnly,
       },
       {
+        field: "WebDomain",
+        headerName: "Web Domain",
+        headerTooltip:
+          "Manufacturer website domain (e.g. extron.com). Used by Add web links; auto-filled when the AI resolves it.",
+        filter: "agTextColumnFilter",
+        width: 180,
+        editable: true,
+      },
+      {
         field: "SoftOneID",
         headerName: "ERP ID",
         filter: "agTextColumnFilter",
@@ -338,6 +353,7 @@ export default function BrandsClient() {
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    if (suppressCellEditRef.current) return;
     const field = event.colDef.field;
     if (!field || !(field in BRAND_FIELD_LABELS)) return;
     if (event.newValue === event.oldValue) return;
@@ -348,11 +364,16 @@ export default function BrandsClient() {
     const label = BRAND_FIELD_LABELS[field] ?? field;
     const revertValue = () => {
       if (event.node) {
+        // setDataValue synchronously re-fires onCellValueChanged; suppress the echo
+        // so the revert doesn't re-enter handleCellEdit.
+        suppressCellEditRef.current = true;
         try {
           event.node.setDataValue(field, event.oldValue);
           return;
         } catch {
           /* noop */
+        } finally {
+          suppressCellEditRef.current = false;
         }
       }
       event.api.refreshCells({ force: true });
@@ -369,6 +390,7 @@ export default function BrandsClient() {
           : normalizeTextValue(event.newValue);
 
     const submit = async () => {
+      let serverError = "";
       try {
         const res = await fetch("/api/brands", {
           method: "PATCH",
@@ -377,7 +399,8 @@ export default function BrandsClient() {
         });
         const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
         if (!res.ok || !payload?.ok) {
-          throw new Error(payload?.error ?? `Failed to update ${label}`);
+          serverError = typeof payload?.error === "string" ? payload.error.trim() : "";
+          throw new Error(serverError || `Failed to update ${label}`);
         }
         pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
           endpoint: "/api/brands",
@@ -391,7 +414,13 @@ export default function BrandsClient() {
         event.api?.refreshServerSide?.({ purge: false });
       } catch (err) {
         console.error(`Failed to update ${label}`, err);
-        showToastMessage(`Unable to update ${label}. Please try again.`, "error");
+        // Surface the server's validation message (e.g. WebDomain format errors)
+        // when it provided one; otherwise fall back to the generic toast.
+        const message =
+          err instanceof Error && serverError && err.message === serverError
+            ? serverError
+            : `Unable to update ${label}. Please try again.`;
+        showToastMessage(message, "error");
         revertValue();
       }
     };

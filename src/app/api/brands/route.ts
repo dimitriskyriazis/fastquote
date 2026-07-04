@@ -48,6 +48,7 @@ type BrandAuditRow = {
   SoftOneCode: string | null;
   AVC4Name: string | null;
   EPLINCName: string | null;
+  WebDomain: string | null;
   Enabled: boolean | number | null;
   PartNumberSuffix: string | null;
   PartNumberPattern1: string | null;
@@ -63,6 +64,7 @@ type NormalizedBrandUpdate = {
     | "SoftOneCode"
     | "AVC4Name"
     | "EPLINCName"
+    | "WebDomain"
     | "Enabled"
     | "PartNumberSuffix"
     | "PartNumberPattern1"
@@ -112,6 +114,21 @@ const normalizeNullableTextValue = (value: unknown): string | null => {
   return normalized.length > 0 ? normalized : null;
 };
 
+const normalizeWebDomainValue = (value: unknown): string | null => {
+  const normalized = normalizeNullableTextValue(value);
+  if (normalized == null) return null;
+  const domain = normalized
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/\/.*$/, "")
+    .toLowerCase();
+  if (domain.length === 0) return null;
+  if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/.test(domain)) {
+    throw new BrandUpdateError("WebDomain must be a bare domain like extron.com", 400);
+  }
+  return domain;
+};
+
 const normalizeOptionalIntInput = (value: unknown): number | null => {
   if (value == null) return null;
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -153,6 +170,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
       SoftOneCode,
       AVC4Name,
       EPLINCName,
+      WebDomain,
       Enabled,
       PartNumberSuffix,
       PartNumberPattern1,
@@ -169,6 +187,7 @@ const fetchBrandAuditRows = async (ids: number[]) => {
     SoftOneCode: normalizeTextOutput(row.SoftOneCode),
     AVC4Name: normalizeTextOutput(row.AVC4Name),
     EPLINCName: normalizeTextOutput(row.EPLINCName),
+    WebDomain: normalizeTextOutput(row.WebDomain),
     Enabled: normalizeBooleanOutput(row.Enabled),
     PartNumberSuffix: normalizeTextOutput(row.PartNumberSuffix),
     PartNumberPattern1: normalizeTextOutput(row.PartNumberPattern1),
@@ -323,6 +342,7 @@ export async function PATCH(req: NextRequest) {
             field !== "SoftOneCode" &&
             field !== "AVC4Name" &&
             field !== "EPLINCName" &&
+            field !== "WebDomain" &&
             field !== "Enabled" &&
             field !== "PartNumberSuffix" &&
             field !== "PartNumberPattern1" &&
@@ -398,6 +418,15 @@ export async function PATCH(req: NextRequest) {
         await request.query(`
           UPDATE dbo.Brands
           SET EPLINCName = @value,
+            ModifiedOn = SYSUTCDATETIME(),
+            ModifiedBy = @userId
+          WHERE ID = @brandId
+        `);
+      } else if (update.field === "WebDomain") {
+        request.input("value", sql.NVarChar(255), normalizeWebDomainValue(update.value));
+        await request.query(`
+          UPDATE dbo.Brands
+          SET WebDomain = @value,
             ModifiedOn = SYSUTCDATETIME(),
             ModifiedBy = @userId
           WHERE ID = @brandId
@@ -536,6 +565,7 @@ export async function DELETE(req: NextRequest) {
       SoftOneCode: string | null;
       AVC4Name: string | null;
       EPLINCName: string | null;
+      WebDomain: string | null;
       Enabled: boolean | number | null;
     }>(`
       DELETE FROM dbo.Brands
@@ -547,6 +577,7 @@ export async function DELETE(req: NextRequest) {
         DELETED.SoftOneCode,
         DELETED.AVC4Name,
         DELETED.EPLINCName,
+        DELETED.WebDomain,
         DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
@@ -576,6 +607,7 @@ export async function DELETE(req: NextRequest) {
         SoftOneCode: row.SoftOneCode,
         AVC4Name: row.AVC4Name,
         EPLINCName: row.EPLINCName,
+        WebDomain: row.WebDomain,
         Enabled: row.Enabled,
       })),
     });

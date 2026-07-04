@@ -1,16 +1,23 @@
 import { Semaphore } from "./concurrency";
 
 /**
- * Thin wrapper over the Serper Google Search API used to fetch a few result snippets as
- * extra context for product-description generation. Returns [] on any error or when no
- * SERPER_API_KEY is configured, so callers can treat web context as best-effort.
+ * Thin wrapper over the Serper Google Search API. One shared semaphore + retry/timeout
+ * policy for the whole app. Returns [] on any error or when no SERPER_API_KEY is
+ * configured, so callers can treat web search as best-effort.
  */
 const serperSemaphore = new Semaphore(5);
 
 export type SerperSnippet = { title: string; snippet: string };
+export type SerperOrganicResult = { link: string; title?: string; snippet?: string };
 
-export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]> => {
+/** Core search: returns the raw organic results (with links). */
+export const serperSearchOrganic = async (
+  q: string,
+  opts?: { num?: number; tag?: string },
+): Promise<SerperOrganicResult[]> => {
   if (!process.env.SERPER_API_KEY) return [];
+  const num = opts?.num ?? 5;
+  const tag = opts?.tag ?? "";
   const MAX_RETRIES = 3;
   const BASE_DELAY_MS = 1000;
   // Web context is best-effort. Without a timeout a single slow/hanging search holds a worker (and
@@ -31,7 +38,7 @@ export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]
             "X-API-KEY": process.env.SERPER_API_KEY ?? "",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ q, num: 5, hl: "en", gl: "us" }),
+          body: JSON.stringify({ q, num, hl: "en", gl: "us" }),
           signal: controller.signal,
         });
       } catch (err) {
@@ -44,12 +51,11 @@ export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]
 
       if (res.ok) {
         const data = (await res.json().catch(() => ({}))) as {
-          organic?: Array<{ title?: string; snippet?: string }>;
+          organic?: Array<{ link?: string; title?: string; snippet?: string }>;
         };
         return (data.organic ?? [])
-          .slice(0, 3)
-          .map((r) => ({ title: r.title ?? "", snippet: r.snippet ?? "" }))
-          .filter((r) => r.title || r.snippet);
+          .filter((r): r is { link: string; title?: string; snippet?: string } => typeof r.link === "string")
+          .map((r) => ({ link: r.link, title: r.title, snippet: r.snippet }));
       }
 
       if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES - 1) {
@@ -66,4 +72,13 @@ export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]
   } finally {
     serperSemaphore.release();
   }
+};
+
+/** Snippet projection used for product-description generation (original API of this module). */
+export const serperSearch = async (q: string, tag = ""): Promise<SerperSnippet[]> => {
+  const organic = await serperSearchOrganic(q, { num: 5, tag });
+  return organic
+    .slice(0, 3)
+    .map((r) => ({ title: r.title ?? "", snippet: r.snippet ?? "" }))
+    .filter((r) => r.title || r.snippet);
 };

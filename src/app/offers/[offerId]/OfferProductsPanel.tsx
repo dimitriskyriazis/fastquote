@@ -63,6 +63,8 @@ import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCatego
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import { clearPartModelNumberUpper } from '../../../lib/partModelNumber';
+import { buildAddWebLinksMenuItem } from '../../../lib/addWebLinksClient';
+import { coerceRoles, roleHasPermission } from '../../../lib/roles';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
 } from './products/MatchRequestedProductsModal';
@@ -107,7 +109,6 @@ import {
   decimalFormatter,
   DEFAULT_ROW_HEIGHT,
   MAX_CATEGORY_DEPTH,
-  ADD_WEBLINK_MAX_PRODUCTS,
   ENHANCE_DESC_MAX_PRODUCTS,
   readCollapsedCategoryPathsFromCookie,
   writeCollapsedCategoryPathsToCookie,
@@ -4501,59 +4502,6 @@ const requestedColumnDefsMap = useMemo(
     ));
   }, [dataEndpoint]);
 
-  const fetchAllFilteredOfferProductIds = useCallback(async (): Promise<number[]> => {
-    const api = gridApiRef.current;
-    if (!api || api.isDestroyed?.()) {
-      throw new Error('Grid is not ready yet.');
-    }
-    const filterModel = api.getFilterModel?.() ?? {};
-    const sortModel = api.getColumnState?.()
-      ?.filter((col) => col.sort === 'asc' || col.sort === 'desc')
-      .map((col) => ({ colId: col.colId, sort: col.sort as 'asc' | 'desc' })) ?? [];
-    const quickFilterText = typeof lastServerRequestRef.current?.quickFilterText === 'string'
-      ? lastServerRequestRef.current.quickFilterText
-      : null;
-    const request: Record<string, unknown> = {
-      startRow: 0,
-      endRow: 1000,
-      allRows: true,
-      filterModel,
-      sortModel,
-    };
-    if (quickFilterText && quickFilterText.trim().length > 0) {
-      request.quickFilterText = quickFilterText.trim();
-    }
-    // Capture before any await: cleanup paths may deselectAll() while the
-    // request is in flight, which would erase the user's deselections.
-    const deselectedIds = getServerSideDeselectedRowIds(api);
-
-    const response = await fetch(dataEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        request,
-        fields: ['ProductID', 'OfferDetailID'],
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok?: boolean; error?: string; rows?: Array<Record<string, unknown>> }
-      | null;
-    if (!response.ok || !payload?.ok || !Array.isArray(payload.rows)) {
-      throw new Error(payload?.error ?? `Failed to load selected rows (status ${response.status})`);
-    }
-    const filteredRows = deselectedIds.size === 0
-      ? payload.rows
-      : payload.rows.filter((row) => {
-          const id = (row as { OfferDetailID?: unknown })?.OfferDetailID;
-          return id == null || !deselectedIds.has(String(id));
-        });
-    return Array.from(new Set(
-      filteredRows
-        .map((row) => normalizeProductId((row as { ProductID?: unknown })?.ProductID ?? null))
-        .filter((id): id is number => id != null),
-    ));
-  }, [dataEndpoint]);
-
   /**
    * Fetches all filtered rows that are actual products (not comments, categories, or services)
    * and returns them as {productId, offerDetailId} pairs — both values from the SAME row, so
@@ -6637,115 +6585,38 @@ const requestedColumnDefsMap = useMemo(
       })
       .filter((id): id is number => id !== null);
 
-    if (targetIds.length > 0 || isSelectAllActive) {
-      const productsWithLinks = targetProducts.filter((p) => !!p.WebLink);
-      const webLinkItem: MenuItemDef = {
-        name: isSelectAllActive
-          ? 'Add web links (all filtered)'
-          : targetIds.length > 1
-            ? `Add web links (${targetIds.length})`
-            : 'Add web link',
-        icon: addWebLinkMenuIcon,
-        disabled: isAddingWebLinks,
-        action: async () => {
-          let idsToProcess: number[] = [];
-          if (isSelectAllActive) {
-            const confirmed = await showConfirmDialog({
-              title: 'Add web links for all filtered products',
-              message: 'This will overwrite any existing web links for the filtered rows. Continue?',
-              confirmLabel: 'Continue',
-              cancelLabel: 'Cancel',
-            });
-            if (!confirmed) return;
-            try {
-              idsToProcess = await fetchAllFilteredOfferProductIds();
-            } catch (err) {
-              showToastMessage(
-                err instanceof Error ? err.message : 'Failed to resolve selected products.',
-                'error',
-              );
-              return;
-            }
-          } else {
-            idsToProcess = [...targetIds];
-            if (productsWithLinks.length > 0) {
-              const choice = await showMultiChoiceDialog({
-                title: 'Existing web links found',
-                message:
-                  productsWithLinks.length === targetIds.length
-                    ? `All ${targetIds.length} selected product(s) already have a web link. Overwrite them?`
-                    : `${productsWithLinks.length} of ${targetIds.length} selected product(s) already have a web link.`,
-                choices: [
-                  { label: 'Overwrite all', value: 'overwrite' },
-                  { label: 'Skip existing', value: 'skip' },
-                  { label: 'Cancel', value: 'cancel' },
-                ],
-              });
-              if (!choice || choice === 'cancel') return;
-              if (choice === 'skip') {
-                idsToProcess = targetProducts
-                  .filter((p) => !p.WebLink)
-                  .map((p) => {
-                    const raw = p.ProductID;
-                    if (typeof raw === 'number' && Number.isInteger(raw)) return raw;
-                    if (typeof raw === 'string') {
-                      const parsed = Number.parseInt(raw.trim(), 10);
-                      if (Number.isInteger(parsed)) return parsed;
-                    }
-                    return null;
-                  })
-                  .filter((id): id is number => id !== null);
-              }
-            }
-          }
-
-          if (idsToProcess.length === 0) {
-            showToastMessage('No products selected for web link lookup.', 'info');
-            return;
-          }
-          if (idsToProcess.length > ADD_WEBLINK_MAX_PRODUCTS) {
-            showToastMessage(`Cannot process more than ${ADD_WEBLINK_MAX_PRODUCTS} products at once. Please filter first.`, 'error');
-            return;
-          }
-
-          setIsAddingWebLinks(true);
-          const dismissLoadingToast = showToastMessage('Searching for web links\u2026', 'info', 60000);
-          try {
-            const res = await fetch('/api/products/add-weblinks', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ productIds: idsToProcess }),
-            });
-            const data = (await res.json()) as {
-              ok: boolean;
-              updatedCount?: number;
-              failedCount?: number;
-              error?: string;
-            };
-            dismissLoadingToast();
-            if (data.ok) {
-              const msg = data.failedCount
-                ? `Updated ${data.updatedCount} web link(s), ${data.failedCount} could not be found.`
-                : `Updated ${data.updatedCount} web link(s).`;
-              showToastMessage(msg, 'success');
-              // Mark that the next model-updated cycle should force-refresh cells:
-              // WebLink changed in the DB but PartNumber/ModelNumber (the cell
-              // field values) didn't, so AG Grid would otherwise skip re-rendering
-              // those cells and the new hyperlinks wouldn't appear until a hard reload.
-              pendingForceRefreshCellsRef.current = true;
-              refreshOfferProductGrid(null, { purge: true });
-              router.refresh();
-            } else {
-              showToastMessage(data.error ?? 'Failed to find web links. Please try again.', 'error');
-            }
-          } catch {
-            dismissLoadingToast();
-            showToastMessage('Failed to find web links. Please try again.', 'error');
-          } finally {
-            setIsAddingWebLinks(false);
-          }
-        },
+    const canUseAiFeatures = roleHasPermission(coerceRoles([...roles]), 'manageBrandsSuppliers');
+    if (canUseAiFeatures && (targetIds.length > 0 || isSelectAllActive)) {
+      const refreshAfterWebLinks = () => {
+        // Mark that the next model-updated cycle should force-refresh cells:
+        // WebLink changed in the DB but PartNumber/ModelNumber (the cell
+        // field values) didn't, so AG Grid would otherwise skip re-rendering
+        // those cells and the new hyperlinks wouldn't appear until a hard reload.
+        pendingForceRefreshCellsRef.current = true;
+        refreshOfferProductGrid(null, { purge: true });
+        router.refresh();
       };
+      const webLinkItem = buildAddWebLinksMenuItem({
+        targetProducts,
+        isSelectAllActive,
+        // fetchAllFilteredProductPairs excludes comments, categories, and
+        // services server-side; dedupe to unique product IDs.
+        fetchAllFilteredProductIds: async () =>
+          Array.from(new Set((await fetchAllFilteredProductPairs()).map((p) => p.productId))),
+        busy: isAddingWebLinks,
+        setBusy: setIsAddingWebLinks,
+        icon: addWebLinkMenuIcon,
+        onApplied: refreshAfterWebLinks,
+        registerUndo: (revert, appliedCount) => {
+          pushUndo({
+            label: `Add web links (${appliedCount})`,
+            undo: async () => {
+              await revert();
+              refreshAfterWebLinks();
+            },
+          });
+        },
+      }) as MenuItemDef | null;
 
       const targetOfferDetailIds = targetProducts
         .map((p) => {
@@ -7045,7 +6916,7 @@ const requestedColumnDefsMap = useMemo(
       const aiSubmenu: MenuItemDef = {
         name: 'AI features',
         icon: enhanceDescriptionMenuIcon,
-        subMenu: [webLinkItem, enhanceDescItem, fixCapItem],
+        subMenu: webLinkItem ? [webLinkItem, enhanceDescItem, fixCapItem] : [enhanceDescItem, fixCapItem],
       };
       const aiDeleteIdx = findDeleteMenuItemIndex(items);
       items.splice(aiDeleteIdx >= 0 ? aiDeleteIdx : items.length, 0, aiSubmenu);
@@ -7054,7 +6925,6 @@ const requestedColumnDefsMap = useMemo(
     return withSelectionClear(items);
   }, [
     fetchAllFilteredOfferDetailIds,
-    fetchAllFilteredOfferProductIds,
     fetchAllFilteredProductPairs,
     isAddingWebLinks,
     isEnhancingDescriptions,

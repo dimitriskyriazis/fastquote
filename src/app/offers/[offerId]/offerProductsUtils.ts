@@ -39,7 +39,6 @@ export const decimalFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
 });
 export const DEFAULT_ROW_HEIGHT = 32;
 export const MAX_CATEGORY_DEPTH = 3;
-export const ADD_WEBLINK_MAX_PRODUCTS = 200;
 export const ENHANCE_DESC_MAX_PRODUCTS = 200;
 
 const COLLAPSED_CATEGORIES_COOKIE_NAME = 'offer_products_collapsed';
