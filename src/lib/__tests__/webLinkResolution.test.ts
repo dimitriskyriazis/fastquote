@@ -16,17 +16,17 @@ import {
   urlDeclaresEnglish,
   isEnglishResult,
   pageLanguage,
-  isUuidLikeSegment,
   isSupportCommunityPath,
   isArticleOrNewsPath,
   hasHeadlineSlug,
   looksLikeArticlePage,
-  scoreCandidateUrl,
   extractPageContent,
   looksLikeSoftNotFound,
   isHomepageLanding,
   pageMatchesProduct,
   extractPartPrefix,
+  stripPartOrderSuffix,
+  extractSpecTokens,
   chunkArray,
 } from "../webLinkResolution";
 
@@ -120,14 +120,6 @@ describe("localePrefixIndex", () => {
     expect(localePrefixIndex(["av", "receivers"])).toBe(-1);
     expect(localePrefixIndex(["de", "produkte"])).toBe(0); // real language code still wins
     expect(localePrefixIndex(["en-US", "products"])).toBe(0);
-  });
-});
-
-describe("isUuidLikeSegment", () => {
-  it("recognises GUIDs and pipe-joined GUID filters", () => {
-    expect(isUuidLikeSegment("327c3621-db53-4c33-9c4a-1234567890ab")).toBe(true);
-    expect(isUuidLikeSegment("aaa|bbb")).toBe(true);
-    expect(isUuidLikeSegment("ecom-item")).toBe(false);
   });
 });
 
@@ -291,88 +283,6 @@ describe("looksLikeArticlePage", () => {
   });
 });
 
-describe("scoreCandidateUrl", () => {
-  const ids = { modelNumber: "", partNumber: "911.1520.900", partPrefix: "" };
-
-  it("no longer penalises the correct page when separators differ (dot vs hyphen)", () => {
-    // Old behaviour: dot-vs-hyphen mismatch missed every bonus AND triggered the -8
-    // wrong-product penalty, dropping the correct page below the score cutoff.
-    const score = scoreCandidateUrl("https://biamp.com/ecom-item/911-1520-900", ids);
-    expect(score).toBeGreaterThan(0);
-  });
-
-  it("still penalises a URL carrying a different product code", () => {
-    const score = scoreCandidateUrl("https://biamp.com/ecom-item/911-9999-111", ids);
-    expect(score).toBeLessThan(0);
-  });
-
-  it("scores query-string product URLs", () => {
-    const score = scoreCandidateUrl("https://example.com/product.php?sku=911.1520.900", ids);
-    expect(score).toBeGreaterThan(0);
-  });
-
-  it("prefers EU/UK English locales and penalises non-English", () => {
-    const base = { modelNumber: "sbc220", partNumber: "", partPrefix: "" };
-    const enGb = scoreCandidateUrl("https://www.shure.com/en-GB/products/accessories/sbc220", base);
-    const enUs = scoreCandidateUrl("https://www.shure.com/en-US/products/accessories/sbc220", base);
-    const itIt = scoreCandidateUrl("https://www.shure.com/it-IT/prodotti/accessori/sbc220", base);
-    expect(enGb).toBeGreaterThan(enUs);
-    expect(enUs).toBeGreaterThan(itIt);
-  });
-
-  it("prefers European-English over other-region English over non-English in /{region}/{lang}/ URLs", () => {
-    const base = { modelNumber: "", partNumber: "F.01U.298.720", partPrefix: "" };
-    const euEn = scoreCandidateUrl("https://commerce.keenfinity.tech/de/en/Call-station/p/F.01U.298.720/", base);
-    const twEn = scoreCandidateUrl("https://commerce.keenfinity.tech/tw/en/Call-station/p/F.01U.298.720/", base);
-    const twTw = scoreCandidateUrl("https://commerce.keenfinity.tech/tw/tw/Call-station/p/F.01U.298.720/", base);
-    expect(euEn).toBeGreaterThan(twEn);
-    expect(twEn).toBeGreaterThan(twTw);
-  });
-
-  it("penalises retail store/shop subdomains so a doc/spec page wins", () => {
-    const ids = { modelNumber: "aw-ot-pb", partNumber: "AW-OT-PB", partPrefix: "" };
-    const store = scoreCandidateUrl("https://store.haivision.com/products/aw-ot-pb", ids);
-    const doc = scoreCandidateUrl("https://doc.haivision.com/Transmitters/5.4/Air/aw-ot-pb", ids);
-    expect(doc).toBeGreaterThan(store);
-  });
-
-  it("does not misfire the wrong-code penalty on UUID category segments", () => {
-    const score = scoreCandidateUrl(
-      "https://products.biamp.com/product-details/-/o/category/327C3621-DB53-4C33-9C4A-1234567890AB/ecom-item/911-1520-900",
-      ids,
-    );
-    expect(score).toBeGreaterThan(0);
-  });
-
-  it("drops Grass Valley community support pages below the cutoff, even when the URL carries the part number", () => {
-    // The portalproduct record URL contains the normalized part number (1-0500400-0000 →
-    // 105004000000), which would otherwise earn +6; the -20 support-community penalty keeps it
-    // below the score>-5 cutoff so a general main-site page is preferred instead.
-    const gvIds = { modelNumber: "ldx c110", partNumber: "1-0500400-0000", partPrefix: "" };
-    const portalRecord = scoreCandidateUrl(
-      "https://community.grassvalley.com/support/s/portalproduct/a2JPo000003qEUgMAM/105004000000",
-      gvIds,
-    );
-    const article = scoreCandidateUrl(
-      "https://community.grassvalley.com/support/s/article/ldx-c110-release-notes",
-      gvIds,
-    );
-    expect(portalRecord).toBeLessThanOrEqual(-5);
-    expect(article).toBeLessThanOrEqual(-5);
-    // A real main-site product page still scores well above the cutoff.
-    const mainSite = scoreCandidateUrl("https://www.grassvalley.com/products/cameras/ldx-c110/", gvIds);
-    expect(mainSite).toBeGreaterThan(portalRecord);
-  });
-
-  it("does not penalise product slugs that merely contain listing words", () => {
-    const base = { modelNumber: "sl200", partNumber: "", partPrefix: "" };
-    const slugScore = scoreCandidateUrl("https://brand.com/products/searchlight-sl200", base);
-    const searchScore = scoreCandidateUrl("https://brand.com/products/search", base);
-    expect(slugScore).toBeGreaterThan(searchScore);
-    expect(slugScore).toBeGreaterThan(0);
-  });
-});
-
 describe("extractPageContent", () => {
   const html = `
     <html><head>
@@ -509,6 +419,45 @@ describe("extractPartPrefix", () => {
   it("returns empty for short or separator-free part numbers", () => {
     expect(extractPartPrefix("910-001390-00")).toBe(""); // "910" too short to be meaningful
     expect(extractPartPrefix("SBC220")).toBe("");
+  });
+});
+
+describe("stripPartOrderSuffix", () => {
+  it("strips a trailing pure-alpha order suffix so the core matches the manufacturer's title/URL", () => {
+    expect(stripPartOrderSuffix("8660.034-RT")).toBe("8660.034"); // Rittal titles it "8660034"
+    expect(stripPartOrderSuffix("12345-ABC")).toBe("12345");
+  });
+  it("leaves numeric/band variant suffixes and short cores intact", () => {
+    expect(stripPartOrderSuffix("PVA-2P500")).toBe(""); // "2P500" is not pure-alpha
+    expect(stripPartOrderSuffix("BLX14RE/SM31-K3E")).toBe(""); // "K3E" has a digit
+    expect(stripPartOrderSuffix("SM58")).toBe(""); // nothing to strip
+    expect(stripPartOrderSuffix("SM57-LCE")).toBe(""); // core "SM57" <5 chars; extractPartPrefix covers it
+  });
+});
+
+describe("extractSpecTokens", () => {
+  it("pulls the distinguishing dimensions from a Rittal-style description", () => {
+    const tokens = extractSpecTokens("VX Base/plinth trim panel, side, H: 100 mm, for D: 800 mm");
+    expect(tokens).toContain("100mm");
+    expect(tokens).toContain("800mm");
+  });
+  it("captures NxM configuration codes and standalone wattage/voltage", () => {
+    expect(extractSpecTokens("Power amplifier, 2x500W")).toContain("2x500");
+    expect(extractSpecTokens("500W power amplifier")).toContain("500w");
+    expect(extractSpecTokens("230V 50Hz supply")).toEqual(expect.arrayContaining(["230v", "50hz"]));
+  });
+  it("captures lengths, rack units, and channel/port counts", () => {
+    expect(extractSpecTokens("5m U/UTP CAT6 patch cable")).toContain("5m");
+    expect(extractSpecTokens("Rack tray 1U")).toContain("1u");
+    expect(extractSpecTokens("8-channel Dante interface")).toContain("8-channel");
+    expect(extractSpecTokens("16 port PoE switch")).toContain("16port");
+  });
+  it("returns nothing when the description has no distinctive spec (falls back to type match)", () => {
+    expect(extractSpecTokens("Cardioid dynamic vocal microphone")).toEqual([]);
+    expect(extractSpecTokens("")).toEqual([]);
+  });
+  it("does not treat a family code like CAT6 as a spec", () => {
+    expect(extractSpecTokens("CAT6 U/UTP patch cable")).not.toContain("6");
   });
 });
 

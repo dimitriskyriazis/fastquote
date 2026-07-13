@@ -21,6 +21,19 @@ describe("buildProposerPrompt", () => {
     expect(prompt).toContain("identify the manufacturer's official website");
     expect(prompt).toContain("official_domain");
   });
+  it("tells the model to search the base part number when a core is supplied", () => {
+    const prompt = buildProposerPrompt(
+      { brand: "Rittal", partNumber: "8660.034-RT", partNumberCore: "8660.034", modelNumber: "", description: "trim panel" },
+      "rittal.com",
+    );
+    expect(prompt).toContain("Base part number (search with this): 8660.034");
+    expect(prompt).toContain("use the BASE part number");
+  });
+  it("omits the base-part-number guidance when there is no suffix", () => {
+    const prompt = buildProposerPrompt(product, "commerce.keenfinity.tech"); // no partNumberCore
+    expect(prompt).not.toContain("Base part number");
+    expect(prompt).not.toContain("use the BASE part number");
+  });
 });
 
 describe("parseProposerReply", () => {

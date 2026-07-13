@@ -193,14 +193,7 @@ export const localePrefixIndex = (segs: string[]): number => {
   return -1;
 };
 
-// --- URL scoring ----------------------------------------------------------
-
-/** UUID-ish path segments (biamp-style GUID category filters) must not trigger the
- *  wrong-product-code penalty. */
-export const isUuidLikeSegment = (s: string): boolean =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s) ||
-  s.includes("|") ||
-  (s.length > 20 && /^[0-9a-f\-]+$/.test(s));
+// --- URL classification -----------------------------------------------------
 
 // Salesforce-community support app (e.g. community.grassvalley.com/support/s/...). Covers both
 // the "portalproduct" service records (bare product/part + service-status fields, no specs) and
@@ -214,98 +207,6 @@ export const isSupportCommunityPath = (path: string): boolean => /\/support\/s\/
 export const isArticleOrNewsPath = (path: string): boolean =>
   isSupportCommunityPath(path) ||
   /\/article\/|\/articles\/|\/news\/|\/blog\/|\/press(-release)?\/|\/community\//.test(path);
-
-export type ScoreIdentifiers = {
-  modelNumber: string;
-  partNumber: string;
-  /** Part-number prefix (e.g. Z5012 from Z5012.500); empty string disables the prefix bonus. */
-  partPrefix: string;
-};
-
-/**
- * Score a candidate URL — higher is better. Prefers URLs whose path (or query string)
- * contains the model/part number over generic category pages; penalises staging hosts,
- * shop/docs paths, non-English locales and URLs that carry a *different* product code.
- */
-export const scoreCandidateUrl = (link: string, ids: ScoreIdentifiers): number => {
-  let score = 0;
-  try {
-    const parsed = new URL(link);
-    const host = parsed.hostname.toLowerCase();
-    const path = parsed.pathname.toLowerCase();
-    const pathAndQuery = `${path}${parsed.search.toLowerCase()}`;
-    const segments = path.split("/").filter(Boolean);
-    const haystack = normalizeHaystack(pathAndQuery);
-
-    if (/stage|staging|auth|dev|test|sandbox/.test(host)) score -= 10;
-    if (/shop|cart|brand-filter|checkout|account/.test(path)) score -= 6;
-    // Retail/purchase subdomains (store.brand.com, shop.brand.com) are buy-now pages; prefer
-    // the product/spec/doc page when one exists. Penalise, don't reject (a store page beats none).
-    if (/^(store|shop|shops|buy|webshop|e-?shop|e-?store)$/.test(host.split(".")[0])) score -= 5;
-
-    if (ids.modelNumber && containsIdentifier(haystack, normalizeIdentifier(ids.modelNumber))) {
-      score += 5;
-    }
-    if (ids.partNumber) {
-      const normPart = normalizeIdentifier(ids.partNumber);
-      const normPrefix = ids.partPrefix ? normalizeIdentifier(ids.partPrefix) : "";
-      if (pathAndQuery.includes(ids.partNumber.toLowerCase())) score += 6;
-      else if (containsIdentifier(haystack, normPart)) score += 3;
-      else if (normPrefix && containsIdentifier(haystack, normPrefix)) score += 4;
-      else {
-        // If a different numeric product code appears in the URL path, this is likely the
-        // wrong product. Skip UUID-like segments to avoid false positives from GUID-based
-        // category filters.
-        const partPattern = /\d{3}[.\-]\d{4}[.\-]\d{3}|\d{6,}/g;
-        const pathCodes = segments
-          .filter((s) => !isUuidLikeSegment(s))
-          .flatMap((s) => s.match(partPattern) ?? []);
-        if (pathCodes.length > 0 && !pathCodes.some((c) => normalizeIdentifier(c) === normPart)) {
-          score -= 8;
-        }
-      }
-    }
-
-    if (segments.length >= 2) score += 1; // deeper path = more specific page
-    // Penalise listing-page slugs. Whole-word/anchored match — a product slug like
-    // "searchlight-sl200" must not be mistaken for a /search endpoint.
-    const lastSeg = segments[segments.length - 1] ?? "";
-    if (/^(search|results|catalog|category)$/.test(lastSeg) || /products?$/.test(lastSeg)) score -= 4;
-
-    // Prefer English URLs over other languages, and EU/UK English over en-US
-    // (the company is EU-based, so regional pricing/availability is correct there).
-    // Check the /{region}/{language}/ shape FIRST — its region segment (e.g. "de" in /de/en/) is
-    // also a valid single-locale language code, so single-locale detection would misread it.
-    const rl = parseRegionLangPrefix(segments);
-    if (rl) {
-      if (rl.lang !== "en") score -= 3;
-      else if (EUROPEAN_REGIONS.has(rl.region)) score += 2;
-      // English on a non-European region → neutral
-    } else {
-      const localeIdx = localePrefixIndex(segments);
-      const locSeg = localeIdx >= 0 ? segments[localeIdx].toLowerCase() : null;
-      if (locSeg) {
-        if (!isEnglishSegment(locSeg)) score -= 3;
-        else if (PREFERRED_ENGLISH_LOCALES.test(locSeg)) score += 2;
-        else if (locSeg === "en") score += 1;
-      }
-    }
-
-    // Support-community records, knowledge-base articles, news and blog posts are never the
-    // product page. Penalise hard enough to drop below the tryVerifyCandidates cutoff even when
-    // the part number is in the slug (these routinely carry it) — otherwise a support record or
-    // "release notes" page outscores a real/general product page.
-    if (isArticleOrNewsPath(path) || hasHeadlineSlug(link)) {
-      score -= 20;
-    } else if (/\/docs\/|\/guide\/|\/guides\/|\/support\/|\/kb\/|\/faq\/|\/help\/|\/articulos\//.test(path)) {
-      // Other documentation/support paths — prefer product listing/spec pages.
-      score -= 5;
-    }
-  } catch {
-    /* unparseable URL scores 0 */
-  }
-  return score;
-};
 
 // --- Page-content extraction and verification ------------------------------
 
@@ -566,6 +467,50 @@ export const parentDocSectionUrl = (url: string): string | null => {
 export const extractPartPrefix = (partNumber: string): string => {
   const prefix = partNumber.split(/[.\-]/)[0] ?? "";
   return prefix.length >= 4 && prefix !== partNumber ? prefix : "";
+};
+
+/**
+ * The part number with a trailing order/variant suffix removed — e.g. Rittal "8660.034-RT" →
+ * "8660.034" (manufacturer pages title it "8660034"), Shure "SM57-LCE" → "SM57". Only strips a
+ * short PURE-ALPHA suffix after the final hyphen (so numeric variants like "PVA-2P500" and
+ * band codes like "-K3E" are left intact), and only when the core is still specific (≥5
+ * normalized chars). Returns "" when nothing safe to strip. Matching the core lands on the
+ * exact product or its family page, which is what we want. */
+export const stripPartOrderSuffix = (partNumber: string): string => {
+  const core = partNumber.replace(/-[A-Za-z]{1,5}$/, "");
+  return core !== partNumber && normalizeIdentifier(core).length >= 5 ? core : "";
+};
+
+/**
+ * Distinguishing spec tokens from a product description — the measurements/ratings/counts that
+ * separate one variant from its siblings (e.g. "H:100mm", "D:800mm", "2x500W", "5m", "8-channel",
+ * "1U"). Used to make the LLM verification judge reject a same-TYPE page at the wrong SIZE/rating,
+ * which a type-only judgement would otherwise accept. Returns [] when the description carries no
+ * such tokens (then verification falls back to type matching, as before).
+ */
+export const extractSpecTokens = (description: string): string[] => {
+  if (!description) return [];
+  const tokens = new Set<string>();
+  const add = (s: string) => tokens.add(s.replace(/\s+/g, "").replace(/×/g, "x").toLowerCase());
+  // Not preceded by an alphanumeric — so "6" inside "CAT6" or a part number isn't treated as a spec.
+  const NB = "(?<![A-Za-z0-9.])";
+  // NxM configuration codes: "2x500", "4×8" (may carry a trailing unit like "2x500W").
+  for (const m of description.matchAll(new RegExp(`${NB}\\d+\\s?[x×]\\s?\\d+`, "gi"))) add(m[0]);
+  // number + unit ("mm" precedes "m" so "800 mm" captures "mm"); "u" handled separately below.
+  const unit = new RegExp(
+    `${NB}\\d+(?:[.,]\\d+)?\\s?(mm|cm|kw|kv|kg|khz|mhz|ghz|hz|db|inch(?:es)?|ohms?|ω|meters?|metres?|w|v|a|m)\\b`,
+    "gi",
+  );
+  for (const m of description.matchAll(unit)) add(m[0]);
+  // Rack units, attached only ("1U", "3U") — not "U/UTP".
+  for (const m of description.matchAll(new RegExp(`${NB}\\d+u\\b`, "gi"))) add(m[0]);
+  // "8-channel", "16 port", "3-way" counts.
+  for (const m of description.matchAll(
+    new RegExp(`${NB}\\d+[-\\s]?(channels?|ports?|way|cores?|pins?|poles?|bands?|zones?)\\b`, "gi"),
+  )) {
+    add(m[0]);
+  }
+  return Array.from(tokens).slice(0, 10);
 };
 
 export const chunkArray = <T>(items: T[], size: number): T[][] => {

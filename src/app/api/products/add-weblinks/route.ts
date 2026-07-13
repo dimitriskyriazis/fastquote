@@ -19,7 +19,6 @@ import {
   EUROPEAN_REGIONS,
   parseRegionLangPrefix,
   buildRegionLangEnglishCandidates,
-  scoreCandidateUrl,
   extractPageContent,
   looksLikeSoftNotFound,
   isHomepageLanding,
@@ -32,6 +31,8 @@ import {
   urlLanguageIsNonEnglish,
   parentDocSectionUrl,
   extractPartPrefix,
+  stripPartOrderSuffix,
+  extractSpecTokens,
   identifierAppearsInText,
   type ExtractedPage,
   type WebLinkStatus,
@@ -467,6 +468,11 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
           return { ...base, webLink: null, status: "not_found", note: "Product has no searchable data." };
         }
 
+        // partCore drops a trailing order suffix ("8660.034-RT" → "8660.034"). Used both as the
+        // preferred SEARCH term (the suffix is usually absent from manufacturer pages and skews
+        // search toward distributors) and as an extra match identifier during verification.
+        const partCore = stripPartOrderSuffix(partNumber);
+
         // Step 1: propose candidate URLs. One agentic web-search call per product finds
         // candidate product pages (scoped to the curated Brands.WebDomain when set) and, when
         // we don't have a domain, identifies the manufacturer's official site by searching.
@@ -481,7 +487,7 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
             proposal = await proposeWebLinks(
               openai,
               WEBLINK_SEARCH_MODEL,
-              { brand, partNumber, modelNumber, description },
+              { brand, partNumber, partNumberCore: partCore, modelNumber, description },
               domain,
             );
           } finally {
@@ -514,8 +520,10 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
         console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain}${curatedDomain ? " (curated)" : ""}`);
 
         const partPrefix = extractPartPrefix(partNumber);
-        const identifiers = [partNumber, modelNumber, partPrefix].filter(Boolean);
-        const scoreIds = { modelNumber, partNumber, partPrefix };
+        const identifiers = [partNumber, partCore, modelNumber, partPrefix].filter(Boolean);
+        // Distinguishing specs (sizes/ratings/counts) so the LLM judge can reject a same-type
+        // page at the wrong variant (e.g. a 600mm trim panel when we want the 800mm one).
+        const specTokens = extractSpecTokens(description);
 
         // Per-product page cache: locale/EU swaps and overlapping tiers must not re-fetch
         // the same URL.
@@ -587,6 +595,16 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
               `In particular: if the product description is an ACCESSORY (bracket, mount, adapter, cable,`,
               `case, rigging, cover), the page must be about that accessory itself — a page whose title`,
               `names the main product the accessory attaches to is NO.`,
+              ...(specTokens.length
+                ? [
+                    ``,
+                    `This product has these distinguishing specifications: ${specTokens.join(", ")}.`,
+                    `Manufacturers list many size/rating/length/configuration variants of the same product.`,
+                    `The page must be for the variant matching these specs (a page/section covering this exact`,
+                    `variant, or a family page that lists it). If the page is the same product TYPE but a`,
+                    `DIFFERENT size, rating, wattage, length, channel/port count, or configuration, reply NO.`,
+                  ]
+                : []),
               ``,
               `Reply YES or NO only.`,
             ].join("\n"));
@@ -645,18 +663,22 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
             console.log(`[weblink] product ${product.ID}: url=${url} looks like a soft 404 — rejected`);
             return null;
           }
-          // News/blog/press posts often carry the model number in their title/slug (so they'd
-          // pass the "strong" content match) but are never the product page — reject outright.
+          const lang = pageLanguage(fetched.page);
+          const matchStrength = pageMatchStrength(fetched.page, fetched.finalUrl, identifiers);
+          // A page whose title/meta/URL carries the exact part number is definitively the
+          // product page — accept it even if og:type says "article" (many product CMSs default
+          // og:type=article, which would otherwise wrongly reject legit pages, e.g. Rittal).
+          if (matchStrength === "strong") {
+            console.log(`[weblink] product ${product.ID}: url=${url} verified by content`);
+            return { link: fetched.finalUrl, verification: "content", pageLang: lang };
+          }
+          // No strong identifier match → now the article/blog signal matters. News/blog/press
+          // posts carry the model number in body text but are never the product page. (URL-path
+          // and headline-slug articles were already dropped by domainFilter; this catches the
+          // og:type/blog cases.)
           if (looksLikeArticlePage(fetched.page, fetched.finalUrl)) {
             console.log(`[weblink] product ${product.ID}: url=${fetched.finalUrl} looks like an article/blog post — rejected`);
             return null;
-          }
-          const lang = pageLanguage(fetched.page);
-          const matchStrength = pageMatchStrength(fetched.page, fetched.finalUrl, identifiers);
-          if (matchStrength === "strong") {
-            // Identifier in the title/meta/URL — this page is ABOUT the product.
-            console.log(`[weblink] product ${product.ID}: url=${url} verified by content`);
-            return { link: fetched.finalUrl, verification: "content", pageLang: lang };
           }
           // Body-only matches are NOT trusted on their own: accessory part numbers are
           // routinely listed on the PARENT product's page (e.g. a bracket's part number in
@@ -667,17 +689,17 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
           return null;
         };
 
-        // URLs that were actually fetched/attempted — never pre-poisoned by score cutoffs
-        // or per-tier caps, so a URL sliced off in one tier can still be tried in a later one.
+        // Try the proposer's candidates in the order it returned them (best-first). We do NOT
+        // apply URL-heuristic scoring/cutoffs here: the proposer already returns a small, ranked,
+        // on-domain list, and the fetch-and-verify pipeline (below) is the real gate. The old
+        // score cutoff wrongly discarded valid pages whose path carries category/SKU codes that
+        // aren't the part number (e.g. Rittal's /PG…/PRO…?variantId=… URLs scored −7).
         const triedUrls = new Set<string>();
         const tryVerifyCandidates = async (candidateList: Array<{ link: string }>): Promise<Accepted | null> => {
-          const sorted = candidateList
+          const ordered = candidateList
             .filter((c, i, arr) => arr.findIndex((x) => x.link === c.link) === i && !triedUrls.has(c.link))
-            .map((c) => ({ ...c, score: scoreCandidateUrl(c.link, scoreIds) }))
-            .filter((c) => c.score > -5)
-            .sort((a, b) => b.score - a.score)
             .slice(0, MAX_CANDIDATES_PER_TIER);
-          for (const candidate of sorted) {
+          for (const candidate of ordered) {
             if (timeLeft() <= 0) {
               console.warn(`[weblink] product ${product.ID}: time budget exhausted`);
               return null;

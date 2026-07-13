@@ -14,6 +14,9 @@ import { parseDomainReply } from "./webLinkResolution";
 export type ProposerProduct = {
   brand: string;
   partNumber: string;
+  /** Part number with the order/region suffix stripped (e.g. "8660.034" from "8660.034-RT"),
+   *  when it differs — manufacturers usually index by this, so it's the better search term. */
+  partNumberCore?: string;
   modelNumber: string;
   description: string;
 };
@@ -33,6 +36,9 @@ export const buildProposerPrompt = (product: ProposerProduct, domain: string | n
     `Product:`,
     `- Brand: ${product.brand || "(unknown)"}`,
     `- Part number: ${product.partNumber || "(none)"}`,
+    ...(product.partNumberCore && product.partNumberCore !== product.partNumber
+      ? [`- Base part number (search with this): ${product.partNumberCore}`]
+      : []),
     `- Model number: ${product.modelNumber || "(none)"}`,
     `- Description: ${product.description || "(none)"}`,
     ``,
@@ -44,7 +50,12 @@ export const buildProposerPrompt = (product: ProposerProduct, domain: string | n
     `- ONLY pages on the manufacturer's own website — never distributors, resellers, or marketplaces.`,
     `- The page must be in ENGLISH. When the site is regionalized, prefer European-English or international-English variants.`,
     `- Product or product-family pages only — never news/blog/press articles, knowledge-base or support articles, community/forum pages, store/checkout pages, or PDF/datasheet files.`,
-    `- The chosen page must actually cover this specific product (check the search snippets).`,
+    `- Match the EXACT part number, not a similar variant. Manufacturers list many size/length/colour/configuration variants of one product; the page must be for THIS exact part number, not a sibling. If the URL carries a variant/SKU/configuration code (e.g. ?variantId=..., /sku/..., a trailing product code), it must correspond to this part number — the part number often appears there with punctuation removed (e.g. "8660.034" → "8660034"). Do not settle for the right product family at the wrong variant.`,
+    ...(product.partNumberCore && product.partNumberCore !== product.partNumber
+      ? [
+          `- When searching, use the BASE part number, not the full order code. The trailing order/region/colour suffix (the part after the base, e.g. "-RT") is usually absent from the manufacturer's own pages and skews results toward distributors. Use the full part number only to confirm you have the right product.`,
+        ]
+      : []),
     `- For accessories (brackets, mounts, adapters, cables, cases), the page must be about the accessory itself — not the main product it attaches to.`,
     ``,
     `Reply with ONLY a JSON object, no other text, in exactly this shape:`,
