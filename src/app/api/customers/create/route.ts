@@ -22,7 +22,24 @@ const createCustomerSchema = z.object({
   profession: stringSchema(256),
   customerGroupId: positiveIntSchema,
 
-  erpId: stringSchema(128),
+  // Customers.ERPID is an int: the numeric Soft1 TRDR, also stamped by the draft-order
+  // wizard. Users pasting the Soft1 CODE ('Δι.4082') must get a clear rejection, not a
+  // SQL conversion error.
+  erpId: z.union([
+    z.number().int('ERP ID must be a whole number'),
+    z.string().transform((val, ctx) => {
+      const trimmed = val.trim();
+      if (trimmed === '') return null;
+      if (!/^\d+$/.test(trimmed)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'ERP ID must be a number (the numeric Soft1 id, not a code like "Δι.4082")',
+        });
+        return z.NEVER;
+      }
+      return Number.parseInt(trimmed, 10);
+    }),
+  ]).nullable().optional(),
   isParent: z.union([z.literal(0), z.literal(1), z.boolean()]).transform((val) => {
     if (typeof val === 'boolean') return val ? 1 : 0;
     return val;
@@ -75,7 +92,7 @@ export async function POST(req: NextRequest) {
     const profession = body.profession;
     const customerGroupId = body.customerGroupId;
 
-    const erpId = body.erpId;
+    const erpId = body.erpId ?? null;
     const isParent = body.isParent ?? 0;
     const parentCustomerId = body.parentCustomerId;
     const pricingPolicyId = body.pricingPolicyId!; // Validated as required
@@ -115,7 +132,7 @@ export async function POST(req: NextRequest) {
     request.input('Profession', sql.NVarChar(256), profession);
     request.input('CustomerGroupID', sql.Int, customerGroupId);
 
-    request.input('ERPID', sql.NVarChar(128), erpId);
+    request.input('ERPID', sql.Int, erpId);
     request.input('IsParent', sql.Bit, isParent ?? 0);
     request.input('ParentCustomerID', sql.Int, parentCustomerId);
     request.input('PricingPolicyID', sql.Int, pricingPolicyId);

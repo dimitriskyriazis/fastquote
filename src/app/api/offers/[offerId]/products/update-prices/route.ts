@@ -6,6 +6,7 @@ import { resolveAuditUserId } from '../../../../../../lib/auditTrail';
 import { requirePermission } from '../../../../../../lib/authz';
 import { fetchFarnellProduct, matchPriceTier, type FarnellProduct } from '../../../../../../lib/farnell';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
+import { clampPercentSql } from '../../../../../../lib/sqlPercentClamp';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 
 const normalizeOfferId = (value: unknown): number | null => {
@@ -198,7 +199,7 @@ async function updateFarnellPrices(
         END,
         [Margin] = CASE
           WHEN @NetUnitPrice = 0 THEN NULL
-          ELSE ROUND((CAST(1 AS DECIMAL(18, 8)) - (CAST(@NetCost AS DECIMAL(18, 8)) / CAST(@NetUnitPrice AS DECIMAL(18, 8)))) * 100, 4)
+          ELSE ${clampPercentSql('ROUND((CAST(1 AS DECIMAL(18, 8)) - (CAST(@NetCost AS DECIMAL(18, 8)) / CAST(@NetUnitPrice AS DECIMAL(18, 8)))) * 100, 4)')}
         END,
         [ModifiedOn] = SYSUTCDATETIME(),
         [ModifiedBy] = @modifiedBy
@@ -449,14 +450,14 @@ export async function POST(
         [TelmacoDiscount] = CASE
           -- Case 2: If cost price exists, calculate Telmaco discount from cost price
           WHEN price.CostPrice IS NOT NULL AND price.ListPrice IS NOT NULL AND price.ListPrice <> 0
-            THEN ROUND(
+            THEN ${clampPercentSql(`ROUND(
               (CAST(1 AS DECIMAL(18, 8))
                 - (CAST(price.CostPrice * COALESCE(price.CurrencyCostModifier, 1) AS DECIMAL(18, 8))
                   / CAST(price.ListPrice AS DECIMAL(18, 8))
                 )
               ) * 100,
               4
-            )
+            )`)}
           -- Case 1: If no cost price, use discount from pricing policy rule
           ELSE discounts.TelmacoDiscountPercentage
         END,
@@ -468,14 +469,14 @@ export async function POST(
             OR computed.ComputedNetUnitPrice = 0
             OR COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) IS NULL
             THEN NULL
-          ELSE ROUND(
+          ELSE ${clampPercentSql(`ROUND(
             (CAST(1 AS DECIMAL(18, 8))
               - (CAST(COALESCE(computed.ComputedNetCost, price.CostPrice * COALESCE(price.CurrencyCostModifier, 1), price.ListPrice) AS DECIMAL(18, 8))
                 / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
               )
             ) * 100,
             4
-          )
+          )`)}
         END,
         [GrossProfit] = CASE
           WHEN computed.ComputedNetUnitPrice IS NULL
@@ -672,8 +673,8 @@ export async function POST(
                                           - src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
                                          * ISNULL(od.Quantity, 1), 4) END,
         od.Margin       = CASE WHEN src.NewPrice IS NULL OR src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) = 0 THEN NULL
-                               ELSE ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
-                                               / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4) END,
+                               ELSE ${clampPercentSql(`ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                               / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4)`)} END,
         od.ModifiedOn   = SYSUTCDATETIME(),
         od.ModifiedBy   = @modifiedBy
       FROM dbo.OfferDetails od

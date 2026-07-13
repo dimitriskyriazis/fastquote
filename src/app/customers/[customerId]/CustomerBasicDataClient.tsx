@@ -179,12 +179,16 @@ const buildFieldDefinitions = (
     updateField: 'Profession',
   },
 
+  // ERP ID = the numeric Soft1 TRDR, normally filled by the draft-order wizard
+  // (type="number" is safe here — DisableAutofill only rewrites email/tel).
   {
     id: 'erp',
     label: 'ERP ID',
     section: 'business',
     recordKey: 'ERPID',
     updateField: 'ERPID',
+    valueType: 'number',
+    inputType: 'number',
   },
   {
     id: 'address',

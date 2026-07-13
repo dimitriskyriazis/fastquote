@@ -132,11 +132,14 @@ const buildFieldDefinitions = (
     type: 'text',
   },
 
+  // Customers.ERPID holds the numeric Soft1 TRDR (int column). type="number" blocks
+  // non-numeric typing and is safe from the DisableAutofill swap (email/tel only).
   {
     id: 'erp',
     label: 'ERP ID',
     section: 'business',
     type: 'text',
+    inputType: 'number',
   },
   {
     id: 'address',
@@ -686,6 +689,14 @@ export default function CustomerCreateClient({
         return;
       }
 
+      // ERPID is the numeric Soft1 id (int column); Soft1 codes like "Δι.4082" don't fit.
+      const erpText = (values.erp ?? '').trim();
+      if (erpText && !/^\d+$/.test(erpText)) {
+        setErrors({ erp: 'Must be a number' });
+        showToastMessage('ERP ID must be a number (the numeric Soft1 id).', 'error');
+        return;
+      }
+
       const payload = {
         name: values.name.trim(),
         brandName: toNullableString(values.brandName),
@@ -694,7 +705,7 @@ export default function CustomerCreateClient({
         profession: toNullableString(values.profession),
         customerGroupId: toNumberOrNull(values.customerGroup),
 
-        erpId: toNullableString(values.erp),
+        erpId: erpText ? Number.parseInt(erpText, 10) : null,
         isParent: toBooleanNumber(values.isParent) ?? 0,
         parentCustomerId: toNumberOrNull(values.parentCustomer),
         pricingPolicyId: toNumberOrNull(values.pricingPolicy),

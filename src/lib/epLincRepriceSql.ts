@@ -21,6 +21,7 @@
  */
 
 import sql, { type Request } from 'mssql';
+import { clampPercentSql } from './sqlPercentClamp';
 
 export const EP_LINC_METHOD_REPRICE_SQL = `
   DECLARE @__epLincPolicyId INT = (
@@ -93,10 +94,10 @@ export const EP_LINC_METHOD_REPRICE_SQL = `
       END,
       [Margin] = CASE
         WHEN t.TargetNet = 0 OR od.NetCost IS NULL THEN NULL
-        ELSE ROUND(
+        ELSE ${clampPercentSql(`ROUND(
           (CAST(1 AS DECIMAL(18, 8)) - (CAST(od.NetCost AS DECIMAL(18, 8)) / CAST(t.TargetNet AS DECIMAL(18, 8)))) * 100,
           4
-        )
+        )`)}
       END,
       [ModifiedOn] = SYSUTCDATETIME(),
       [ModifiedBy] = @__epModifiedBy

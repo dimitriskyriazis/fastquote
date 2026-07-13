@@ -16,6 +16,7 @@ import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../.
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
+import { clampPercentSql } from '../../../../../../lib/sqlPercentClamp';
 import { performRerank, type RerankCandidate } from '../../../../../../lib/rerank';
 import {
   buildTreeFromRows,
@@ -2604,14 +2605,14 @@ async function handleAssignProductToRequestedRow(
       END,
       od.TelmacoDiscount = CASE
         WHEN p.CostPrice IS NOT NULL AND p.ListPrice IS NOT NULL AND p.ListPrice <> 0
-          THEN ROUND(
+          THEN ${clampPercentSql(`ROUND(
             (CAST(1 AS DECIMAL(18, 8))
               - (CAST(p.CostPrice * COALESCE(p.CurrencyCostModifier, 1) AS DECIMAL(18, 8))
                 / CAST(p.ListPrice AS DECIMAL(18, 8))
               )
             ) * 100,
             4
-          )
+          )`)}
         ELSE COALESCE(discounts.TelmacoDiscountPercentage, 0)
       END,
       od.CustomerDiscount = COALESCE(discounts.CustomerDiscountPercentage, 0),
@@ -2624,14 +2625,14 @@ async function handleAssignProductToRequestedRow(
           OR computed.ComputedNetUnitPrice = 0
           OR COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
           THEN NULL
-        ELSE ROUND(
+        ELSE ${clampPercentSql(`ROUND(
           (CAST(1 AS DECIMAL(18, 8))
             - (CAST(COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) AS DECIMAL(18, 8))
               / CAST(computed.ComputedNetUnitPrice AS DECIMAL(18, 8))
             )
           ) * 100,
           4
-        )
+        )`)}
       END,
       od.GrossProfit = CASE
         WHEN computed.ComputedNetUnitPrice IS NULL

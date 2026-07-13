@@ -913,3 +913,79 @@ describe('resolvePricing — single-field edit cascade', () => {
     });
   });
 });
+
+/* ── Derived-percentage storage clamp (DECIMAL(5,2) → ±999.99) ───────── */
+
+describe('derived percentages clamp to the DECIMAL(5,2) storage ceiling', () => {
+  const noProvided = {
+    listPrice: false,
+    customerDiscount: false,
+    telmacoDiscount: false,
+    netUnitPrice: false,
+    netCost: false,
+    margin: false,
+  };
+
+  it('Keep Net NetCost edit: extreme derived Margin and TelmacoDiscount clamp instead of overflowing', () => {
+    // Repro of the arithmetic-overflow bug: NP=1 €, LP=120 €, user types Net
+    // Cost 1552 €. True margin = −155.100%, true TD = −1.193,33% — neither fits
+    // DECIMAL(5,2), so the UPDATE used to fail with SQL error 8115.
+    const input: PricingInput = {
+      listPrice: 120,
+      customerDiscount: null,
+      telmacoDiscount: 98.33,
+      netUnitPrice: 1,
+      netCost: 1552,
+      margin: -100,
+      provided: { ...noProvided, netCost: true },
+      holdMarginOnCostChange: false,
+    };
+    const r = resolvePricing(input)!;
+    expect(r.netCost).toBe(1552);            // the edit itself is preserved exactly
+    expect(r.netUnitPrice).toBe(1);          // Keep Net holds NP
+    expect(r.telmacoDiscount).toBe(-999.99); // clamped from −1193.33
+    expect(r.margin).toBe(-999.99);          // clamped from −155100
+  });
+
+  it('NetUnitPrice edit: extreme derived CustomerDiscount clamps', () => {
+    // NP typed far above LP → implied CD = (1 − 100000/100)·100 = −99.900%.
+    const input: PricingInput = {
+      listPrice: 100,
+      customerDiscount: 10,
+      telmacoDiscount: 20,
+      netUnitPrice: 100000,
+      netCost: 80,
+      margin: null,
+      provided: { ...noProvided, netUnitPrice: true },
+    };
+    const r = resolvePricing(input)!;
+    expect(r.netUnitPrice).toBe(100000);
+    expect(r.customerDiscount).toBe(-999.99); // clamped from −99900
+  });
+
+  it('leaves in-range derived percentages untouched', () => {
+    const input: PricingInput = {
+      listPrice: 120,
+      customerDiscount: null,
+      telmacoDiscount: 10,
+      netUnitPrice: 1,
+      netCost: 2,
+      margin: null,
+      provided: { ...noProvided, netCost: true },
+      holdMarginOnCostChange: false,
+    };
+    const r = resolvePricing(input)!;
+    expect(r.telmacoDiscount).toBeCloseTo(98.3333, 3); // (1 − 2/120)·100
+    expect(r.margin).toBe(-100);                       // (1 − 2/1)·100, fits
+  });
+
+  it('deriveWithoutListPrice clamps the margin it derives from NP/TC', () => {
+    const r = deriveWithoutListPrice(1, 1552, null, {
+      netUnitPrice: false,
+      netCost: true,
+      margin: false,
+    });
+    expect(r.netCost).toBe(1552);
+    expect(r.margin).toBe(-999.99); // clamped from −155100
+  });
+});

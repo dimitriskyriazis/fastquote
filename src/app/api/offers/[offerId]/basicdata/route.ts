@@ -8,6 +8,7 @@ import { logEditAuditDetails, type FieldChange } from '../../../../../lib/mutati
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 import { requirePermission } from '../../../../../lib/authz';
 import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
+import { clampPercentSql } from '../../../../../lib/sqlPercentClamp';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 
 type UpdateInput = {
@@ -315,8 +316,8 @@ export async function PATCH(
                                               - src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
                                              * ISNULL(od.Quantity, 1), 4) END,
             od.Margin       = CASE WHEN src.NewPrice IS NULL OR src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0) = 0 THEN NULL
-                                   ELSE ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
-                                                   / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4) END,
+                                   ELSE ${clampPercentSql(`ROUND((1.0 - (src.NewPrice * (1.0 - ISNULL(od.TelmacoDiscount, 0) / 100.0))
+                                                   / (src.NewPrice * (1.0 - ISNULL(od.CustomerDiscount, 0) / 100.0))) * 100, 4)`)} END,
             od.ModifiedOn   = SYSUTCDATETIME()
           FROM dbo.OfferDetails od
           CROSS APPLY (

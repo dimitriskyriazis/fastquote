@@ -45,7 +45,9 @@ const FIELD_CONFIG: Record<CustomerBasicUpdateField, FieldConfig> = {
   Profession: { column: "Profession", type: "string", sqlType: sql.NVarChar, length: 256 },
   CustomerGroupID: { column: "CustomerGroupID", type: "number", sqlType: sql.Int },
 
-  ERPID: { column: "ERPID", type: "string", sqlType: sql.NVarChar, length: 128 },
+  // ERPID = the numeric Soft1 TRDR (int column), also stamped by the draft-order wizard.
+  // Soft1 codes like 'Δι.4082' are a different namespace and must be rejected, not stored.
+  ERPID: { column: "ERPID", type: "number", sqlType: sql.Int },
   IsParent: { column: "IsParent", type: "number", sqlType: sql.Bit },
   ParentCustomerID: { column: "ParentCustomerID", type: "number", sqlType: sql.Int },
   PricingPolicyID: { column: "PricingPolicyID", type: "number", sqlType: sql.Int },
@@ -204,6 +206,18 @@ export async function PATCH(
       }
       normalizedUpdates.push({ field: entry.field, config, value: normalizedValue });
     });
+
+    // A non-numeric ERPID normalizes to null; erroring beats silently clearing the TRDR.
+    const invalidErpId = normalizedUpdates.find(
+      (u) => u.field === 'ERPID' && u.value === null
+        && String(updates.find((e) => e?.field === 'ERPID')?.value ?? '').trim() !== '',
+    );
+    if (invalidErpId) {
+      return NextResponse.json(
+        { ok: false, error: 'ERP ID must be a number (the numeric Soft1 id, not a code like "Δι.4082").' },
+        { status: 400 },
+      );
+    }
 
     if (normalizedUpdates.length === 0) {
       return NextResponse.json({ ok: false, error: "No valid updates provided" }, { status: 400 });

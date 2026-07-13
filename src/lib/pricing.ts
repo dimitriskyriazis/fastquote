@@ -118,6 +118,34 @@ export const marginFromMarkupFactor = (factor: number | null): number | null => 
   return roundTo((1 - 1 / factor) * 100);
 };
 
+/**
+ * OfferDetails stores its percentage columns (CustomerDiscount,
+ * AdditionalCustomerDiscount, TelmacoDiscount, Margin) as DECIMAL(5,2), so
+ * ±999.99 is the hard storage ceiling. Typed percentages are validated at the
+ * API boundary, but *derived* ones are unbounded — e.g. editing Net Cost to
+ * 1.552 € against a 1 € sell price implies a −155.100% margin — and an
+ * out-of-range value fails the whole row UPDATE with a SQL arithmetic-overflow
+ * error. Derived percentages are therefore clamped to the ceiling; the
+ * absolute € fields stay exact and remain the source of truth.
+ */
+export const MAX_STORED_PERCENT = 999.99;
+
+const clampStoredPercent = (value: number | null): number | null => {
+  if (value == null) return value;
+  return Math.min(MAX_STORED_PERCENT, Math.max(-MAX_STORED_PERCENT, value));
+};
+
+const clampResolvedPercents = (resolved: ResolvedPricing | null): ResolvedPricing | null => {
+  if (!resolved) return null;
+  return {
+    ...resolved,
+    customerDiscount: clampStoredPercent(resolved.customerDiscount),
+    telmacoDiscount: clampStoredPercent(resolved.telmacoDiscount),
+    margin: clampStoredPercent(resolved.margin),
+    additionalCustomerDiscount: clampStoredPercent(resolved.additionalCustomerDiscount ?? null),
+  };
+};
+
 /* ── Scenario engine ─────────────────────────────────────────────────── */
 
 export const computeScenario = (
@@ -270,7 +298,7 @@ export const deriveWithoutListPrice = (
     resolvedM = deriveMarginPercent(resolvedNp, resolvedTc);
   }
 
-  return { netUnitPrice: resolvedNp, netCost: resolvedTc, margin: resolvedM };
+  return { netUnitPrice: resolvedNp, netCost: resolvedTc, margin: clampStoredPercent(resolvedM) };
 };
 
 /* ── Single-field edit resolver ──────────────────────────────────────── */
@@ -490,7 +518,7 @@ export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
   // Single-field edit (the common case) → explicit anchor rules.
   // "Only ListPrice edited" also counts as a single edit and routes through here.
   if (providedPricingCount <= 1) {
-    return resolveSingleFieldEdit(input);
+    return clampResolvedPercents(resolveSingleFieldEdit(input));
   }
 
   // Multi-field edit (bulk paste / row creation / import) → scenario engine.
@@ -536,7 +564,7 @@ export const resolvePricing = (input: PricingInput): ResolvedPricing | null => {
       values.margin,
       acd,
     );
-    if (resolved) return resolved;
+    if (resolved) return clampResolvedPercents(resolved);
   }
 
   return null;

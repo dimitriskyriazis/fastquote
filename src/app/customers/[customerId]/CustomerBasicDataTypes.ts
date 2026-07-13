@@ -10,7 +10,7 @@ export type CustomerBasicRecord = {
   CustomerGroupID: number | null;
   CustomerGroupName: string | null;
 
-  ERPID: string | null;
+  ERPID: number | null;
   IsParent: boolean | number | null;
   ParentCustomerID: number | null;
   ParentCustomerName: string | null;
