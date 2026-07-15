@@ -409,6 +409,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       categoryId: number | null,
       comment?: string,
       metrics?: Record<string, unknown> | null,
+      options?: { applyToSimilarAssigned?: boolean },
     ) => {
       try {
         const body: Record<string, unknown> = {
@@ -425,6 +426,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         if (metrics) {
           body.metrics = metrics;
         }
+        if (options?.applyToSimilarAssigned) {
+          body.applyToSimilarAssigned = true;
+        }
         const res = await fetch(addProductsEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -433,6 +437,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         const payload = (await res.json().catch(() => null)) as {
           ok?: boolean;
           error?: string;
+          similarAssignedCount?: number;
           pricing?: {
             quantity?: unknown;
             customerDiscount?: unknown;
@@ -447,6 +452,9 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
           ? payload.pricing
           : null;
         return {
+          similarAssignedCount: typeof payload.similarAssignedCount === 'number'
+            ? payload.similarAssignedCount
+            : 0,
           pricing: pricingPayload
             ? {
                 quantity: coerceNumber(pricingPayload.quantity ?? null),
@@ -3905,7 +3913,7 @@ const requestedColumnDefsMap = useMemo(
         assignRequestedRowToProduct(dup.offerDetailId, productId, dup.parentCategoryId, comment),
       ),
     ])
-      .then((results) => {
+      .then(async (results) => {
         const failed = results.filter((r) => !r).length;
         if (failed === 0) {
           const msg = duplicateCount > 0
@@ -3925,6 +3933,44 @@ const requestedColumnDefsMap = useMemo(
           try {
             refreshOfferProductGrid(null, { purge: true });
           } catch { /* noop */ }
+        }
+
+        // Other rows with identical requested data may already be populated
+        // with a DIFFERENT product (e.g. the user re-populated just one of
+        // several identical rows and picked a new product). Ask whether to
+        // change those too, then re-issue the assignment server-side.
+        const similarAssignedCount = results[0]?.similarAssignedCount ?? 0;
+        if (similarAssignedCount > 0) {
+          const confirmed = await showConfirmDialog({
+            title: 'Change identical rows?',
+            message:
+              `There ${similarAssignedCount === 1 ? 'is 1 other row' : `are ${similarAssignedCount} other rows`} `
+              + 'in this offer with the same requested data, currently populated with a different product. '
+              + `Change ${similarAssignedCount === 1 ? 'it' : 'them'} to the new product too?`,
+            confirmLabel: similarAssignedCount === 1 ? 'Change it' : `Change all ${similarAssignedCount}`,
+            cancelLabel: 'Just this row',
+          });
+          if (confirmed) {
+            const followup = await assignRequestedRowToProduct(
+              match.offerDetailId,
+              productId,
+              match.parentCategoryId,
+              comment,
+              null,
+              { applyToSimilarAssigned: true },
+            );
+            if (followup) {
+              showToastMessage(
+                `Changed the product on ${similarAssignedCount} identical row${similarAssignedCount === 1 ? '' : 's'}.`,
+                'success',
+              );
+            } else {
+              showToastMessage('Could not change the product on the identical rows.', 'error');
+            }
+            try {
+              refreshOfferProductGrid(null, { purge: true });
+            } catch { /* noop */ }
+          }
         }
       })
       .catch(() => {
@@ -8379,9 +8425,31 @@ const requestedColumnDefsMap = useMemo(
       }
     }
 
-    type SiblingEntry = { OfferDetailID: number; oldValue: unknown };
+    // Foreign-cost fields can't travel alone: a bare NetCostOtherCurrency /
+    // CurrencyCostModifier PATCH on a sibling that lacks the currency stores an
+    // orphaned value (the cell renders blank without a currency name) and converts
+    // the cost at modifier 1. Mirror the edited row's currency context so every
+    // confirmed row ends in the same foreign-cost state as the edited one.
+    const isForeignCostField = field === 'NetCostOtherCurrency' || field === 'CurrencyCostModifier';
+
+    type SiblingEntry = {
+      OfferDetailID: number;
+      oldValue: unknown;
+      oldForeignCost?: {
+        NetCostOtherCurrency: number | null;
+        OtherCurrencyID: number | null;
+        CurrencyCostModifier: number | null;
+        NetCost: number | null;
+      };
+    };
     let siblings: SiblingEntry[] = [];
     const serverField = field === 'Description' ? 'ProductDescription' : field;
+    const fetchFields = isForeignCostField
+      ? Array.from(new Set([
+          'OfferDetailID', 'ProductID', serverField,
+          'NetCostOtherCurrency', 'OtherCurrencyID', 'CurrencyCostModifier', 'NetCost',
+        ]))
+      : ['OfferDetailID', 'ProductID', serverField];
     try {
       const fetchRes = await fetch(resolvedEndpoint, {
         method: 'POST',
@@ -8396,7 +8464,7 @@ const requestedColumnDefsMap = useMemo(
               ProductID: { filterType: 'number', type: 'equals', filter: productId },
             },
           },
-          fields: ['OfferDetailID', 'ProductID', serverField],
+          fields: fetchFields,
         }),
       });
       const payload = (await fetchRes.json().catch(() => null)) as
@@ -8407,7 +8475,17 @@ const requestedColumnDefsMap = useMemo(
         .map((row): SiblingEntry | null => {
           const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
           if (id == null || id === offerDetailId) return null;
-          return { OfferDetailID: id, oldValue: (row as Record<string, unknown>)[serverField] ?? null };
+          const record = row as Record<string, unknown>;
+          const entry: SiblingEntry = { OfferDetailID: id, oldValue: record[serverField] ?? null };
+          if (isForeignCostField) {
+            entry.oldForeignCost = {
+              NetCostOtherCurrency: coerceNumber(record.NetCostOtherCurrency),
+              OtherCurrencyID: coerceNumber(record.OtherCurrencyID),
+              CurrencyCostModifier: coerceNumber(record.CurrencyCostModifier),
+              NetCost: coerceNumber(record.NetCost),
+            };
+          }
+          return entry;
         })
         .filter((entry): entry is SiblingEntry => entry != null);
     } catch {
@@ -8437,12 +8515,29 @@ const requestedColumnDefsMap = useMemo(
     });
     if (!confirmed) return;
 
+    // The edited row's currency context. Always present for a NetCostOtherCurrency
+    // edit that reaches propagation — a cost edit on a currency-less row is deferred
+    // to the currency prompt instead (see handlePricingEdit) — but read defensively.
+    const sourceCurrencyId = coerceNumber((event.data as { OtherCurrencyID?: unknown } | undefined)?.OtherCurrencyID);
+    const sourceCostModifier = coerceNumber((event.data as { CurrencyCostModifier?: unknown } | undefined)?.CurrencyCostModifier);
+    const buildSiblingUpdate = (id: number): Record<string, unknown> => {
+      const update: Record<string, unknown> = { OfferDetailID: id, [serverField]: newPatchValue };
+      if (isForeignCostField && sourceCurrencyId != null && sourceCurrencyId > 0) {
+        update.OtherCurrencyID = sourceCurrencyId;
+        // A propagated cost also carries the modifier so the siblings' Net Cost
+        // converts identically to the edited row's. A modifier edit propagates
+        // itself, so only the currency rides along.
+        if (field === 'NetCostOtherCurrency') update.CurrencyCostModifier = sourceCostModifier ?? 1;
+      }
+      return update;
+    };
+
     try {
       const patchRes = await fetch(resolvedEndpoint, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          updates: siblings.map((s) => ({ OfferDetailID: s.OfferDetailID, [serverField]: newPatchValue })),
+          updates: siblings.map((s) => buildSiblingUpdate(s.OfferDetailID)),
         }),
       });
       const payload = (await patchRes.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
@@ -8464,7 +8559,21 @@ const requestedColumnDefsMap = useMemo(
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              updates: capturedSiblings.map((s) => ({ OfferDetailID: s.OfferDetailID, [capturedField]: s.oldValue })),
+              updates: capturedSiblings.map((s) => (
+                s.oldForeignCost
+                  ? {
+                      OfferDetailID: s.OfferDetailID,
+                      // Restore the whole foreign-cost state. PATCH validation rejects a
+                      // null cost/modifier, so nulls are encoded as the neutral 0 / 1;
+                      // a null OtherCurrencyID explicitly clears the currency. NetCost is
+                      // restored raw to reverse the server-side conversion.
+                      NetCostOtherCurrency: s.oldForeignCost.NetCostOtherCurrency ?? 0,
+                      OtherCurrencyID: s.oldForeignCost.OtherCurrencyID,
+                      CurrencyCostModifier: s.oldForeignCost.CurrencyCostModifier ?? 1,
+                      NetCost: s.oldForeignCost.NetCost ?? 0,
+                    }
+                  : { OfferDetailID: s.OfferDetailID, [capturedField]: s.oldValue }
+              )),
             }),
           });
           const undoPayload = (await undoRes.json().catch(() => null)) as { ok?: boolean } | null;
@@ -8796,6 +8905,19 @@ const requestedColumnDefsMap = useMemo(
     netExtraDiscountedTotal != null
     && totals?.totalNetPrice != null
     && Math.abs(netExtraDiscountedTotal - totals.totalNetPrice) > 1e-9;
+  // Effective Margin / Markup implied by the additional discount. The discount is
+  // display-only (never distributed to rows), so these ride along as "→ adjusted"
+  // values next to the stored totals, mirroring the Net arrow.
+  const netExtraDiscountedMargin =
+    netExtraDiscountActive && netExtraDiscountedTotal != null && totals != null
+    && Math.abs(netExtraDiscountedTotal) > 1e-9
+      ? ((netExtraDiscountedTotal - totals.totalCost) / netExtraDiscountedTotal) * 100
+      : null;
+  const netExtraDiscountedMarkup =
+    netExtraDiscountActive && netExtraDiscountedTotal != null && totals != null
+    && Math.abs(totals.totalCost) > 1e-9
+      ? netExtraDiscountedTotal / totals.totalCost
+      : null;
 
   const beginEditTotalNet = useCallback(() => {
     if (totalNetApplying) return;
@@ -10076,6 +10198,11 @@ const requestedColumnDefsMap = useMemo(
                   {formatPercentTotal(totals != null ? floorTo(totals.totalMargin, 2) : null)}
                 </span>
               )}
+              {netExtraDiscountedMargin != null && totals != null && Math.abs(netExtraDiscountedMargin - totals.totalMargin) > 1e-9 ? (
+                <span className={styles.totalDiscountedValue} title="Total margin after the additional discount">
+                  {`→ ${formatPercentTotal(floorTo(netExtraDiscountedMargin, 2))}`}
+                </span>
+              ) : null}
             </div>
             {markupColumnVisible ? (
               <div className={styles.totalItem}>
@@ -10116,6 +10243,11 @@ const requestedColumnDefsMap = useMemo(
                     {totalMarkupValue != null && Number.isFinite(totalMarkupValue) ? decimalFormatter.format(floorTo(totalMarkupValue, 2)) : '-'}
                   </span>
                 )}
+                {netExtraDiscountedMarkup != null && totalMarkupValue != null && Math.abs(netExtraDiscountedMarkup - totalMarkupValue) > 1e-9 ? (
+                  <span className={styles.totalDiscountedValue} title="Total markup after the additional discount">
+                    {`→ ${decimalFormatter.format(floorTo(netExtraDiscountedMarkup, 2))}`}
+                  </span>
+                ) : null}
               </div>
             ) : null}
             <div className={styles.totalItem}>

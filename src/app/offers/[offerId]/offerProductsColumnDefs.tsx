@@ -778,6 +778,47 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       cellStyle: truncateCellStyle,
     },
     {
+      // Opt-in column showing the product's web link as its own cell. The link
+      // is normally reachable only through the Part/Model Number hyperlink;
+      // this surfaces the raw URL for users who want it visible. Read-only —
+      // WebLink is product-level data (Products.WebLink), edited from the
+      // Products page or the "Add web links" action.
+      field: 'WebLink',
+      headerName: 'Web Link',
+      hide: true,
+      filter: 'agTextColumnFilter',
+      editable: false,
+      valueGetter: ({ data }) => {
+        const raw = (data as { WebLink?: unknown } | null | undefined)?.WebLink;
+        if (raw == null) return '';
+        return String(raw).trim();
+      },
+      cellRenderer: (params: ICellRendererParams<Record<string, unknown>>) => {
+        const url = typeof params.value === 'string' ? params.value.trim() : '';
+        if (!url) return '';
+        const stop = (event: React.SyntheticEvent) => {
+          event.stopPropagation();
+        };
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className={styles.partNumberLink}
+            onClick={stop}
+            onMouseDown={stop}
+            onDoubleClick={stop}
+            onContextMenu={stop}
+            title="Open product link"
+          >
+            {url}
+          </a>
+        );
+      },
+      cellClass: [ACTUAL_COLUMN_GLOBAL_CLASS, TEXT_TRUNCATE_COLUMN_GLOBAL_CLASS],
+      cellStyle: truncateCellStyle,
+    },
+    {
       field: 'Description',
       headerName: 'Description',
       filter: 'agTextColumnFilter',
@@ -1388,6 +1429,19 @@ export function buildProductColumnDefs(deps: ProductColumnDefsDeps): ColDef[] {
       const [markupColumn] = ordered.splice(markupIdx, 1);
       const insertAt = ordered.findIndex((column) => column.field === 'Margin') + 1;
       ordered.splice(insertAt, 0, markupColumn);
+    }
+  }
+
+  // Same treatment for the opt-in Web Link column: with no saved-order entry it
+  // would land at the far right, but it belongs directly after Model Number
+  // (whose hyperlink it mirrors).
+  if (!savedColumnOrder.includes('WebLink')) {
+    const webLinkIdx = ordered.findIndex((column) => column.field === 'WebLink');
+    const modelIdx = ordered.findIndex((column) => column.field === 'ModelNumber');
+    if (webLinkIdx !== -1 && modelIdx !== -1 && webLinkIdx !== modelIdx + 1) {
+      const [webLinkColumn] = ordered.splice(webLinkIdx, 1);
+      const insertAt = ordered.findIndex((column) => column.field === 'ModelNumber') + 1;
+      ordered.splice(insertAt, 0, webLinkColumn);
     }
   }
 

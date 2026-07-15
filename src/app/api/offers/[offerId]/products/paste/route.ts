@@ -8,6 +8,7 @@ import { requirePermission } from '../../../../../../lib/authz';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
 import { clampPercentSql } from '../../../../../../lib/sqlPercentClamp';
+import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
 import { parseLocaleNumber } from '../../../../../../lib/localeNumber';
 import {
   comparePaths,
@@ -467,7 +468,7 @@ const resolveServiceProductIds = async (
     const res = await request.query<{ ProductID: number }>(`
       SELECT DISTINCT pli.ProductID
       FROM dbo.PriceListItems pli
-      INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND pl.Enabled = 1 AND ISNULL(pl.IsService, 0) = 1
+      INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND ${priceListInEffectSql('pl')} AND ISNULL(pl.IsService, 0) = 1
       WHERE pli.ProductID IN (${inList})
     `);
     for (const row of res.recordset ?? []) {
@@ -583,12 +584,12 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
         WHERE pr.ID = r_upd.ProductID
           AND NOT EXISTS (
             SELECT 1 FROM dbo.PriceListItems pli_chk
-            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND ${priceListInEffectSql('pl_chk')}
             WHERE pli_chk.ProductID = pr.ID
           )
           AND EXISTS (
             SELECT 1 FROM dbo.PriceListItems pli_chk2
-            INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND pl_chk2.Enabled = 1
+            INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND ${priceListInEffectSql('pl_chk2')}
             WHERE pli_chk2.ProductID = p_new.ID
           )
         ORDER BY p_new.ID DESC
@@ -687,7 +688,7 @@ const insertProductRowsFreshPricing = async (transaction: Transaction, pool: Con
         FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = src.ProductID
-          AND pl.Enabled = 1
+          AND ${priceListInEffectSql('pl')}
         ORDER BY
           CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,

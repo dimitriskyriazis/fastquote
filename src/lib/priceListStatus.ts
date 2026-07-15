@@ -1,4 +1,4 @@
-export type PriceListStatus = 'active' | 'expiring' | 'expired' | null;
+export type PriceListStatus = 'active' | 'expiring' | 'expired' | 'future' | null;
 
 export type PriceListRow = {
   PriceListID?: unknown;
@@ -63,7 +63,11 @@ export const resolvePriceListStatus = (row: PriceListRow): PriceListStatus => {
   const validFromMs = validFrom ? Date.UTC(validFrom.getUTCFullYear(), validFrom.getUTCMonth(), validFrom.getUTCDate()) : null;
   const validToMs = validTo ? Date.UTC(validTo.getUTCFullYear(), validTo.getUTCMonth(), validTo.getUTCDate()) : null;
 
-  if (validFromMs != null && validFromMs > todayUtc) return 'expired';
+  // Scheduled list: not in effect until its Valid From arrives. The
+  // price-lists page styles this distinctly; the offer grids fold it into the
+  // expired (red) class because a line priced off a not-yet-started list is
+  // equally "not currently valid".
+  if (validFromMs != null && validFromMs > todayUtc) return 'future';
   if (validToMs != null) {
     if (validToMs < todayUtc) return 'expired';
     const daysUntilExpiry = (validToMs - todayUtc) / MS_PER_DAY;
@@ -112,8 +116,11 @@ export const priceListStatusClassRules = (rowAccessor?: (params: { data?: Record
       resolvePriceListStatus(resolveRow(params)) === 'active',
     'offer-products-grid__cell--pricelist-expiring': (params: { data?: Record<string, unknown> | null }) =>
       resolvePriceListStatus(resolveRow(params)) === 'expiring',
-    'offer-products-grid__cell--pricelist-expired': (params: { data?: Record<string, unknown> | null }) =>
-      resolvePriceListStatus(resolveRow(params)) === 'expired',
+    'offer-products-grid__cell--pricelist-expired': (params: { data?: Record<string, unknown> | null }) => {
+      const status = resolvePriceListStatus(resolveRow(params));
+      // 'future' shares the red styling: the referenced list is not in effect.
+      return status === 'expired' || status === 'future';
+    },
     'offer-products-grid__cell--pricelist-lp-edited': (params: { data?: Record<string, unknown> | null }) =>
       isPriceListListPriceEdited(resolveRow(params)),
   };

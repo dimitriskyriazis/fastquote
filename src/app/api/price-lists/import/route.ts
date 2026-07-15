@@ -10,6 +10,7 @@ import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { getRequestId } from "../../../../lib/requestId";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
+import { sweepScheduledPriceListReplacements } from "../../../../lib/priceListReplacementSweep";
 import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
 import {
   applyBrandPattern,
@@ -1088,6 +1089,11 @@ export async function POST(req: NextRequest) {
     const auditUserId = resolveAuditUserId(req);
     const pool = await getPool();
 
+    // Flip Enabled=0 on any list whose scheduled replacement has since come
+    // into effect, so the comparison below never picks an already-superseded
+    // list as "latest enabled".
+    await sweepScheduledPriceListReplacements(pool);
+
     // In append mode, override brandId from the target pricelist so all downstream
     // lookups (brand pattern, existing products) operate against the correct brand.
     // Also load the set of existing ProductIDs in that pricelist so we can skip
@@ -1466,6 +1472,12 @@ export async function POST(req: NextRequest) {
 
     await transaction.begin();
 
+    // When the new list's Valid From is in the future, replacing the previous
+    // list is deferred: it stays enabled (and keeps pricing offers) until the
+    // new list comes into effect. Set when the import schedules a handover so
+    // the client can message it. ISO string of the activation date.
+    let previousListActiveUntil: string | null = null;
+
     try {
       let priceListId: number | null = null;
 
@@ -1569,16 +1581,28 @@ export async function POST(req: NextRequest) {
       }
 
       if (previousPriceListId) {
+        // Scheduled activation: if the new list only becomes valid in the
+        // future, record the succession (ReplacedByPriceListID) but keep the
+        // previous list enabled — pricing queries stop using it the moment the
+        // new list's Valid From arrives (see priceListInEffectSql), and the
+        // sweep then flips its Enabled flag. A Valid From of today or earlier
+        // keeps the original behaviour: disable the previous list immediately.
+        const startsInFuture = validFromDate != null && validFromDate.getTime() > Date.now();
         const disableRequest = createRequest(transaction);
         disableRequest.input("PreviousID", sql.Int, previousPriceListId);
+        disableRequest.input("NewID", sql.Int, priceListId);
         disableRequest.input("ModifiedBy", sql.NVarChar(450), auditUserId);
         await disableRequest.query(`
           UPDATE dbo.PriceLists
-          SET Enabled = 0,
+          SET ReplacedByPriceListID = @NewID,
+              ${startsInFuture ? '' : 'Enabled = 0,'}
               ModifiedOn = SYSUTCDATETIME(),
               ModifiedBy = @ModifiedBy
           WHERE ID = @PreviousID
         `);
+        if (startsInFuture) {
+          previousListActiveUntil = validFromDate.toISOString();
+        }
       }
       } // end !isAppendMode branch
 
@@ -1894,6 +1918,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true,
         priceListId,
+        previousListActiveUntil,
         filePath: relativePath || fileName,
         createdProductCount,
         matchedProductCount,

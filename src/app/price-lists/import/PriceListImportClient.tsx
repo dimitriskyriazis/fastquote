@@ -17,6 +17,7 @@ import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import { useRouter } from "next/navigation";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
+import { formatDateUK } from "../../lib/formatDateTime";
 import { showConfirmDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListImport.module.css";
@@ -982,6 +983,14 @@ export default function PriceListImportClient({
     return Boolean(from && to && from > to);
   }, [values.validFromDate, values.validToDate]);
 
+  // Valid From after today = scheduled activation: the list stays dormant
+  // until its start date, and a selected previous version is only deactivated
+  // when this one takes effect (see the Previous Version help text).
+  const validFromIsFuture = useMemo(() => {
+    const from = normalizeDate(values.validFromDate);
+    return Boolean(from && from.getTime() > Date.now());
+  }, [values.validFromDate]);
+
   const previewColumns = useMemo<PreviewColumn[]>(() => {
     if (!activeSheet) return [];
     const activeKeys = PREVIEW_COLUMN_KEYS.filter((key) =>
@@ -1301,6 +1310,7 @@ export default function PriceListImportClient({
         ok?: boolean;
         error?: string;
         priceListId?: string | number;
+        previousListActiveUntil?: string | null;
         createdProductCount?: number;
         matchedProductCount?: number;
         skippedRows?: number;
@@ -1490,6 +1500,17 @@ export default function PriceListImportClient({
         `${typedPayload.skippedRows ?? 0} skipped`,
       ].join(" • ");
       showToastMessage(summary);
+
+      // Scheduled activation: the previous list keeps pricing offers until the
+      // new list's Valid From arrives, then it is deactivated automatically.
+      if (typedPayload.previousListActiveUntil) {
+        const activationDate = formatDateUK(typedPayload.previousListActiveUntil) || typedPayload.previousListActiveUntil;
+        showToastMessage(
+          `This price list takes effect on ${activationDate}. The previous version stays active until then and will be deactivated automatically.`,
+          "info",
+          10000,
+        );
+      }
 
       // Prompt user if product descriptions don't match
       const mismatches = typedPayload.descriptionMismatches;
@@ -2052,7 +2073,9 @@ export default function PriceListImportClient({
                   {filteredPreviousPriceLists.map(renderOption)}
                 </select>
                 <span className={styles.helpText}>
-                  If selected, the previous price list will be disabled and replaced by this one.
+                  {validFromIsFuture
+                    ? `If selected, the previous price list stays active until ${formatDateUK(values.validFromDate) || values.validFromDate} (this list's Valid From) and is deactivated automatically when this one takes effect.`
+                    : "If selected, the previous price list will be disabled and replaced by this one."}
                 </span>
               </label>
             </div>

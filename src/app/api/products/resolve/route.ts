@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../lib/apiHelpers';
 import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
+import { priceListInEffectSql } from '../../../../lib/priceListSql';
 import { clearPartModelNumber, stripXBetweenDigitsSql } from '../../../../lib/partModelNumber';
 
 const normalizeParam = (value: string | null): string | null => {
@@ -121,7 +122,7 @@ export async function GET(req: NextRequest) {
           CASE
             WHEN EXISTS (
               SELECT 1 FROM dbo.PriceListItems pli
-              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND ${priceListInEffectSql('pl')}
               WHERE pli.ProductID = p.ID
             ) THEN 0
             ELSE 1

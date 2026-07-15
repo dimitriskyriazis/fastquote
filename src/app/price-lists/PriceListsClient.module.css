@@ -81,4 +81,8 @@
 .gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--expired) {
   background: #ffcfcf !important;
 }
+/* Scheduled list (future Valid From): blue — becomes active automatically. */
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--future) {
+  background: #cfe2ff !important;
+}
 

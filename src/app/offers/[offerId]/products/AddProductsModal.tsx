@@ -1161,6 +1161,7 @@ export default function AddProductsModal({
         updated?: number;
         insertedOfferDetailIds?: Array<number | string | null>;
         similarUnassignedCount?: number;
+        similarAssignedCount?: number;
         error?: string;
         requiresServicesLocation?: boolean;
       };
@@ -1265,6 +1266,44 @@ export default function AddProductsModal({
               }
             } catch {
               showToastMessage('Filled selected row, but could not fill the similar rows.', 'error');
+            }
+          }
+        }
+        // Rows with identical requested data may already be populated with a
+        // DIFFERENT product. Ask whether to change those to this product too,
+        // then re-issue with applyToSimilarAssigned so the server updates them.
+        const assignedCount = typeof data.similarAssignedCount === 'number'
+          ? data.similarAssignedCount
+          : 0;
+        if (assignedCount > 0) {
+          const changeConfirmed = await showConfirmDialog({
+            title: 'Change identical rows?',
+            message:
+              `There ${assignedCount === 1 ? 'is 1 other row' : `are ${assignedCount} other rows`} `
+              + 'in this offer with the same requested data, currently populated with a different product. '
+              + `Change ${assignedCount === 1 ? 'it' : 'them'} to this product too?`,
+            confirmLabel: assignedCount === 1 ? 'Change it' : `Change all ${assignedCount}`,
+            cancelLabel: 'Just this row',
+          });
+          if (changeConfirmed) {
+            try {
+              const followupRes = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  ...payload,
+                  applyToSimilarAssigned: true,
+                }),
+              });
+              const followupData = (await followupRes.json().catch(() => null)) as {
+                ok?: boolean;
+                error?: string;
+              } | null;
+              if (!followupRes.ok || !followupData?.ok) {
+                showToastMessage('Filled selected row, but could not change the identical rows.', 'error');
+              }
+            } catch {
+              showToastMessage('Filled selected row, but could not change the identical rows.', 'error');
             }
           }
         }

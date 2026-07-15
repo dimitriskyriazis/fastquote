@@ -9,6 +9,7 @@ import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBa
 import { requirePermission } from '../../../../../lib/authz';
 import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
 import { clampPercentSql } from '../../../../../lib/sqlPercentClamp';
+import { priceListInEffectSql } from '../../../../../lib/priceListSql';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 
 type UpdateInput = {
@@ -331,7 +332,7 @@ export async function PATCH(
             INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
             WHERE pli.ProductID = od.ProductID
               AND ISNULL(pl.IsService, 0) = 1
-              AND pl.Enabled = 1
+              AND ${priceListInEffectSql('pl')}
             ORDER BY pli.ID DESC
           ) src
           WHERE od.OfferID = @__offerId

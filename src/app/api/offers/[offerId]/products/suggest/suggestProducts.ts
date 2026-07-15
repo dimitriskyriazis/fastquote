@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
+import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
 import OpenAI from 'openai';
 
@@ -256,7 +257,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = p.ID
-          AND pl.Enabled = 1
+          AND ${priceListInEffectSql('pl')}
         ORDER BY
           CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
           pl.ValidToDate,

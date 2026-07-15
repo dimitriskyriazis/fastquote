@@ -7,6 +7,7 @@ import { requirePermission } from '../../../../../../lib/authz';
 import { fetchFarnellProduct, matchPriceTier, type FarnellProduct } from '../../../../../../lib/farnell';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
 import { clampPercentSql } from '../../../../../../lib/sqlPercentClamp';
+import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 
 const normalizeOfferId = (value: unknown): number | null => {
@@ -272,7 +273,7 @@ export async function POST(
             )
             OR EXISTS (
               SELECT 1 FROM dbo.PriceListItems pli
-              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+              INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND ${priceListInEffectSql('pl')}
               WHERE pli.ProductID = od.ProductID
             )
           );
@@ -335,7 +336,7 @@ export async function POST(
           AND p_new.ID <> pr.ID
           AND EXISTS (
             SELECT 1 FROM dbo.PriceListItems pli_chk
-            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+            INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND ${priceListInEffectSql('pl_chk')}
             WHERE pli_chk.ProductID = p_new.ID
           )
         ORDER BY p_new.ID DESC
@@ -344,7 +345,7 @@ export async function POST(
         AND od.ProductID IS NOT NULL
         AND NOT EXISTS (
           SELECT 1 FROM dbo.PriceListItems pli_chk
-          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND ${priceListInEffectSql('pl_chk')}
           WHERE pli_chk.ProductID = pr.ID
         )${selectedDetailsFilterSql}${excludeFarnellSql};
 
@@ -520,7 +521,7 @@ export async function POST(
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = oc.PricingPolicyID
         WHERE pli.ProductID = od.ProductID
-          AND pl.Enabled = 1
+          AND ${priceListInEffectSql('pl')}
         ORDER BY
           CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
           CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
@@ -689,7 +690,7 @@ export async function POST(
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         WHERE pli.ProductID = od.ProductID
           AND ISNULL(pl.IsService, 0) = 1
-          AND pl.Enabled = 1
+          AND ${priceListInEffectSql('pl')}
         ORDER BY pli.ID DESC
       ) src
       WHERE od.OfferID = @offerId

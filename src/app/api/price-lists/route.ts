@@ -15,6 +15,7 @@ import { processFilter } from "../../../lib/filterProcessing";
 import { resolveAuditUserId } from "../../../lib/auditTrail";
 import { getRequestId } from "../../../lib/requestId";
 import { logDeleteAuditDetails } from "../../../lib/mutationAudit";
+import { sweepScheduledPriceListReplacements } from "../../../lib/priceListReplacementSweep";
 
 type GridRequest = {
   startRow?: number;
@@ -170,6 +171,9 @@ export async function GET(req: NextRequest) {
   logRequest(req, '/api/price-lists');
   try {
     const pool = await getPool();
+    // Opportunistic bookkeeping on page load: disable lists whose scheduled
+    // replacement has come into effect, so the grid's Enabled column is honest.
+    await sweepScheduledPriceListReplacements(pool);
     const result = await pool.request().query<{ MaxCount: number | null }>(`
       SELECT ISNULL(MAX(cnt), 0) AS MaxCount FROM (
         SELECT PriceListID, COUNT(DISTINCT PricingPolicyID) AS cnt

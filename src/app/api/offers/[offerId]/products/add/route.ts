@@ -17,6 +17,7 @@ import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
 import { clampPercentSql } from '../../../../../../lib/sqlPercentClamp';
+import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
 import { performRerank, type RerankCandidate } from '../../../../../../lib/rerank';
 import {
   buildTreeFromRows,
@@ -723,7 +724,7 @@ async function tryStage1QuickMatch(
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
-        WHERE pl.Enabled = 1
+        WHERE ${priceListInEffectSql('pl')}
           AND pli.ProductID = bp.ProductID
         ORDER BY
           CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
@@ -1147,9 +1148,9 @@ async function handleProductGrid(
     finalClauses.push(orClauses.length === 1 ? orClauses[0] : `(${orClauses.join(' OR ')})`);
   }
   if (body?.serviceOnly === true) {
-    finalClauses.push(`EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND pl_svc.Enabled = 1)`);
+    finalClauses.push(`EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND ${priceListInEffectSql('pl_svc')})`);
   } else if (body?.excludeServices === true) {
-    finalClauses.push(`NOT EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND pl_svc.Enabled = 1)`);
+    finalClauses.push(`NOT EXISTS (SELECT 1 FROM dbo.PriceListItems pli_svc INNER JOIN dbo.PriceLists pl_svc ON pli_svc.PriceListID = pl_svc.ID WHERE pli_svc.ProductID = bp.ProductID AND ISNULL(pl_svc.IsService, 0) = 1 AND ${priceListInEffectSql('pl_svc')})`);
   }
   const whereSql = finalClauses.length ? `WHERE ${finalClauses.join(' AND ')}` : '';
   const quickFilterColumns = Object.entries(columnExpressions).map(([colId, expression]) => ({
@@ -1381,7 +1382,7 @@ async function handleProductGrid(
         FROM dbo.PriceListItems pli
           INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
           LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @__pricingPolicyId
-        WHERE pl.Enabled = 1
+        WHERE ${priceListInEffectSql('pl')}
           AND pli.ProductID = bp.ProductID
           ${body?.serviceOnly === true ? 'AND ISNULL(pl.IsService, 0) = 1' : ''}
         ORDER BY
@@ -1593,7 +1594,7 @@ async function handleAddProducts(
           SELECT 1
           FROM dbo.Products p
           INNER JOIN dbo.PriceListItems pli ON pli.ProductID = p.ID
-          INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND pl.Enabled = 1 AND ISNULL(pl.IsService, 0) = 1
+          INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND ${priceListInEffectSql('pl')} AND ISNULL(pl.IsService, 0) = 1
           WHERE p.ID IN (${pidList})
         ) THEN 1 ELSE 0 END) AS hasServiceProducts,
         (SELECT CASE WHEN ServicesLocation IS NOT NULL THEN 1 ELSE 0 END
@@ -1742,12 +1743,12 @@ async function handleAddProducts(
     WHERE pr.ID = pp.ProductID
       AND NOT EXISTS (
         SELECT 1 FROM dbo.PriceListItems pli_chk
-        INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+        INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND ${priceListInEffectSql('pl_chk')}
         WHERE pli_chk.ProductID = pr.ID
       )
       AND EXISTS (
         SELECT 1 FROM dbo.PriceListItems pli_chk2
-        INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND pl_chk2.Enabled = 1
+        INNER JOIN dbo.PriceLists pl_chk2 ON pli_chk2.PriceListID = pl_chk2.ID AND ${priceListInEffectSql('pl_chk2')}
         WHERE pli_chk2.ProductID = p_new.ID
       )
     ORDER BY p_new.ID DESC
@@ -1815,7 +1816,7 @@ async function handleAddProducts(
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
       WHERE pli.ProductID = p.ProductID
-        AND pl.Enabled = 1
+        AND ${priceListInEffectSql('pl')}
       ORDER BY
         CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
@@ -2371,6 +2372,7 @@ async function handleAssignProductToRequestedRow(
   const commentRaw = body?.comment ?? (body as { Comment?: unknown })?.Comment ?? null;
   const commentValue = typeof commentRaw === 'string' ? commentRaw.trim() || null : null;
   const applyToSimilar = body?.applyToSimilar === true;
+  const applyToSimilarAssigned = body?.applyToSimilarAssigned === true;
 
   // Instrumentation: assignment-accuracy metrics from the match-requested
   // modal.  Tagged with "tag: assignment-metrics" in the log context (the
@@ -2426,6 +2428,7 @@ async function handleAssignProductToRequestedRow(
   request.input('__modifiedBy', sql.Int, auditUserId);
   request.input('__comment', sql.NVarChar(sql.MAX), commentValue);
   request.input('__applyToSimilar', sql.Bit, applyToSimilar ? 1 : 0);
+  request.input('__applyToSimilarAssigned', sql.Bit, applyToSimilarAssigned ? 1 : 0);
 
   const query = `
     DECLARE @pricingPolicyId INT;
@@ -2441,9 +2444,12 @@ async function handleAssignProductToRequestedRow(
 
     -- Capture the requested fields from the original row.  When
     -- @__applyToSimilar = 1 the UPDATE also assigns the same product to any
-    -- other unassigned rows in this offer with identical requested data;
+    -- other unassigned rows in this offer with identical requested data; when
+    -- @__applyToSimilarAssigned = 1 it also re-assigns rows with identical
+    -- requested data that are already populated with a DIFFERENT product;
     -- otherwise only the row matching @__rowId is updated.  We always count
-    -- matching unassigned rows so the client can prompt the user.
+    -- matching unassigned and differently-assigned rows so the client can
+    -- prompt the user.
     DECLARE @reqBrand NVARCHAR(MAX);
     DECLARE @reqModel NVARCHAR(MAX);
     DECLARE @reqPart NVARCHAR(MAX);
@@ -2479,7 +2485,7 @@ async function handleAssignProductToRequestedRow(
     DECLARE @resolvedProductId INT = @__productId;
     IF NOT EXISTS (
       SELECT 1 FROM dbo.PriceListItems pli
-      INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND pl.Enabled = 1
+      INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID AND ${priceListInEffectSql('pl')}
       WHERE pli.ProductID = @__productId
     )
     BEGIN
@@ -2493,7 +2499,7 @@ async function handleAssignProductToRequestedRow(
       WHERE pr.ID = @__productId
         AND EXISTS (
           SELECT 1 FROM dbo.PriceListItems pli_chk
-          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND pl_chk.Enabled = 1
+          INNER JOIN dbo.PriceLists pl_chk ON pli_chk.PriceListID = pl_chk.ID AND ${priceListInEffectSql('pl_chk')}
           WHERE pli_chk.ProductID = p_new.ID
         )
       ORDER BY p_new.ID DESC;
@@ -2564,7 +2570,7 @@ async function handleAssignProductToRequestedRow(
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
       WHERE pli.ProductID = pr.ID
-        AND pl.Enabled = 1
+        AND ${priceListInEffectSql('pl')}
       ORDER BY
         CASE WHEN plpp.ID IS NOT NULL THEN 0 ELSE 1 END,
         CASE WHEN pli.CostPrice IS NOT NULL THEN 0 ELSE 1 END,
@@ -2746,8 +2752,26 @@ async function handleAssignProductToRequestedRow(
       AND (
         od.ID = @__rowId
         OR (
-          @__applyToSimilar = 1
-          AND od.ProductID IS NULL
+          (
+            (@__applyToSimilar = 1 AND od.ProductID IS NULL)
+            -- Re-assigning populated twins requires at least one non-empty
+            -- requested field: ordinary product rows have empty Requested*
+            -- columns, so without this guard an all-blank head row would
+            -- match (and re-assign) every other product in the offer.
+            OR (
+              @__applyToSimilarAssigned = 1
+              AND od.ProductID IS NOT NULL
+              AND od.ProductID <> @resolvedProductId
+              AND (
+                ISNULL(LTRIM(RTRIM(@reqBrand)), N'') <> N''
+                OR ISNULL(LTRIM(RTRIM(@reqModel)), N'') <> N''
+                OR ISNULL(LTRIM(RTRIM(@reqPart)),  N'') <> N''
+                OR ISNULL(LTRIM(RTRIM(@reqDesc1)), N'') <> N''
+                OR ISNULL(LTRIM(RTRIM(@reqDesc2)), N'') <> N''
+                OR ISNULL(LTRIM(RTRIM(@reqDesc3)), N'') <> N''
+              )
+            )
+          )
           AND ISNULL(od.IsCategory, 0) = 0
           AND ISNULL(od.IsComment, 0) = 0
           AND ISNULL(LTRIM(RTRIM(od.RequestedBrand)),       N'') = ISNULL(LTRIM(RTRIM(@reqBrand)), N'')
@@ -2810,12 +2834,43 @@ async function handleAssignProductToRequestedRow(
       AND ISNULL(LTRIM(RTRIM(od.RequestedDescription2)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc2)), N'')
       AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'');
 
+    -- Count rows with identical requested data that are populated with a
+    -- DIFFERENT product, so the client can ask whether to change those too
+    -- (e.g. the user re-populated one of several identical requested rows
+    -- with a new product).  Requires at least one non-empty requested field —
+    -- ordinary product rows have empty Requested* columns and must never be
+    -- treated as twins of a blank head row.
+    DECLARE @similarAssignedCount INT = 0;
+    IF ISNULL(LTRIM(RTRIM(@reqBrand)), N'') <> N''
+      OR ISNULL(LTRIM(RTRIM(@reqModel)), N'') <> N''
+      OR ISNULL(LTRIM(RTRIM(@reqPart)),  N'') <> N''
+      OR ISNULL(LTRIM(RTRIM(@reqDesc1)), N'') <> N''
+      OR ISNULL(LTRIM(RTRIM(@reqDesc2)), N'') <> N''
+      OR ISNULL(LTRIM(RTRIM(@reqDesc3)), N'') <> N''
+    BEGIN
+      SELECT @similarAssignedCount = COUNT(*)
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @__offerId
+        AND od.ID <> @__rowId
+        AND od.ProductID IS NOT NULL
+        AND od.ProductID <> @resolvedProductId
+        AND ISNULL(od.IsCategory, 0) = 0
+        AND ISNULL(od.IsComment, 0) = 0
+        AND ISNULL(LTRIM(RTRIM(od.RequestedBrand)),       N'') = ISNULL(LTRIM(RTRIM(@reqBrand)), N'')
+        AND ISNULL(LTRIM(RTRIM(od.RequestedModelNo)),     N'') = ISNULL(LTRIM(RTRIM(@reqModel)), N'')
+        AND ISNULL(LTRIM(RTRIM(od.RequestedPartNo)),      N'') = ISNULL(LTRIM(RTRIM(@reqPart)),  N'')
+        AND ISNULL(LTRIM(RTRIM(od.RequestedDescription)), N'') = ISNULL(LTRIM(RTRIM(@reqDesc1)), N'')
+        AND ISNULL(LTRIM(RTRIM(od.RequestedDescription2)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc2)), N'')
+        AND ISNULL(LTRIM(RTRIM(od.RequestedDescription3)),N'') = ISNULL(LTRIM(RTRIM(@reqDesc3)), N'');
+    END;
+
     SELECT TOP (1)
       urp.OfferDetailID,
       urp.Quantity,
       urp.CustomerDiscount,
       urp.TelmacoDiscount,
-      @similarUnassignedCount AS SimilarUnassignedCount
+      @similarUnassignedCount AS SimilarUnassignedCount,
+      @similarAssignedCount AS SimilarAssignedCount
     FROM @UpdatedRowPricing urp
     ORDER BY CASE WHEN urp.OfferDetailID = @__rowId THEN 0 ELSE 1 END;
   `;
@@ -2835,10 +2890,14 @@ async function handleAssignProductToRequestedRow(
     CustomerDiscount?: number | null;
     TelmacoDiscount?: number | null;
     SimilarUnassignedCount?: number | null;
+    SimilarAssignedCount?: number | null;
   } | null;
 
   const similarUnassignedCount = typeof pricingRow?.SimilarUnassignedCount === 'number'
     ? pricingRow.SimilarUnassignedCount
+    : 0;
+  const similarAssignedCount = typeof pricingRow?.SimilarAssignedCount === 'number'
+    ? pricingRow.SimilarAssignedCount
     : 0;
 
   // EP LINC: assigning products (Populate) can push a brand's RRP total over
@@ -2857,13 +2916,14 @@ async function handleAssignProductToRequestedRow(
   realtimeEvents.emit(
     `offer:${offerId}:products`,
     'rows-refresh',
-    { reason: 'assign-requested', requestedRowId, productId, applyToSimilar, updatedBy: auditUserId ?? null },
+    { reason: 'assign-requested', requestedRowId, productId, applyToSimilar, applyToSimilarAssigned, updatedBy: auditUserId ?? null },
   );
 
   return NextResponse.json({
     ok: true,
     updated: rowsAffected,
     similarUnassignedCount,
+    similarAssignedCount,
     pricing: pricingRow
       ? {
           offerDetailId: pricingRow.OfferDetailID ?? null,

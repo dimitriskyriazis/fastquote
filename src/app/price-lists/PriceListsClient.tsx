@@ -94,6 +94,10 @@ const validToStatusClassRules = {
     resolvePriceListRowStatus(params.data) === "expiring",
   "pl-valid-to--expired": (params: { data?: Record<string, unknown> | null }) =>
     resolvePriceListRowStatus(params.data) === "expired",
+  // Scheduled list (Valid From in the future): blue — not in effect yet,
+  // activates automatically on its start date.
+  "pl-valid-to--future": (params: { data?: Record<string, unknown> | null }) =>
+    resolvePriceListRowStatus(params.data) === "future",
 };
 
 const PRICE_LIST_ROW_TYPE_LABEL = "price list";

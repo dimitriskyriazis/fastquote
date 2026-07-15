@@ -184,19 +184,19 @@
    colour survives row selection. */
 
 
-.gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)),
-.gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)) {
+.gridShell :global(.ag-row.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)),
+.gridShell :global(.ag-row.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)) {
   background-color: #e5e7eb !important;
 }
 
 /* Preserve banded row colors when entire row is selected (these override the rule above) */
-.gridShell :global(.ag-row-odd.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)),
-.gridShell :global(.ag-row-odd.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)) {
+.gridShell :global(.ag-row-odd.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)),
+.gridShell :global(.ag-row-odd.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)) {
   background-color: #e0e3e8 !important; /* Darker version of #f4f6fb for odd rows */
 }
 
-.gridShell :global(.ag-row-even.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)),
-.gridShell :global(.ag-row-even.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired)) {
+.gridShell :global(.ag-row-even.ag-row-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)),
+.gridShell :global(.ag-row-even.ag-row-range-selected:not(.offer-row--printable-comment):not(.offer-row--nonprintable-comment):not(.offer-row--printable-service):not(.offer-row--nonprintable-service):not(.offer-row--category):not(.offer-row--option) .ag-cell:not(.pl-valid-to--active):not(.pl-valid-to--expiring):not(.pl-valid-to--expired):not(.pl-valid-to--future)) {
   background-color: #ededed !important; /* Darker version of #ffffff for even rows */
 }
 
