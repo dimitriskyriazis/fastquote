@@ -242,8 +242,10 @@ const TELMACO_LOGO_FILE = 'telmaco.jpg';
 
 // Telvin-branded offers swap the logo, the accent line colour, the company name,
 // tax id, phone, and email, drop the website line, relabel the ref number as
-// "TLV-ID", and omit the signers' names and the responsible person's email.
-// The address and tax office stay the same as Telmaco's.
+// "TLV-ID", and omit the responsible person's name and email from the info box.
+// The signature shows the offer's sales person and approval user like Telmaco
+// (the PDF route retitles Drossos Kyriazis to CEO on Telvin offers). Address
+// and tax office stay Telmaco's.
 const TELVIN_BRANDING = {
   logoFile: 'TLVfinallogo.jpg',
   accentColor: '#78aa66',
@@ -265,9 +267,9 @@ type Branding = {
   email: string;
   // null hides the website line entirely (Telvin has none on the offer).
   website: string | null;
-  // Telvin offers omit the responsible person (name + email) from the info box
-  // and the signers' names from the signature.
-  hidePeople: boolean;
+  // Telvin offers omit the responsible person (name + email) from the info box;
+  // the signature block is unaffected.
+  hideResponsible: boolean;
   // Logo sizing differs per brand because the two logos have different aspect
   // ratios. coverLogoFit = cover page; compactLogoFit = small-offer header.
   coverLogoFit: Record<PdfOrientation, [number, number]>;
@@ -439,7 +441,7 @@ function resolveBranding(data: OfferPdfData): Branding {
       phone: TELVIN_BRANDING.phone,
       email: TELVIN_BRANDING.email,
       website: null,
-      hidePeople: true,
+      hideResponsible: true,
       coverLogoFit: TELVIN_COVER_LOGO_FIT,
       compactLogoFit: TELVIN_COMPACT_LOGO_FIT,
     };
@@ -453,7 +455,7 @@ function resolveBranding(data: OfferPdfData): Branding {
     phone: COMPANY.phone,
     email: COMPANY.email,
     website: COMPANY.website,
-    hidePeople: false,
+    hideResponsible: false,
     coverLogoFit: COVER_LOGO_FIT,
     compactLogoFit: INNER_LOGO_FIT,
   };
@@ -595,8 +597,8 @@ function buildCompactHeader(
   const rightInfo = [
     { label: L.refNo, value: meta.refNo },
     { label: L.date, value: meta.date },
-    ...(!branding.hidePeople ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
-    ...(salesEmail && !branding.hidePeople ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
+    ...(!branding.hideResponsible ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
+    ...(salesEmail && !branding.hideResponsible ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
   const labelStyle = { fontSize: 7.3, color: COLORS.secondaryText, bold: false };
@@ -715,8 +717,8 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
   const rightInfo = [
     { label: L.refNo, value: meta.refNo },
     { label: L.date, value: meta.date },
-    ...(!branding.hidePeople ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
-    ...(salesEmail && !branding.hidePeople ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
+    ...(!branding.hideResponsible ? [{ label: L.responsible, value: meta.salesName || '-' }] : []),
+    ...(salesEmail && !branding.hideResponsible ? [{ label: L.responsibleEmail, value: salesEmail }] : []),
   ];
 
   const companyName = lang === 'el' ? branding.nameEl : branding.nameEn;
@@ -1557,46 +1559,35 @@ function buildSignatureBlock(data: OfferPdfData, L: Labels, lang: PdfLang, orien
 
   const companySign = lang === 'el' ? branding.nameEl : branding.nameEn;
 
-  // Telvin offers sign off with the company name plus the approval user only
-  // (no sales person); Telmaco shows the sales person and/or approval user.
-  const signers = branding.hidePeople
-    ? meta.approvalName
-      ? [
-          {
-            stack: [
-              { text: meta.approvalName, style: 'body', bold: true },
-              { text: rightTitle, style: 'body', margin: [0, 3, 0, 0] },
-            ],
-          },
-        ]
-      : []
-    : [
-        sameSigner
-          ? {
+  // Both brands sign with the offer's sales person (left) and approval user
+  // (right); on Telvin offers the PDF route retitles Drossos Kyriazis to CEO.
+  const signers = [
+    sameSigner
+      ? {
+          stack: [
+            { text: meta.salesName || meta.approvalName, style: 'body', bold: true },
+            { text: rightTitle || leftTitle, style: 'body', margin: [0, 3, 0, 0] },
+          ],
+        }
+      : {
+          columns: [
+            {
+              width: '50%',
               stack: [
-                { text: meta.salesName || meta.approvalName, style: 'body', bold: true },
-                { text: rightTitle || leftTitle, style: 'body', margin: [0, 3, 0, 0] },
-              ],
-            }
-          : {
-              columns: [
-                {
-                  width: '50%',
-                  stack: [
-                    { text: meta.salesName , style: 'body', bold: true },
-                    { text: leftTitle, style: 'body', margin: [0, 3, 0, 0] },
-                  ],
-                },
-                {
-                  width: '50%',
-                  stack: [
-                    { text: meta.approvalName , style: 'body', bold: true, alignment: 'right' },
-                    { text: rightTitle, style: 'body', alignment: 'right', margin: [0, 3, 0, 0] },
-                  ],
-                },
+                { text: meta.salesName , style: 'body', bold: true },
+                { text: leftTitle, style: 'body', margin: [0, 3, 0, 0] },
               ],
             },
-      ];
+            {
+              width: '50%',
+              stack: [
+                { text: meta.approvalName , style: 'body', bold: true, alignment: 'right' },
+                { text: rightTitle, style: 'body', alignment: 'right', margin: [0, 3, 0, 0] },
+              ],
+            },
+          ],
+        },
+  ];
 
   return {
     stack: [

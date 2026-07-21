@@ -19,6 +19,12 @@ const toFiniteNumberOrNull = (value: unknown): number | null => {
   return null;
 };
 
+// On Telvin offers drossos.kyriazis signs as CEO — his Telvin title — instead
+// of the Telmaco SignTitle stored on his AspNetUsers row. Everything else
+// about the signers stays driven by the offer's SalesPersonId/ApprovalUserId.
+const TELVIN_CEO_USER_ID = 6;
+const TELVIN_CEO_SIGN_TITLE = 'CEO';
+
 type OfferHeaderRow = {
   ID: number;
   Title: string | null;
@@ -49,6 +55,7 @@ type OfferHeaderRow = {
   CustomerTaxID: string | null;
   CustomerTaxOffice: string | null;
   ContactFullName: string | null;
+  ApprovalUserId: number | null;
   SalesPersonNameEN: string | null;
   SalesPersonNameGR: string | null;
   SalesPersonSignTitle: string | null;
@@ -166,6 +173,7 @@ export async function GET(
             CASE WHEN cnt.FirstName IS NOT NULL AND cnt.LastName IS NOT NULL THEN ' ' ELSE '' END,
             ISNULL(cnt.LastName, '')
           ))) AS ContactFullName,
+          o.ApprovalUserId,
           sales.FullName AS SalesPersonNameEN,
           sales.FullNameGR AS SalesPersonNameGR,
           sales.SignTitle AS SalesPersonSignTitle,
@@ -189,6 +197,10 @@ export async function GET(
     const header = headerResult.recordset?.[0];
     if (!header) {
       return NextResponse.json({ ok: false, error: 'Offer not found' }, { status: 404 });
+    }
+
+    if (header.IsTelvin && header.ApprovalUserId === TELVIN_CEO_USER_ID) {
+      header.ApprovalUserSignTitle = TELVIN_CEO_SIGN_TITLE;
     }
 
     const offerLanguage = normalizeOfferLanguage(header.OfferLanguage);
