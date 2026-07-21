@@ -448,6 +448,7 @@ async function fetchOfferProducts(
     LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
     WHERE od.OfferID = @offerId
       AND od.ProductID IS NOT NULL
+      AND ISNULL(od.IsService, 0) = 0
       AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
   `);
   return productsResult.recordset ?? [];
@@ -614,11 +615,13 @@ async function resolveOrCreateProject(
            FROM dbo.OfferDetails od
            WHERE od.OfferID = o.ID
              AND od.ProductID IS NOT NULL
+             AND ISNULL(od.IsService, 0) = 0
              AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
         (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
            FROM dbo.OfferDetails od
            WHERE od.OfferID = o.ID
              AND od.ProductID IS NOT NULL
+             AND ISNULL(od.IsService, 0) = 0
              AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
         approver.NameCode AS ApprovalNameCode,
         sales.NameCode AS SalesNameCode
@@ -1624,6 +1627,7 @@ async function handleCompareProducts(
     INNER JOIN dbo.Products p ON od.ProductID = p.ID
     LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
     WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL
+      AND ISNULL(od.IsService, 0) = 0
   `);
 
   const eligibleLines = (linesRes.recordset ?? [])
@@ -1779,6 +1783,7 @@ async function handlePrepareSummary(
     INNER JOIN dbo.Products p ON od.ProductID = p.ID
     WHERE od.OfferID = @offerId
       AND od.ProductID IS NOT NULL
+      AND ISNULL(od.IsService, 0) = 0
   `);
 
   // Per-line Σχόλια authored in the Compare step (MTRLINES.COMMENTS). When the
@@ -2094,6 +2099,7 @@ async function handleExecute(
       INNER JOIN dbo.Products p ON od.ProductID = p.ID
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
+        AND ISNULL(od.IsService, 0) = 0
     `);
 
     // Per-line Σχόλια authored in the Compare step → MTRLINES.COMMENTS. The
@@ -2590,6 +2596,7 @@ export async function POST(
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId
         AND od.ProductID IS NOT NULL
+        AND ISNULL(od.IsService, 0) = 0
         AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
     `);
 
@@ -3134,11 +3141,13 @@ export async function POST(
                FROM dbo.OfferDetails od
                WHERE od.OfferID = o.ID
                  AND od.ProductID IS NOT NULL
+                 AND ISNULL(od.IsService, 0) = 0
                  AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
             (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
                FROM dbo.OfferDetails od
                WHERE od.OfferID = o.ID
                  AND od.ProductID IS NOT NULL
+                 AND ISNULL(od.IsService, 0) = 0
                  AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
             approver.NameCode AS ApprovalNameCode,
             sales.NameCode AS SalesNameCode
@@ -3242,6 +3251,7 @@ export async function POST(
             INNER JOIN dbo.Products p ON od.ProductID = p.ID
             WHERE od.OfferID = @offerId
               AND od.ProductID IS NOT NULL
+              AND ISNULL(od.IsService, 0) = 0
               AND p.ERPID IS NOT NULL
           `);
 
@@ -3605,11 +3615,13 @@ export async function POST(
              FROM dbo.OfferDetails od
              WHERE od.OfferID = o.ID
                AND od.ProductID IS NOT NULL
+               AND ISNULL(od.IsService, 0) = 0
                AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
           (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
              FROM dbo.OfferDetails od
              WHERE od.OfferID = o.ID
                AND od.ProductID IS NOT NULL
+               AND ISNULL(od.IsService, 0) = 0
                AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
           approver.NameCode AS ApprovalNameCode,
           sales.NameCode AS SalesNameCode
@@ -3713,6 +3725,7 @@ export async function POST(
           INNER JOIN dbo.Products p ON od.ProductID = p.ID
           WHERE od.OfferID = @offerId
             AND od.ProductID IS NOT NULL
+            AND ISNULL(od.IsService, 0) = 0
             AND p.ERPID IS NOT NULL
         `);
 
