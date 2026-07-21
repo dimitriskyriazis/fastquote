@@ -28,12 +28,7 @@ export default function Page() {
         <div
           id="undo-portal"
           className={`${layoutStyles.headerSide} ${layoutStyles.headerSideStart}`}
-        >
-          <Link href="/products" className={`${layoutStyles.backLink} page-header-button`}>
-            <span aria-hidden="true">←</span>
-            Back to products
-          </Link>
-        </div>
+        />
         <h1 className={`${layoutStyles.heading} ${layoutStyles.headingCentered}`}>{headingText}</h1>
         <div className={`${layoutStyles.headerSide} ${layoutStyles.headerSideEnd}`}>
           <Link
