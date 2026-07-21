@@ -386,11 +386,19 @@ export default function MatchRequestedProductsModal({
     entry.requestedDescription3,
     effectiveExpansion,
   ]);
+  // Ref mirror for the filter listener (created once with stable deps) so it
+  // can tell a user-typed Part Number apart from the entry's own auto chip.
+  const requestedFilterModelRef = useRef<Record<string, FuzzyTextFilter> | null>(null);
+  requestedFilterModelRef.current = requestedFilterModel;
 
   // When the user submits a prompt or the auto-expand AI response lands, we
   // override the hidden-token payload so the in-flight query picks up the
   // extended terms.  Cleared on entry change so each row starts fresh.
   const [overrideHiddenTokens, setOverrideHiddenTokens] = useState<HiddenFilterTokens | null>(null);
+  // Ref mirror so the exact-part collapse path (defined with stable deps)
+  // can read the current override without re-creating its callback.
+  const overrideHiddenTokensRef = useRef<HiddenFilterTokens | null>(null);
+  overrideHiddenTokensRef.current = overrideHiddenTokens;
   // Once the user edits the filter chips, stop falling back to the entry-
   // derived hidden tokens — those encode synonyms of the ORIGINAL entry text
   // and would keep biasing the SQL WHERE toward the old data while the
@@ -461,6 +469,13 @@ export default function MatchRequestedProductsModal({
   // earlier in the file than the trigger is defined, so we thread it
   // through a ref that's populated after the callback is created below.
   const triggerSemanticFromFiltersRef = useRef<((api: MatcherGridApi) => void) | null>(null);
+  // Exact part-number fast path (same forward-ref pattern): last Part
+  // Number filter value seen by the filter listener (programmatic or not),
+  // so we only fire the exact-match check when the user actually changed
+  // the part value — not when they edited some other column's chip.
+  const maybeCollapseToExactPartRef = useRef<((api: MatcherGridApi) => void) | null>(null);
+  const lastPartFilterValueRef = useRef<string>('');
+  const exactPartAbortRef = useRef<AbortController | null>(null);
 
   // Rerank is now server-inline (see products/add route) so no client state
   // or refetch dance is needed.  The grid's first response already arrives
@@ -945,6 +960,25 @@ export default function MatchRequestedProductsModal({
         const descFilter = (model as Record<string, { filter?: string }>).Description;
         setFarnellPartNumber(partFilter?.filter ?? null);
         setFarnellDescription(descFilter?.filter ?? null);
+        // Exact part-number fast path: when the Part Number value actually
+        // changed and isn't the entry's own auto-populated chip, check the
+        // catalog for an exact match and collapse the other filter chips if
+        // one exists.  Deliberately NOT gated on wasProgrammatic — the
+        // suppression counter can over-count (a token incremented while the
+        // grid API was still null never gets consumed) and would swallow
+        // the user's first paste.  Programmatic writers are excluded
+        // structurally instead: entry applies set PartNumber to the entry
+        // chip (equal → skipped), prompt routing runs with promptSubmitted
+        // already true (the collapse callback bails), and the collapse
+        // itself leaves the part value unchanged (no re-fire).
+        const partValueNow = typeof partFilter?.filter === 'string' ? partFilter.filter.trim() : '';
+        const partValueChanged = partValueNow !== lastPartFilterValueRef.current;
+        lastPartFilterValueRef.current = partValueNow;
+        const entryPartChip = requestedFilterModelRef.current?.PartNumber as { filter?: unknown } | undefined;
+        const entryPartValue = typeof entryPartChip?.filter === 'string' ? entryPartChip.filter.trim() : '';
+        if (partValueChanged && partValueNow && partValueNow !== entryPartValue) {
+          maybeCollapseToExactPartRef.current?.(api);
+        }
       } catch { /* noop */ }
       // Only schedule the debounced /expand for genuine user edits.  For
       // programmatic setFilterModel calls (entry-auto-apply, prompt, AI
@@ -1223,11 +1257,86 @@ export default function MatchRequestedProductsModal({
 
   triggerSemanticFromFiltersRef.current = triggerSemanticFromFilters;
 
+  // Exact part-number fast path.  When the user types or pastes a part
+  // number into the Part Number filter and it resolves to an exact catalog
+  // match (normalized like the grid's server filter: dashes/spaces
+  // stripped, ModelNumber and legacy part numbers cross-checked), drop
+  // every other filter chip so the matching row surfaces immediately
+  // instead of being censored by the entry's auto-populated Brand /
+  // Description / Model chips.  /api/products/resolve shares the exact
+  // same normalization as the grid endpoint, so a positive answer here
+  // guarantees the part-only 'contains' filter shows the row.
+  const maybeCollapseToExactPart = useCallback((api: MatcherGridApi) => {
+    if (promptSubmittedRef.current) return;
+    const model = (api.getFilterModel?.() ?? {}) as Record<string, { filter?: unknown; type?: string; operator?: string } | undefined>;
+    const partFilter = model.PartNumber;
+    const partValue = typeof partFilter?.filter === 'string' ? partFilter.filter.trim() : '';
+    if (!partFilter || partValue.length < 3) return;
+    if (partFilter.operator) return; // compound conditions — leave untouched
+    const type = partFilter.type ?? 'contains';
+    if (!['contains', 'equals', 'startsWith', 'endsWith'].includes(type)) return;
+    if (!Object.keys(model).some((k) => k !== 'PartNumber')) return; // nothing to clear
+    const entryId = currentEntryIdRef.current;
+    exactPartAbortRef.current?.abort();
+    const controller = new AbortController();
+    exactPartAbortRef.current = controller;
+    (async () => {
+      try {
+        const res = await fetch(`/api/products/resolve?partNumber=${encodeURIComponent(partValue)}`, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        // 200 = single exact match; 404 + ambiguous = exact matches under
+        // several brands.  Both mean the part number alone pins down the
+        // right row(s), so both collapse.
+        let exact = res.ok;
+        if (!exact && res.status === 404) {
+          try {
+            const data = (await res.json()) as { ambiguous?: boolean };
+            exact = Boolean(data?.ambiguous);
+          } catch { exact = false; }
+        }
+        if (!exact || controller.signal.aborted) return;
+        if (currentEntryIdRef.current !== entryId) return;
+        const liveApi = productsApiRef.current;
+        if (!liveApi || (liveApi as unknown as { isDestroyed?: () => boolean }).isDestroyed?.()) return;
+        const liveModel = (liveApi.getFilterModel?.() ?? {}) as Record<string, { filter?: unknown } | undefined>;
+        const livePart = typeof liveModel.PartNumber?.filter === 'string' ? liveModel.PartNumber.filter.trim() : '';
+        if (livePart !== partValue) return; // user kept typing — stale result
+        if (!Object.keys(liveModel).some((k) => k !== 'PartNumber')) return;
+        // Kill the pending/in-flight semantic expansion so stale hidden
+        // tokens can't re-bias the collapsed part-only query.
+        if (semanticExpandTimerRef.current != null) {
+          window.clearTimeout(semanticExpandTimerRef.current);
+          semanticExpandTimerRef.current = null;
+        }
+        semanticExpandAbortRef.current?.abort();
+        markProgrammaticFilterChange();
+        if (overrideHiddenTokensRef.current != null) {
+          // Same flushSync + skip dance as runExpand: commit the payload
+          // change before setFilterModel fires the fetch, and skip the
+          // hidden-token effect's redundant second refresh.
+          flushSync(() => setOverrideHiddenTokens(null));
+          skipNextRefreshRef.current = true;
+        }
+        try {
+          liveApi.setFilterModel({ PartNumber: liveModel.PartNumber });
+        } catch { /* noop */ }
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        console.warn('Exact part-number check failed', err);
+      }
+    })();
+  }, [markProgrammaticFilterChange]);
+
+  maybeCollapseToExactPartRef.current = maybeCollapseToExactPart;
+
   useEffect(() => () => {
     if (semanticExpandTimerRef.current != null) {
       window.clearTimeout(semanticExpandTimerRef.current);
     }
     semanticExpandAbortRef.current?.abort();
+    exactPartAbortRef.current?.abort();
   }, []);
 
   // Preserved name for the legacy button path in case anywhere still references it.
@@ -1364,6 +1473,9 @@ export default function MatchRequestedProductsModal({
     setOverrideHiddenTokens(null);
     setPromptSubmitted(false);
     lastSemanticSigRef.current = '';
+    // A stale exact-part collapse landing after the entry advanced would
+    // wipe the new entry's auto-populated chips — abort it.
+    exactPartAbortRef.current?.abort();
     userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
     // Reset Farnell state for the new entry
@@ -1380,9 +1492,18 @@ export default function MatchRequestedProductsModal({
   // Split from the reset effect so re-running this on requestedFilterModel
   // changes doesn't also wipe semantic / comment / assign state.
   useEffect(() => {
+    // Skip entirely while the grid isn't ready: setFilterModel would be a
+    // no-op, no filterChanged would ever consume the suppression token, and
+    // the leaked token then misclassifies the user's FIRST real filter edit
+    // as programmatic — swallowing userTouchedFilters, the debounced
+    // semantic /expand AND the exact-part collapse (a pasted exact part
+    // number appeared to do nothing).  Grid-ready application is handled by
+    // handleGridReady → applyRequestedFilterModel.
+    const api = productsApiRef.current;
+    if (!api || (api as unknown as { isDestroyed?: () => boolean }).isDestroyed?.()) return;
     try {
       markProgrammaticFilterChange();
-      productsApiRef.current?.setFilterModel(requestedFilterModel ?? null);
+      api.setFilterModel(requestedFilterModel ?? null);
     } catch {
       /* noop */
     }
