@@ -544,6 +544,23 @@ export default function ClientProductsPage({
       return;
     }
     if (action === 'printable-service' || action === 'non-printable-service') {
+      // Mirror the 'product' branch: a selected requested row becomes the fill
+      // target so services can fill requested rows too.
+      const ids = await offerProductsPanelRef.current?.getSelectedOfferDetailIds?.() ?? [];
+      const requestedId = offerProductsPanelRef.current?.getSelectedRequestedOfferDetailId?.() ?? null;
+      setSavedSelectionIds(ids);
+      setInitialRequestedRowId(requestedId);
+      setInitialProductsViewportScrollTop(
+        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? 0,
+      );
+      const page = pageRef.current;
+      pendingPageScrollRestoreRef.current = {
+        pageScrollTop: page?.scrollTop ?? 0,
+        windowScrollY: typeof window !== 'undefined' ? window.scrollY : 0,
+      };
+      if (requestedId != null) {
+        changeTableLayout('wReq');
+      }
       setAddServiceIsPrintable(action === 'printable-service');
       setShowAddProductModal(false);
       setShowAddServiceModal(true);
@@ -1963,12 +1980,21 @@ export default function ClientProductsPage({
                   }}
                   onClose={() => {
                     setShowAddServiceModal(false);
+                    setPlacementAnchor(null);
+                    setDefaultPlacementMode('fill');
                     offerProductsPanelRef.current?.setInsertLineVisible?.(false);
                     offerProductsPanelRef.current?.deselectAllRows?.();
                   }}
                   getInsertionAnchor={handleGetAddInsertionAnchor}
                   splitViewMode
                   refreshToken={refreshToken}
+                  showRequestedColumns={isStandardPackage ? false : showRequestedColumns}
+                  initialRequestedRowId={initialRequestedRowId}
+                  onInitialRequestedRowConsumed={() => setInitialRequestedRowId(null)}
+                  placementAnchor={placementAnchor}
+                  defaultPlacementMode={defaultPlacementMode}
+                  onPlacementModeChange={handlePlacementModeChange}
+                  getLastClickedRowId={() => offerProductsPanelRef.current?.getLastClickedRowId?.() ?? null}
                 />
               ) : (
               <AddProductsModal

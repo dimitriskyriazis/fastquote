@@ -402,6 +402,45 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     () => `/api/offers/${encodeURIComponent(offerId)}/products/update-prices`,
     [offerId],
   );
+  // Assigning a product from a service pricelist to a requested row requires
+  // the offer's ServicesLocation (tiered ServicePriceGR/OutGR pricing) — the
+  // server rejects the assign with requiresServicesLocation until it is set.
+  // A single shared prompt covers concurrent assigns (identical-row fan-out),
+  // and a decline mutes the prompt until the next assign gesture starts.
+  const servicesLocationPromptRef = useRef<Promise<string | null> | null>(null);
+  const servicesLocationDeclinedRef = useRef(false);
+  const ensureServicesLocation = useCallback(async (): Promise<string | null> => {
+    if (servicesLocationDeclinedRef.current) return null;
+    if (!servicesLocationPromptRef.current) {
+      servicesLocationPromptRef.current = (async () => {
+        const location = await showMultiChoiceDialog({
+          title: 'Services Location Required',
+          message: 'This product is from a service pricelist. Please select the Services Location for this offer:',
+          choices: [
+            { label: 'Ath (Athens)', value: 'Ath' },
+            { label: 'GR (Greece)', value: 'GR' },
+            { label: 'outGR (Outside GR)', value: 'outGR' },
+          ],
+        });
+        if (!location) {
+          servicesLocationDeclinedRef.current = true;
+          return null;
+        }
+        const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ updates: [{ field: 'ServicesLocation', value: location }] }),
+        });
+        if (!res.ok) return null;
+        return location;
+      })()
+        .catch(() => null)
+        .finally(() => {
+          servicesLocationPromptRef.current = null;
+        });
+    }
+    return servicesLocationPromptRef.current;
+  }, [offerId]);
   const assignRequestedRowToProduct = useCallback(
     async (
       requestedRowId: number,
@@ -429,14 +468,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         if (options?.applyToSimilarAssigned) {
           body.applyToSimilarAssigned = true;
         }
-        const res = await fetch(addProductsEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const payload = (await res.json().catch(() => null)) as {
+        type AssignResponse = {
           ok?: boolean;
           error?: string;
+          requiresServicesLocation?: boolean;
           similarAssignedCount?: number;
           pricing?: {
             quantity?: unknown;
@@ -444,6 +479,24 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
             telmacoDiscount?: unknown;
           } | null;
         } | null;
+        const postAssign = async () => {
+          const res = await fetch(addProductsEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          const payload = (await res.json().catch(() => null)) as AssignResponse;
+          return { res, payload };
+        };
+        let { res, payload } = await postAssign();
+        // A service product needs the offer's ServicesLocation first — prompt
+        // once, persist it, then retry the same assignment.
+        if (!res.ok && payload?.requiresServicesLocation === true) {
+          const location = await ensureServicesLocation();
+          if (location) {
+            ({ res, payload } = await postAssign());
+          }
+        }
         if (!res.ok || !payload?.ok) {
           console.error('Failed to assign requested row to product', payload?.error ?? `status ${res.status}`);
           return null;
@@ -468,7 +521,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         return null;
       }
     },
-    [addProductsEndpoint],
+    [addProductsEndpoint, ensureServicesLocation],
   );
   const [totals, setTotals] = useState<{
     totalListPrice: number;
@@ -3262,6 +3315,10 @@ const requestedColumnDefsMap = useMemo(
     });
     if (requestedNodes.length === 0) return;
 
+    // A fresh populate run gets a fresh chance at the ServicesLocation prompt
+    // (a decline mutes it only for the remainder of one run).
+    servicesLocationDeclinedRef.current = false;
+
     try {
       gridApiRef.current?.deselectAll?.();
     } catch {
@@ -3385,6 +3442,8 @@ const requestedColumnDefsMap = useMemo(
             d.TotalCost = null;
             d.Quantity = null;
             d.IsCategory = 0;
+            d.IsService = null;
+            d.ServiceType = null;
           }
         } catch (err) {
           console.error('Failed to clear existing product data for re-population', err);
@@ -3901,6 +3960,10 @@ const requestedColumnDefsMap = useMemo(
   ) => {
     if (!currentRequestedMatch) return false;
     const match = currentRequestedMatch;
+
+    // Each manual assignment is a new user gesture — re-arm the
+    // ServicesLocation prompt even if it was declined earlier.
+    servicesLocationDeclinedRef.current = false;
 
     const duplicates = consumeQueueHeadWithDuplicates(match);
     const duplicateCount = duplicates.length;

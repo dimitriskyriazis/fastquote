@@ -378,9 +378,15 @@ export default function AddProductsModal({
     // buildRequestedFilterState so rebranded rows still match via
     // Description, while correct-brand rows rank higher via scoring.
     const smartActive = smartSearchEnabled || promptSubmitted;
+    // Services are normally hidden here (they have their own Add Service
+    // menu), but when this modal is filling a requested row the user must be
+    // able to match it to a service too — requested rows can hold either.
+    const canFillRequestedRow = placementAnchor?.isRequested === true
+      || initialRequestedRowId != null
+      || selectedRequestedRowId != null;
     const payload: Record<string, unknown> = {
       action: 'products',
-      ...(serviceOnly ? { serviceOnly: true } : { excludeServices: true }),
+      ...(serviceOnly ? { serviceOnly: true } : canFillRequestedRow ? {} : { excludeServices: true }),
     };
     // orFilterColumns OR-combines column filters across BrandName / PartNumber
     // / ModelNumber / Description.  That is what makes expand mode catch
@@ -404,7 +410,7 @@ export default function AddProductsModal({
     // rendered the new product twice (the server row plus the client-side
     // pinned row).  The new product is now shown only as a pinned top row.
     return payload;
-  }, [hiddenFilterTokens, negativeDescriptionTerms, serviceOnly, smartSearchEnabled, promptSubmitted]);
+  }, [hiddenFilterTokens, negativeDescriptionTerms, serviceOnly, smartSearchEnabled, promptSubmitted, placementAnchor?.isRequested, initialRequestedRowId, selectedRequestedRowId]);
 
   const endpoint = useMemo(
     () => `/api/offers/${encodeURIComponent(offerId)}/products/add`,
@@ -1142,6 +1148,7 @@ export default function AddProductsModal({
             categoryId: baseCategory,
             productId: productPayload[0].productId,
             ...(trimmedComment ? { comment: trimmedComment } : {}),
+            ...(serviceOnly && defaultIsPrintable !== undefined ? { isPrintable: defaultIsPrintable } : {}),
           }
         : {
             action: 'add',

@@ -92,8 +92,10 @@ export async function GET(req: NextRequest) {
       const brandFilterSql = enforceBrandKey && brandKey
         ? ` AND ${brandKeySql('b.Name')} = @brandKey`
         : '';
+      // Disabled products must never auto-resolve (Populate Offer, Farnell
+      // matching, requested-row lookups) — same filter as the add-route search.
       const whereClause = whereConditions.length
-        ? `WHERE (${whereConditions.join(' OR ')})${brandFilterSql}`
+        ? `WHERE ISNULL(p.Enabled, 1) = 1 AND (${whereConditions.join(' OR ')})${brandFilterSql}`
         : '';
       const brandOrderSql = brandKey
         ? `
@@ -147,7 +149,8 @@ export async function GET(req: NextRequest) {
         const ambiguityResult = await ambiguityRequest.query<{ BrandCount: number }>(`
           SELECT COUNT(DISTINCT p.BrandID) AS BrandCount
           FROM dbo.Products p
-          WHERE (${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ${stripXBetweenDigitsSql(`ISNULL(p.LegacyPartNoCleaned, '')`)} = @searchValue)
+          WHERE ISNULL(p.Enabled, 1) = 1
+            AND (${partModelNumberSql('p.PartNumber')} = @searchValue OR ${partModelNumberSql('p.ModelNumber')} = @searchValue OR ${stripXBetweenDigitsSql(`ISNULL(p.LegacyPartNoCleaned, '')`)} = @searchValue)
         `);
         const brandCount = ambiguityResult.recordset?.[0]?.BrandCount ?? 0;
         if (brandCount > 1) {

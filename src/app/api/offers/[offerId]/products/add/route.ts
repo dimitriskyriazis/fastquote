@@ -2137,7 +2137,7 @@ async function handleUnassignRequestedRows(
              od.Margin, od.GrossProfit, od.TotalCost,
              od.PriceListID, od.PriceListItemID,
              od.Quantity, od.TelmacoWarranty, od.Warranty,
-             od.IsCategory, od.IsComment, od.IsPrintable, od.Comment
+             od.IsCategory, od.IsComment, od.IsPrintable, od.IsService, od.ServiceType, od.Comment
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
         AND od.ID IN (${idParamNames})
@@ -2181,6 +2181,8 @@ async function handleUnassignRequestedRows(
         od.IsCategory = 0,
         od.IsComment = 0,
         od.IsPrintable = NULL,
+        od.IsService = NULL,
+        od.ServiceType = NULL,
         od.Comment = NULL,
         od.ModifiedOn = SYSUTCDATETIME(),
         od.ModifiedBy = @__modifiedBy
@@ -2244,7 +2246,7 @@ async function handleSnapshotRows(offerId: number, body: Record<string, unknown>
              od.Margin, od.GrossProfit, od.TotalCost,
              od.PriceListID, od.PriceListItemID,
              od.Quantity, od.TelmacoWarranty, od.Warranty,
-             od.IsCategory, od.IsComment, od.IsPrintable, od.Comment
+             od.IsCategory, od.IsComment, od.IsPrintable, od.IsService, od.ServiceType, od.Comment
       FROM dbo.OfferDetails od
       WHERE od.OfferID = @__offerId
         AND od.ID IN (${idParamNames})
@@ -2373,6 +2375,10 @@ async function handleAssignProductToRequestedRow(
   const commentValue = typeof commentRaw === 'string' ? commentRaw.trim() || null : null;
   const applyToSimilar = body?.applyToSimilar === true;
   const applyToSimilarAssigned = body?.applyToSimilarAssigned === true;
+  // Printable choice for service fills (sent by the Add Service modal).
+  // Products ignore it; services default to printable when absent.
+  const isPrintableRaw = body?.isPrintable;
+  const isPrintableValue = isPrintableRaw === true ? 1 : isPrintableRaw === false ? 0 : null;
 
   // Instrumentation: assignment-accuracy metrics from the match-requested
   // modal.  Tagged with "tag: assignment-metrics" in the log context (the
@@ -2405,6 +2411,35 @@ async function handleAssignProductToRequestedRow(
 
   try {
   const pool = await getPool();
+
+  // Pre-flight (mirrors handleAddProducts): assigning a product from a service
+  // pricelist needs the offer's ServicesLocation for tiered pricing
+  // (ServicePriceGR / ServicePriceOutGR). Ask the client to set it first.
+  {
+    const checkReq = pool.request();
+    checkReq.input('__offerId', sql.Int, offerId);
+    checkReq.input('__pid', sql.Int, productId);
+    const checkResult = await checkReq.query<{ hasServiceProducts: number; hasLocation: number }>(`
+      SELECT
+        (SELECT CASE WHEN EXISTS (
+          SELECT 1
+          FROM dbo.Products p
+          INNER JOIN dbo.PriceListItems pli ON pli.ProductID = p.ID
+          INNER JOIN dbo.PriceLists pl ON pl.ID = pli.PriceListID AND ${priceListInEffectSql('pl')} AND ISNULL(pl.IsService, 0) = 1
+          WHERE p.ID = @__pid
+        ) THEN 1 ELSE 0 END) AS hasServiceProducts,
+        (SELECT CASE WHEN ServicesLocation IS NOT NULL THEN 1 ELSE 0 END
+         FROM dbo.Offer WHERE ID = @__offerId) AS hasLocation
+    `);
+    const row = checkResult.recordset?.[0];
+    if (row && row.hasServiceProducts === 1 && row.hasLocation === 0) {
+      return NextResponse.json(
+        { ok: false, requiresServicesLocation: true, error: 'Services Location is required for this offer to add service products.' },
+        { status: 400 },
+      );
+    }
+  }
+
   let categoryTreeOrdering: string | null = null;
   if (categoryId != null) {
     const lookup = pool.request();
@@ -2429,16 +2464,19 @@ async function handleAssignProductToRequestedRow(
   request.input('__comment', sql.NVarChar(sql.MAX), commentValue);
   request.input('__applyToSimilar', sql.Bit, applyToSimilar ? 1 : 0);
   request.input('__applyToSimilarAssigned', sql.Bit, applyToSimilarAssigned ? 1 : 0);
+  request.input('__isPrintable', sql.Bit, isPrintableValue);
 
   const query = `
     DECLARE @pricingPolicyId INT;
     DECLARE @offerCurrencyId INT;
     DECLARE @offerCurrencyModifier DECIMAL(18, 8);
+    DECLARE @servicesLocation NVARCHAR(10);
 
     SELECT
       @pricingPolicyId = o.PricingPolicyID,
       @offerCurrencyId = o.CurrencyID,
-      @offerCurrencyModifier = o.CurrencyModifier
+      @offerCurrencyModifier = o.CurrencyModifier,
+      @servicesLocation = o.ServicesLocation
     FROM dbo.Offer o
     WHERE o.ID = @__offerId;
 
@@ -2517,7 +2555,9 @@ async function handleAssignProductToRequestedRow(
       ListPrice DECIMAL(18, 4) NULL,
       CostPrice DECIMAL(18, 4) NULL,
       OtherCurrencyID INT NULL,
-      CurrencyCostModifier DECIMAL(18, 8) NULL
+      CurrencyCostModifier DECIMAL(18, 8) NULL,
+      IsService BIT NULL,
+      ServiceType NVARCHAR(20) NULL
     );
     DECLARE @UpdatedRowPricing TABLE (
       OfferDetailID INT NOT NULL,
@@ -2538,7 +2578,9 @@ async function handleAssignProductToRequestedRow(
       ListPrice,
       CostPrice,
       OtherCurrencyID,
-      CurrencyCostModifier
+      CurrencyCostModifier,
+      IsService,
+      ServiceType
     )
     SELECT
       pr.ID AS ProductID,
@@ -2552,20 +2594,31 @@ async function handleAssignProductToRequestedRow(
       price.ListPrice,
       price.CostPrice,
       price.OtherCurrencyID,
-      price.CurrencyCostModifier
+      price.CurrencyCostModifier,
+      price.IsService,
+      price.ServiceType
     FROM dbo.Products pr
     OUTER APPLY (
       SELECT TOP (1)
         pli.ID AS PriceListItemID,
         pli.PriceListID,
-        CASE WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
-             ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
+        CASE
+          WHEN ISNULL(COALESCE(pl.IsService, pr.IsService), 0) = 1 THEN
+            CASE @servicesLocation
+              WHEN 'GR'    THEN ISNULL(pli.ServicePriceGR,    pli.ListPrice)
+              WHEN 'outGR' THEN ISNULL(pli.ServicePriceOutGR, pli.ListPrice)
+              ELSE pli.ListPrice
+            END
+          WHEN pl.CurrencyId = @offerCurrencyId THEN pli.ListPrice
+          ELSE pli.ListPrice * COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1)
         END AS ListPrice,
         pli.CostPrice,
         CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
              ELSE COALESCE(pl.CostCurrencyID, pl.CurrencyId) END AS OtherCurrencyID,
         CASE WHEN COALESCE(pl.CostCurrencyID, pl.CurrencyId) = @offerCurrencyId THEN NULL
-             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier
+             ELSE COALESCE(@offerCurrencyModifier, pl.CurrencyCostModifier, 1) END AS CurrencyCostModifier,
+        COALESCE(pl.IsService, pr.IsService) AS IsService,
+        COALESCE(pli.ServiceType, pr.ServiceType) AS ServiceType
       FROM dbo.PriceListItems pli
         INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
         LEFT JOIN dbo.PriceListPricingPolicy plpp ON plpp.PriceListID = pl.ID AND plpp.PricingPolicyID = @pricingPolicyId
@@ -2588,9 +2641,13 @@ async function handleAssignProductToRequestedRow(
           THEN NULLIF(LTRIM(RTRIM(ISNULL(od.RequestedItemNo, ''))), '')
         ELSE od.TreeOrdering
       END,
-      od.IsPrintable = NULL,
+      -- Product fills reset IsPrintable; service fills honor the caller's
+      -- printable choice (Add Service modal) and default to printable.
+      od.IsPrintable = CASE WHEN ISNULL(p.IsService, 0) = 1 THEN COALESCE(@__isPrintable, 1) ELSE NULL END,
       od.IsComment = 0,
       od.IsCategory = 0,
+      od.IsService = p.IsService,
+      od.ServiceType = p.ServiceType,
       od.ProductID = p.ProductID,
       od.BrandID = p.BrandID,
       od.PartNumber = p.PartNumber,
@@ -2602,10 +2659,17 @@ async function handleAssignProductToRequestedRow(
       od.TelmacoWarranty = COALESCE(discounts.TelmacoWarrantyYears, 0),
       od.Warranty = COALESCE(discounts.CustomerWarrantyYears, 0),
       od.Quantity = q.Quantity,
-      od.ListPrice = p.ListPrice,
-      od.NetUnitPrice = computed.ComputedNetUnitPrice,
-      od.TotalPrice = CASE WHEN p.ListPrice IS NULL THEN NULL ELSE p.ListPrice * q.Quantity END,
+      -- Non-printable services carry only a cost; List Price / Net (Unit)
+      -- Price and their derived totals are left NULL (mirrors handleAddProducts).
+      od.ListPrice = CASE WHEN svc.NonPrintableService = 1 THEN NULL ELSE p.ListPrice END,
+      od.NetUnitPrice = CASE WHEN svc.NonPrintableService = 1 THEN NULL ELSE computed.ComputedNetUnitPrice END,
+      od.TotalPrice = CASE
+        WHEN svc.NonPrintableService = 1 THEN NULL
+        WHEN p.ListPrice IS NULL THEN NULL
+        ELSE p.ListPrice * q.Quantity
+      END,
       od.TotalNet = CASE
+        WHEN svc.NonPrintableService = 1 THEN NULL
         WHEN computed.ComputedNetUnitPrice IS NULL THEN NULL
         ELSE computed.ComputedNetUnitPrice * q.Quantity
       END,
@@ -2627,6 +2691,7 @@ async function handleAssignProductToRequestedRow(
       od.CurrencyCostModifier = p.CurrencyCostModifier,
       od.NetCost = COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice),
       od.Margin = CASE
+        WHEN svc.NonPrintableService = 1 THEN NULL
         WHEN computed.ComputedNetUnitPrice IS NULL
           OR computed.ComputedNetUnitPrice = 0
           OR COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
@@ -2641,6 +2706,7 @@ async function handleAssignProductToRequestedRow(
         )`)}
       END,
       od.GrossProfit = CASE
+        WHEN svc.NonPrintableService = 1 THEN NULL
         WHEN computed.ComputedNetUnitPrice IS NULL
           OR COALESCE(computed.ComputedNetCost, p.CostPrice * COALESCE(p.CurrencyCostModifier, 1), p.ListPrice) IS NULL
           THEN NULL
@@ -2681,6 +2747,12 @@ async function handleAssignProductToRequestedRow(
           ELSE 1
         END AS Quantity
       ) q
+      CROSS APPLY (
+        SELECT CASE
+          WHEN ISNULL(p.IsService, 0) = 1 AND @__isPrintable = 0 THEN 1
+          ELSE 0
+        END AS NonPrintableService
+      ) svc
       OUTER APPLY (
         SELECT TOP (1)
           ppr.TelmacoDiscountPercentage,

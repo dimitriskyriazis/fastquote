@@ -231,9 +231,11 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
 
   const scoreParts = conditions.map((cond, i) => `CASE WHEN ${cond} THEN ${weights[i]} ELSE 0 END`);
   const scoreExpr = scoreParts.join(' + ');
+  // Disabled products are excluded from suggestions, matching the resolve and
+  // add-route search filters.
   const whereClause = brandRequiredClause
-    ? `${brandRequiredClause} AND (${conditions.join(' OR ')})`
-    : `(${conditions.join(' OR ')})`;
+    ? `ISNULL(p.Enabled, 1) = 1 AND ${brandRequiredClause} AND (${conditions.join(' OR ')})`
+    : `ISNULL(p.Enabled, 1) = 1 AND (${conditions.join(' OR ')})`;
 
   const query = `
     SELECT TOP (50)
