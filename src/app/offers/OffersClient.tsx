@@ -385,7 +385,14 @@ export default function OffersClient() {
     // user clears the filter (e.g. selects Yes & No, or Yes only).
     const needsEnabledDefault = !('Enabled' in baseModel);
     const needsTelquoteDefault = !('FromTelquote' in baseModel);
-    if (!needsEnabledDefault && !needsTelquoteDefault && !hasUrlFilter) {
+    // The customer filter is URL-driven only. It's persisted with the rest of the filter model,
+    // so a CustomerID entry restored from an earlier deep link would silently hide almost every
+    // offer — the "Clear customer filter" button only renders while ?customerId= is in the URL.
+    const hasStaleCustomerFilter = !hasCustomerIdFilter && 'CustomerID' in baseModel;
+    if (hasStaleCustomerFilter) {
+      delete baseModel.CustomerID;
+    }
+    if (!needsEnabledDefault && !needsTelquoteDefault && !hasUrlFilter && !hasStaleCustomerFilter) {
       defaultFiltersAppliedRef.current = true;
       return;
     }
@@ -928,6 +935,12 @@ export default function OffersClient() {
     { field: 'ERPProjectCode', headerName: 'ERP Project Code', filter: 'agTextColumnFilter' },
     { field: 'ERPFWCProjectShortName', headerName: 'ERP FWC Project', filter: 'agTextColumnFilter' },
     { field: 'CustomerName', headerName: 'Customer Name', filter: 'agTextColumnFilter', enableRowGroup: true },
+    // Hidden key column behind the ?customerId= deep link ("View Customer's Offers" on the
+    // customer Basic Data page). AG Grid drops filter-model entries whose colId isn't a
+    // registered column, so without this def setFilterModel({ CustomerID: … }) was silently
+    // ignored and the grid listed every offer. Kept out of the columns tool panel — it's an
+    // internal key, not a column users pick; the header "Clear customer filter" button clears it.
+    { field: 'CustomerID', headerName: 'Customer ID', filter: 'agNumberColumnFilter', hide: true, suppressColumnsToolPanel: true },
     {
       field: 'Description',
       headerName: 'Telmaco Description',
