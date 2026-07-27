@@ -300,8 +300,14 @@
   background-color: #ffb7b7 !important;
 }
 
+/* Category selected/hover/range colours read --offer-cat-bg* so they follow the
+   nesting depth. The vars are declared per depth level in ag-grid-overrides.css
+   and inherit from the .ag-row; these rules out-specify the ones there (later
+   chunk, higher specificity), which is exactly why they have to read the var —
+   depth-suffixed copies in the global file would lose to them. Fallback is the
+   historical grey, so a row with no depth class looks unchanged. */
 .gridShell :global(.offer-row--category:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell) {
-  background-color: #c5c9d0 !important;
+  background-color: var(--offer-cat-bg-selected, #c5c9d0) !important;
 }
 
 /* Option rows: light purple background, distinct from selected/hover variants */
@@ -440,9 +446,12 @@
   background-color: #fecaca !important;
 }
 
+/* This pair is (0,9,0) and lives in a later chunk than ag-grid-overrides.css, so
+   it wins every tie — it is THE rule that decides category hover. Reads the var
+   so hover follows the nesting depth. */
 :global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell),
 :global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell) {
-  background-color: #d4d4d4 !important;
+  background-color: var(--offer-cat-bg-hover, #d4d4d4) !important;
 }
 
 .rowHoverOverlay {
@@ -652,7 +661,7 @@
 :global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-cell-range-selected),
 :global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row-hover):not(:hover) .ag-cell.ag-range-single-cell) {
   cursor: default !important;
-  background-color: rgb(220, 220, 220) !important; /* Keep category row color */
+  background-color: var(--offer-cat-bg, rgb(220, 220, 220)) !important; /* Keep category row color, per nesting depth */
 }
 
 /* Default cells (rows without specific row class): white.
@@ -768,7 +777,7 @@
 :global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-selected),
 :global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-cell-range-selected),
 :global(.offer-products-grid) .gridShell :global(.ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell.ag-range-single-cell) {
-  background-color: #d4d4d4 !important;
+  background-color: var(--offer-cat-bg-hover, #d4d4d4) !important;
 }
 
 /* When row is SELECTED, range-selected cells stay on the selected row's

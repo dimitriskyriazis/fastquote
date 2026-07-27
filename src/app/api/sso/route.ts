@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { logRequest } from '../../../lib/apiHelpers';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
-import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
+import { buildSessionCookies, getSessionCookieSecure } from '../../../lib/session';
 import { fetchUserRoles } from '../../../lib/authz';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
@@ -42,8 +42,9 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    const sessionCookie = buildSessionCookie(String(user.Id), windowsUserName);
-    response.cookies.set(sessionCookie);
+    for (const cookie of buildSessionCookies(String(user.Id), windowsUserName)) {
+      response.cookies.set(cookie);
+    }
     response.cookies.set({
       name: AUDIT_USER_COOKIE_NAME,
       value: String(user.Id),

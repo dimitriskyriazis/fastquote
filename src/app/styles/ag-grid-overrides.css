@@ -150,7 +150,7 @@
 }
 
 .offer-products-grid .ag-row-hover.offer-row--category .ag-cell {
-  background-color: #d4d4d4 !important;
+  background-color: var(--offer-cat-bg-hover, #d4d4d4) !important;
 }
 
 /* Shifted anchor row: each cell occupies the row's natural height (total - 32px
@@ -494,7 +494,7 @@
    background (white / alternating), creating thin white lines at every column
    boundary on uniformly-coloured rows.
    Fix: give the row the same background as its cells so nothing shows through. */
-.offer-products-grid .ag-row.offer-row--category               { background-color: rgb(220, 220, 220) !important; }
+.offer-products-grid .ag-row.offer-row--category               { background-color: var(--offer-cat-bg, rgb(220, 220, 220)) !important; }
 .offer-products-grid .ag-row.offer-row--printable-comment      { background-color: #e0f2fe !important; }
 .offer-products-grid .ag-row.offer-row--nonprintable-comment   { background-color: #fee2e2 !important; }
 .offer-products-grid .ag-row.offer-row--printable-service      { background-color: #fef9c3 !important; }
@@ -512,7 +512,7 @@
 /* Selected state — match the row background to the selected cell background */
 .offer-products-grid .ag-row.offer-row--category.ag-row-selected,
 .offer-products-grid .ag-row.offer-row--category.ag-row-range-selected,
-.offer-products-grid .ag-row.offer-row--category.ag-row--context-menu-active             { background-color: #c5c9d0 !important; }
+.offer-products-grid .ag-row.offer-row--category.ag-row--context-menu-active             { background-color: var(--offer-cat-bg-selected, #c5c9d0) !important; }
 .offer-products-grid .ag-row.offer-row--printable-comment.ag-row-selected,
 .offer-products-grid .ag-row.offer-row--printable-comment.ag-row-range-selected,
 .offer-products-grid .ag-row.offer-row--printable-comment.ag-row--context-menu-active    { background-color: #bde0ff !important; }
@@ -530,7 +530,7 @@
 .offer-products-grid .ag-row.offer-row--option.ag-row--context-menu-active               { background-color: #bca4f7 !important; }
 
 /* Hover state — match the row background to the hovered cell background */
-.offer-products-grid .ag-row.offer-row--category.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)             { background-color: #d4d4d4 !important; }
+.offer-products-grid .ag-row.offer-row--category.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)             { background-color: var(--offer-cat-bg-hover, #d4d4d4) !important; }
 .offer-products-grid .ag-row.offer-row--printable-comment.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)    { background-color: #cfe2f3 !important; }
 .offer-products-grid .ag-row.offer-row--nonprintable-comment.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected) { background-color: #fecaca !important; }
 .offer-products-grid .ag-row.offer-row--printable-service.ag-row-hover:not(.ag-row-selected):not(.ag-row-range-selected)    { background-color: #fef08a !important; }
@@ -672,7 +672,7 @@
 }
 
 .offer-products-grid .offer-row--category .ag-cell {
-  background-color: rgb(220, 220, 220) !important;
+  background-color: var(--offer-cat-bg, rgb(220, 220, 220)) !important;
   padding-top: 0 !important;
   padding-bottom: 0 !important;
 }
@@ -688,13 +688,80 @@
 .offer-products-grid .offer-row--category.ag-row-selected .ag-cell,
 .offer-products-grid .offer-row--category.ag-row-range-selected .ag-cell,
 .offer-products-grid .offer-row--category.ag-row--context-menu-active .ag-cell {
-  background-color: #c5c9d0 !important;
+  background-color: var(--offer-cat-bg-selected, #c5c9d0) !important;
 }
 
 /* Hover state for category rows (only when not selected) - using :hover pseudo-class */
 .offer-products-grid .ag-row.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active):hover .ag-cell,
 .offer-products-grid .ag-row-hover.offer-row--category:not(.ag-row-selected):not(.ag-row-range-selected):not(.ag-row--context-menu-active) .ag-cell {
-  background-color: #d4d4d4 !important;
+  background-color: var(--offer-cat-bg-hover, #d4d4d4) !important;
+}
+
+/* ── Category nesting shades ──────────────────────────────────────────────
+   Categories nest three levels deep (MAX_CATEGORY_DEPTH), and all three used to
+   share one grey — so a band mid-scroll didn't say whether it was a section or a
+   sub-sub-group. Each level now gets its own step of the SAME grey (lightness
+   only): darkest at level 1, so shallower reads as heavier and deeper recedes.
+
+   Lightness rather than different hues on purpose — hue is already spoken for by
+   row semantics (blue/red comment, yellow/orange service, purple option, cool
+   grey unlinked), so a new hue would read as a new meaning, not a new level.
+
+                base      hover     selected
+     level 1    #bcbcbc   #b4b4b4   #a5abb5
+     level 2    #cccccc   #c4c4c4   #b5bbc5
+     level 3    #dcdcdc   #d4d4d4   #c5c9d0   ← the historical single-grey values
+
+   The two constraints that fix these numbers:
+   - Base steps are 0x10 apart while hover only darkens by 8 (matching the
+     historical category hover delta), so a hovered row stays strictly LIGHTER
+     than the next level up's base. Otherwise hovering a sub-category paints it
+     the same grey as a top-level one and it reads as having changed level —
+     which is exactly what a 0x10 base step with a 0x10 hover delta would do.
+   - Selected stays cool-tinted at every level, so selection reads as a different
+     kind of state rather than as another lightness step.
+
+   Level 3 keeps the historical values; levels 1 and 2 darken.
+
+   HOW THIS IS APPLIED — read before changing it. The obvious approach (one
+   depth-suffixed copy of every category rule, relying on the extra class for
+   specificity) does NOT work, and was tried first: the category hover and
+   range-selected rules in AgGridAll.module.css reach (0,9,0) and (0,10,0) and
+   ship in a LATER chunk than this file, so depth-suffixed copies here tie or lose
+   and hover silently keeps the level-3 grey.
+
+   So the depth classes below declare ONLY custom properties. The rules that
+   actually paint are the un-suffixed category rules above, plus their
+   higher-specificity twins in AgGridAll.module.css — all of them now read
+   var(--offer-cat-bg…). Custom properties inherit from the .ag-row down to its
+   .ag-cell children, so whichever rule wins the cascade paints the CURRENT
+   level's colour and no per-depth selector has to out-specify anything. Adding a
+   new category state means teaching one existing rule the var, not adding three.
+
+   Every var has the historical grey as its fallback, so a category row carrying
+   no depth class renders exactly as it did before. Classes come from
+   rowClassRules (not getRowClass) in OfferProductsPanel — see the comment there. */
+
+.offer-products-grid .offer-row--category-depth-1 {
+  --offer-cat-bg: #bcbcbc;
+  --offer-cat-bg-hover: #b4b4b4;
+  --offer-cat-bg-selected: #a5abb5;
+}
+
+.offer-products-grid .offer-row--category-depth-2 {
+  --offer-cat-bg: #cccccc;
+  --offer-cat-bg-hover: #c4c4c4;
+  --offer-cat-bg-selected: #b5bbc5;
+}
+
+/* Level 3 values equal the historical single-grey, so depth-3 rows are unchanged
+   by design. Spelled out anyway so the whole ramp reads in one place, and so a
+   4th level (if MAX_CATEGORY_DEPTH grows) lands on the lightest step via the
+   clamp in getCategoryDepthLevel rather than silently reusing level 1. */
+.offer-products-grid .offer-row--category-depth-3 {
+  --offer-cat-bg: #dcdcdc;
+  --offer-cat-bg-hover: #d4d4d4;
+  --offer-cat-bg-selected: #c5c9d0;
 }
 
 .offer-products-grid .offer-row--category-descendant-collapsed,

@@ -10,10 +10,22 @@ import {
   type ReactNode,
 } from 'react';
 import AccessDeniedPage from './AccessDeniedPage';
-import { AUDIT_USER_COOKIE_NAME } from '../../lib/authConstants';
+import { AUDIT_USER_COOKIE_NAME, SESSION_EXP_COOKIE_NAME } from '../../lib/authConstants';
 
 const COOKIE_NAME = AUDIT_USER_COOKIE_NAME;
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 90; // 90 days
+
+// A session with more than this much life left needs no /api/me call at all. /api/me is
+// the ONLY endpoint IIS guards with Windows auth, so every call is a handshake against
+// Active Directory — and a browser holding a stale cached credential (the normal state
+// right after a domain password change) turns each handshake into a bad-password attempt
+// that walks the account toward a lockout. Middleware slides the session cookie forward
+// on ordinary requests, so in active use this margin is never crossed and the app does
+// exactly ONE handshake per login instead of one every 30 minutes per open tab.
+const SESSION_OK_MARGIN_SECONDS = 15 * 60;
+// How often to CHECK the expiry hint. This is a local cookie read: it costs no request
+// and no handshake unless the session is genuinely close to expiring.
+const SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 type AuditUser = {
   id: string;
@@ -45,17 +57,38 @@ const normalizeInput = (value: string): string => {
   return String(parsed);
 };
 
-const readCookieValue = (): string | null => {
+const readRawCookie = (name: string): string | null => {
   if (typeof document === 'undefined') return null;
   const segments = document.cookie.split(';').map((segment) => segment.trim());
   for (const segment of segments) {
     if (!segment) continue;
-    if (segment.startsWith(`${COOKIE_NAME}=`)) {
-      const raw = decodeURIComponent(segment.slice(COOKIE_NAME.length + 1));
-      return normalizeInput(raw) || null;
+    if (segment.startsWith(`${name}=`)) {
+      return decodeURIComponent(segment.slice(name.length + 1));
     }
   }
   return null;
+};
+
+const readCookieValue = (): string | null =>
+  normalizeInput(readRawCookie(COOKIE_NAME) ?? '') || null;
+
+/**
+ * Seconds of session left per the fastquote-session-exp hint, or null when there is no
+ * usable hint — which is treated as "must re-authenticate". Trustworthy because
+ * middleware writes, renews AND clears this cookie in lockstep with the httpOnly session
+ * cookie it describes; it is a timing hint only and grants no access on its own.
+ */
+const sessionRemainingSeconds = (): number | null => {
+  const raw = readRawCookie(SESSION_EXP_COOKIE_NAME);
+  if (!raw) return null;
+  const exp = Number(raw);
+  if (!Number.isFinite(exp)) return null;
+  return Math.floor(exp - Date.now() / 1000);
+};
+
+const hasHealthySession = (): boolean => {
+  const remaining = sessionRemainingSeconds();
+  return remaining !== null && remaining > SESSION_OK_MARGIN_SECONDS;
 };
 
 const writeCookieValue = (value: string) => {
@@ -93,6 +126,13 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     // app that 401s on every request with no recovery path; retrying re-mints the
     // session once the limiter frees up. Honors Retry-After (capped) when present.
     const MAX_ATTEMPTS = 4;
+    // A 5xx means the backend itself is down (deploy / pm2 restart). Unlike a 429 that
+    // frees up on its own, no amount of retrying inside one page load fixes it — while
+    // every retry is another AD handshake, so a restart could burn a whole lockout
+    // threshold in 15 seconds. Cap those tightly; the focus/visibility path recovers
+    // once the backend is back.
+    const MAX_SERVER_ERROR_ATTEMPTS = 2;
+    let serverErrorAttempts = 0;
     const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
       try {
@@ -102,8 +142,14 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
           cache: 'no-store',
         });
 
+        const isServerError = meRes.status >= 500;
+        if (isServerError) serverErrorAttempts += 1;
+        const retriesLeft =
+          attempt < MAX_ATTEMPTS - 1 &&
+          !(isServerError && serverErrorAttempts >= MAX_SERVER_ERROR_ATTEMPTS);
+
         // Transient — wait and retry rather than rendering a broken, session-less app.
-        if ((meRes.status === 429 || meRes.status >= 500) && attempt < MAX_ATTEMPTS - 1) {
+        if ((meRes.status === 429 || isServerError) && retriesLeft) {
           const retryAfter = Number(meRes.headers.get('Retry-After'));
           const backoffMs =
             Number.isFinite(retryAfter) && retryAfter > 0
@@ -192,12 +238,22 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     if (windowsAuthAttemptedRef.value) return;
     windowsAuthAttemptedRef.value = true;
 
-    // Always (re)establish the signed session via /api/me on load. The session cookie is
-    // httpOnly (JS can't read it) and outlived by the non-httpOnly fastquote-user-id
-    // cookie, so we can't tell from the client whether it's still valid — we just re-mint
-    // it. /api/me is a silent, IIS-authenticated, bodyless call. Skipping this (relying on
-    // the user-id cookie alone) left returning users with an expired session and 401s.
+    // Establish the signed session via /api/me — but only when we actually need to.
+    //
+    // The session cookie is httpOnly so JS can't inspect it; what it CAN read is the
+    // fastquote-session-exp hint middleware maintains alongside it. A hint with
+    // comfortable life left means the session is live, so the Windows handshake is
+    // skipped. This is NOT a return to the old bug of trusting the 90-day
+    // fastquote-user-id cookie: that cookie said nothing about session validity and left
+    // returning users with an expired session and 401 storms. The hint carries the real
+    // expiry, and middleware CLEARS it the moment the session is missing or invalid, so a
+    // stale hint cannot survive even one request.
     void (async () => {
+      if (readCookieValue() && hasHealthySession()) {
+        setSessionEstablished(true);
+        return;
+      }
+
       const result = await tryResolveViaWindowsAuth();
       if (result.accessDenied) {
         setAccessDeniedUnrecognizedUser(true);
@@ -212,25 +268,24 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     })();
   }, [tryResolveViaWindowsAuth, windowsAuthAttemptedRef]);
 
-  // Keep the signed session cookie alive on long-open tabs. The cookie carries a
-  // fixed ~8h TTL (SESSION_TTL_SECONDS) and is NEVER refreshed server-side, so a
-  // tab left open — or a machine left asleep overnight — silently crosses the
-  // expiry; the next authenticated request then 401s, and because the request now
-  // carries no uid it also collapses onto the shared per-IP rate-limit bucket and
-  // starts returning 429 ("Authentication required" + "Too many requests"). We
-  // pre-empt that by re-minting via /api/me, which is silent (IIS supplies the
-  // Windows identity) and resets the TTL. This does NOT weaken the 8h bound: every
-  // re-mint is a full, freshly-verified Windows-auth handshake, not a blind
-  // cookie-lifetime extension.
+  // Re-authenticate a long-open tab only when its session is genuinely about to lapse.
+  //
+  // Middleware slides the session cookie forward on ordinary requests, so a tab in active
+  // use never approaches expiry and this handler costs nothing. What remains is the real
+  // edge case: a tab open past the absolute cap, or a machine asleep overnight, whose
+  // cookie has actually died. Without recovery the next authenticated request 401s and,
+  // now carrying no uid, collapses onto the shared per-IP rate-limit bucket and starts
+  // returning 429s on top ("Authentication required" + "Too many requests").
+  //
+  // This deliberately no longer re-mints on a fixed 30-minute timer. That timer meant a
+  // full Active Directory handshake every half hour for every open tab, which is how one
+  // stale cached credential — the normal state after a domain password change — locked
+  // users out of the domain within a few hours.
   useEffect(() => {
     if (!sessionEstablished) return;
     if (accessDeniedUnrecognizedUser) return;
     if (typeof window === 'undefined') return;
 
-    // Re-stamp well under the 8h TTL so the cookie never lapses during continuous
-    // use; the wide margin tolerates missed ticks (browsers throttle timers in
-    // hidden tabs) since the visibility/focus handler catches the user's return.
-    const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 min
     // Coalesce bursts of focus/visibility/online events (rapid tab flipping) so we
     // don't re-mint — and spend rate-limit budget — more than once per window.
     const MIN_REMINT_GAP_MS = 5 * 60 * 1000; // 5 min
@@ -239,11 +294,14 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     let inFlight = false;
 
-    const remint = async () => {
+    const remintIfExpiring = async () => {
       if (cancelled || inFlight) return;
-      // No point refreshing a hidden tab — the visibility handler re-mints the
-      // moment it becomes visible again, which is exactly the overnight case.
+      // No point refreshing a hidden tab — the visibility handler catches the moment it
+      // becomes visible again, which is exactly the overnight case.
       if (document.visibilityState === 'hidden') return;
+      // The common case: the session is healthy, so there is nothing to do and — the whole
+      // point — no handshake to make.
+      if (hasHealthySession()) return;
       inFlight = true;
       try {
         const result = await tryResolveViaWindowsAuth();
@@ -263,13 +321,13 @@ export function AuditUserProvider({ children }: { children: ReactNode }) {
     };
 
     const intervalId = window.setInterval(() => {
-      void remint();
-    }, REFRESH_INTERVAL_MS);
+      void remintIfExpiring();
+    }, SESSION_CHECK_INTERVAL_MS);
 
     const onWake = () => {
       if (document.visibilityState !== 'visible') return;
       if (Date.now() - lastRemintAt < MIN_REMINT_GAP_MS) return;
-      void remint();
+      void remintIfExpiring();
     };
 
     document.addEventListener('visibilitychange', onWake);

@@ -49,6 +49,7 @@ import {
   NumberFilterModule,
   PinnedRowModule,
   RowClassParams,
+  RowClassRules,
   RowStyle,
   RowStyleModule,
   RowDoubleClickedEvent,
@@ -615,6 +616,12 @@ type Props = {
   rowGroupPanelShow?: 'always' | 'onlyWhenGrouping' | 'never';
   suppressRowGroup?: boolean;
   getRowClass?: (params: RowClassParams<RowData>) => string | string[] | undefined;
+  // Prefer this over getRowClass for any class that can stop applying to a row
+  // that stays alive: AG Grid only ever ADDS getRowClass output (RowCtrl
+  // .postProcessClassesFromGridOptions toggles on, never off), whereas
+  // rowClassRules toggles a class off again when its predicate goes false, and
+  // re-runs on cellChanged / dataChanged / rowIndexChanged.
+  rowClassRules?: RowClassRules<RowData>;
   getRowStyle?: (params: RowClassParams<RowData>) => RowStyle | undefined;
   isExternalFilterPresent?: () => boolean;
   doesExternalFilterPass?: (node: IRowNode<RowData>) => boolean;
@@ -1584,6 +1591,7 @@ export default function AgGridAll({
   rowGroupPanelShow = 'always',
   suppressRowGroup = false,
   getRowClass,
+  rowClassRules,
   getRowStyle,
   isExternalFilterPresent,
   doesExternalFilterPass,
@@ -5377,6 +5385,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           autoGroupColumnDef={autoGroupColumnDef}
           getRowId={getRowId}
           getRowClass={mergedGetRowClass}
+          rowClassRules={rowClassRules}
           getRowStyle={getRowStyle}
           isExternalFilterPresent={isExternalFilterPresent}
           doesExternalFilterPass={doesExternalFilterPass}

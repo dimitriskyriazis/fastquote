@@ -17,6 +17,7 @@ import type {
   IRowNode,
   MenuItemDef,
   RowClassParams,
+  RowClassRules,
   RowDoubleClickedEvent,
   RowNode,
 } from 'ag-grid-community';
@@ -110,6 +111,7 @@ import {
   decimalFormatter,
   DEFAULT_ROW_HEIGHT,
   MAX_CATEGORY_DEPTH,
+  getCategoryDepthLevel,
   ENHANCE_DESC_MAX_PRODUCTS,
   readCollapsedCategoryPathsFromCookie,
   writeCollapsedCategoryPathsToCookie,
@@ -2457,6 +2459,8 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         if (!hasCategoryChildren(params.data)) {
           classes.push('offer-row--category-empty');
         }
+        // Category depth shading is NOT done here — see categoryDepthRowClassRules
+        // below. getRowClass output can only ever be added to a row, never removed.
       }
       if (rowType === 'product' && isOfferProductOption(params.data)) {
         classes.push('offer-row--option');
@@ -2490,6 +2494,26 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
     return classes.join(' ');
   }, [isCategoryRowCollapsed, hasCategoryChildren]);
+
+  // One shade of grey per category nesting level (darkest at the top), so a grey
+  // band reads as a section / sub-section / sub-sub-section at a glance. The
+  // classes only declare CSS custom properties; the rules that paint live in
+  // ag-grid-overrides.css and AgGridAll.module.css and read them.
+  //
+  // These MUST be rowClassRules rather than getRowClass. AG Grid applies
+  // getRowClass results add-only — RowCtrl.postProcessClassesFromGridOptions only
+  // ever toggles a class ON — so a category that changed level would carry its old
+  // depth class alongside the new one, and since the three CSS blocks are equal
+  // specificity the stale one could win. rowClassRules toggles a rule OFF when it
+  // stops matching and re-runs on cellChanged / dataChanged / rowIndexChanged, i.e.
+  // on a manual Item No edit, on every SSRM purge:false reload and on every
+  // reorder — so a row (and any descendant the server re-levelled) takes its new
+  // shade as soon as the new TreeOrdering lands, with no extra redrawRows.
+  const categoryDepthRowClassRules = useMemo<RowClassRules<Record<string, unknown>>>(() => ({
+    'offer-row--category-depth-1': (params) => getCategoryDepthLevel(params.data) === 1,
+    'offer-row--category-depth-2': (params) => getCategoryDepthLevel(params.data) === 2,
+    'offer-row--category-depth-3': (params) => getCategoryDepthLevel(params.data) === 3,
+  }), []);
 
   const handleRowDoubleClicked = useCallback((params: RowDoubleClickedEvent<Record<string, unknown>>) => {
     const target = params.event?.target;
@@ -10202,6 +10226,7 @@ const requestedColumnDefsMap = useMemo(
             defaultColDef={defaultColDef}
             manualMode={manualMode}
             getRowClass={getRowClass}
+            rowClassRules={categoryDepthRowClassRules}
             getContextMenuItems={productContextMenuItems}
             onCellEditingStarted={handleCellEditingStarted}
             onCellValueChanged={handleCellEdit}

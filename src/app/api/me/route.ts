@@ -3,7 +3,7 @@ import { logRequest } from '../../../lib/apiHelpers';
 import { fetchUserRoles } from '../../../lib/authz';
 import { getWindowsIdentityFromHeaders } from '../../../lib/windowsIdentity';
 import { findUserByWindowsIdentity } from '../../../lib/windowsUserLookup';
-import { buildSessionCookie, getSessionCookieSecure } from '../../../lib/session';
+import { buildSessionCookies, getSessionCookieSecure } from '../../../lib/session';
 import { AUDIT_USER_COOKIE_NAME } from '../../../lib/authConstants';
 
 /**
@@ -33,7 +33,9 @@ export async function POST(request: NextRequest) {
           ok: true,
           user: { id: Number(devId), userName: null, windowsUserName: `dev:${devId}`, roles },
         });
-        response.cookies.set(buildSessionCookie(devId, `dev:${devId}`));
+        for (const cookie of buildSessionCookies(devId, `dev:${devId}`)) {
+          response.cookies.set(cookie);
+        }
         response.cookies.set({
           name: AUDIT_USER_COOKIE_NAME,
           value: devId,
@@ -82,8 +84,9 @@ export async function POST(request: NextRequest) {
         roles,
       },
     });
-    const sessionCookie = buildSessionCookie(String(user.Id), windowsUserName);
-    response.cookies.set(sessionCookie);
+    for (const cookie of buildSessionCookies(String(user.Id), windowsUserName)) {
+      response.cookies.set(cookie);
+    }
     response.cookies.set({
       name: AUDIT_USER_COOKIE_NAME,
       value: String(user.Id),

@@ -1873,6 +1873,20 @@ export const buildFarnellPricingPatch = (
 export const isOfferProductCommentOrProduct = (row: Record<string, unknown> | null | undefined) =>
   isOfferProductProduct(row) || isOfferProductComment(row) || isOfferProductService(row);
 
+/**
+ * Nesting level of a category row, 1..MAX_CATEGORY_DEPTH, from its TreeOrdering
+ * path — "2" is level 1, "2.3" level 2, "2.3.1" level 3. Each level gets its own
+ * shade of the category grey so nesting is readable at a glance instead of three
+ * identical bands. Clamped, so a corrupted deeper path just reuses the deepest
+ * shade. Returns null for anything that isn't a category row.
+ */
+export const getCategoryDepthLevel = (row: Record<string, unknown> | null | undefined): number | null => {
+  if (!isOfferProductCategory(row)) return null;
+  const depth = parseTreeOrderingPath((row as { TreeOrdering?: unknown })?.TreeOrdering ?? null).length;
+  if (depth <= 0) return null;
+  return Math.min(depth, MAX_CATEGORY_DEPTH);
+};
+
 export const buildCategoryAggregateGetter = (field: 'TotalPrice' | 'TotalNet' | 'TotalCost') => (
   params: ValueGetterParams<Record<string, unknown>, unknown>,
 ) => {

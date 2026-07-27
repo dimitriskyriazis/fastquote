@@ -1,5 +1,12 @@
 import crypto from 'crypto';
 import { SESSION_COOKIE_NAME } from './authConstants';
+import {
+  SESSION_TTL_SECONDS,
+  buildSessionExpCookie,
+  getSessionCookieSecure,
+  nowSeconds,
+  type SessionCookieDescriptor,
+} from './sessionShared';
 
 type CookieStore = {
   get(name: string): { value?: string } | undefined;
@@ -13,11 +20,6 @@ type SessionPayload = {
 };
 
 const SESSION_SECRET = process.env.SESSION_SECRET ?? '';
-const SESSION_TTL_SECONDS = Number(process.env.SESSION_TTL_SECONDS ?? 60 * 60 * 8);
-const SESSION_COOKIE_SECURE =
-  process.env.SESSION_COOKIE_SECURE != null
-    ? process.env.SESSION_COOKIE_SECURE === 'true'
-    : false;
 
 const base64UrlEncode = (input: string | Buffer) => Buffer.from(input).toString('base64url');
 const base64UrlDecode = (input: string) => Buffer.from(input, 'base64url').toString('utf8');
@@ -38,29 +40,37 @@ const ensureSecret = () => {
   }
 };
 
-export const buildSessionCookie = (userId: string, windowsUserName: string) => {
+/**
+ * Cookies to set after a successful Windows-auth handshake: the signed httpOnly session
+ * itself plus the JS-readable expiry hint the SPA uses to avoid re-authenticating on a
+ * timer. Always set BOTH together — a hint cookie that outlives its session would send
+ * the client back to the pre-fix behaviour of assuming a session it no longer has.
+ */
+export const buildSessionCookies = (
+  userId: string,
+  windowsUserName: string,
+): SessionCookieDescriptor[] => {
   ensureSecret();
-  const now = Math.floor(Date.now() / 1000);
-  const payload: SessionPayload = {
-    uid: userId,
-    win: windowsUserName,
-    iat: now,
-    exp: now + SESSION_TTL_SECONDS,
-  };
+  const now = nowSeconds();
+  const exp = now + SESSION_TTL_SECONDS;
+  const payload: SessionPayload = { uid: userId, win: windowsUserName, iat: now, exp };
   const payloadEncoded = base64UrlEncode(JSON.stringify(payload));
   const signature = sign(payloadEncoded);
-  return {
-    name: SESSION_COOKIE_NAME,
-    value: `${payloadEncoded}.${signature}`,
-    httpOnly: true,
-    secure: SESSION_COOKIE_SECURE,
-    sameSite: 'lax' as const,
-    path: '/',
-    maxAge: SESSION_TTL_SECONDS,
-  };
+  return [
+    {
+      name: SESSION_COOKIE_NAME,
+      value: `${payloadEncoded}.${signature}`,
+      httpOnly: true,
+      secure: getSessionCookieSecure(),
+      sameSite: 'lax',
+      path: '/',
+      maxAge: SESSION_TTL_SECONDS,
+    },
+    buildSessionExpCookie(exp, now),
+  ];
 };
 
-export const getSessionCookieSecure = () => SESSION_COOKIE_SECURE;
+export { getSessionCookieSecure };
 
 export const readSessionPayload = (cookies?: CookieStore): SessionPayload | null => {
   if (!cookies || typeof cookies.get !== 'function') return null;
@@ -75,7 +85,7 @@ export const readSessionPayload = (cookies?: CookieStore): SessionPayload | null
   try {
     const parsed = JSON.parse(base64UrlDecode(payloadEncoded)) as SessionPayload;
     if (!parsed?.uid || !parsed?.win || !parsed?.exp) return null;
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowSeconds();
     if (parsed.exp < now) return null;
     return parsed;
   } catch {
