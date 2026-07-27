@@ -72,6 +72,9 @@ telquote-import/
 # iis files
 iis/
 
+#sql query files
+sql/
+
 # security files
 .security*
 

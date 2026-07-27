@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { DEFAULT_PDF_PRODUCT_COLUMNS, type PdfProductColumn } from './pdfColumns';
+import { SERVICE_QUANTITY_DECIMALS } from './offerProductRows';
 
 export type PdfLang = 'el' | 'en';
 export type PdfOrientation = 'portrait' | 'landscape';
@@ -394,6 +395,22 @@ function formatEuropeanNumber(n: number | null | undefined): string {
   const parts = n.toFixed(2).split('.');
   const intPart = (parts[0] ?? '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return `${intPart},${parts[1] ?? '00'}`;
+}
+
+/**
+ * Quantities are whole for products and ServLot lump sums, fractional for the
+ * per-unit '-Day' service SKUs (services are quoted in days). Whole values
+ * print bare — "27", exactly as they always have — while a fraction prints
+ * European-style with no trailing zeros: "0,5", not "0.50".
+ */
+function formatQuantity(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '';
+  if (Number.isInteger(n)) return String(n);
+  return n
+    .toFixed(SERVICE_QUANTITY_DECIMALS)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '')
+    .replace('.', ',');
 }
 
 let currentCurrencySymbol = '€';
@@ -949,7 +966,7 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
     }
     case 'qty': {
       if (row.isComment && (row.quantity == null || row.quantity === 0)) return '';
-      return row.quantity != null ? String(row.quantity) : '';
+      return formatQuantity(row.quantity);
     }
     case 'brand': return str(row.brandName);
     case 'type': return str(row.partNumber);
@@ -980,7 +997,7 @@ function columnValue(row: OfferProductRow, column: PdfProductColumn): string {
     case 'requestedPartNo': return str(row.requestedPartNo);
     case 'requestedModelNo': return str(row.requestedModelNo);
     case 'requestedDescription': return str(row.requestedDescription);
-    case 'requestedQuantity': return row.requestedQuantity != null ? String(row.requestedQuantity) : '';
+    case 'requestedQuantity': return formatQuantity(row.requestedQuantity);
   }
 }
 

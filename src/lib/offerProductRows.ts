@@ -95,6 +95,39 @@ export const isNonPrintableOfferProductRow = (row: OfferProductRow): boolean => 
   return type === 'non-printable-service' || type === 'non-printable-comment';
 };
 
+/**
+ * Services are quoted in days: the `-Day` SKUs carry ServiceType 'ServPerUnit',
+ * so half and quarter days are real quantities. Everything else stays whole —
+ * `ServLot` is a lump sum for the whole job (half a lot is meaningless) and
+ * product lines feed Soft1, where quantities must be integral.
+ *
+ * dbo.OfferDetails enforces the same rule as CK_OfferDetails_Quantity_Integral;
+ * this is the JS side so a paste or an import rounds instead of tripping the
+ * constraint with a raw SQL error.
+ */
+export const SERVICE_TYPE_PER_UNIT = 'ServPerUnit';
+
+/** Decimal places allowed on a per-unit service quantity (quarter days need 2). */
+export const SERVICE_QUANTITY_DECIMALS = 2;
+
+export const allowsFractionalQuantity = (serviceType: unknown): boolean =>
+  typeof serviceType === 'string' && serviceType.trim() === SERVICE_TYPE_PER_UNIT;
+
+/**
+ * Clamp a quantity to what its row type may store: per-unit services keep up to
+ * SERVICE_QUANTITY_DECIMALS decimals, everything else rounds to a whole number.
+ * Returns null unchanged so callers keep their own "was it supplied?" logic.
+ */
+export const normalizeQuantityForServiceType = (
+  quantity: number | null | undefined,
+  serviceType: unknown,
+): number | null => {
+  if (quantity == null || !Number.isFinite(quantity)) return null;
+  if (!allowsFractionalQuantity(serviceType)) return Math.round(quantity);
+  const factor = 10 ** SERVICE_QUANTITY_DECIMALS;
+  return Math.round(quantity * factor) / factor;
+};
+
 export const isNonPrintableComment = (row: OfferProductRow): boolean =>
   resolveOfferProductRowType(row) === 'non-printable-comment';
 

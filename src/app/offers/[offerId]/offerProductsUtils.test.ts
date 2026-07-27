@@ -867,6 +867,48 @@ describe('computeNetPriceRescale', () => {
     });
   });
 
+  // Services are quoted in days, so a per-unit '-Day' line can carry 0.5 or
+  // 0.25. That used to be rounded away by `Math.round(entry.quantity)`, which
+  // silently rescaled against the wrong basis.
+  describe('fractional service quantities (days)', () => {
+    it('weights a half-day line by 0.5, not by a rounded 1', () => {
+      // 100 x 0.5 = 50 today; doubling the target to 100 must double the price.
+      const entries = mkEntries([[100, 0.5]]);
+      computeNetPriceRescale(entries, 100, {});
+      expect(entries[0].newNet).toBe(200);
+    });
+
+    it('rescales a mixed product + half-day offer off the true basis', () => {
+      // 200x1 + 80x0.5 = 240. Halving the target to 120 halves both prices.
+      const entries = mkEntries([[200, 1], [80, 0.5]]);
+      computeNetPriceRescale(entries, 120, {});
+      expect(entries[0].newNet).toBe(100);
+      expect(entries[1].newNet).toBe(40);
+      expect(sumCents(entries)).toBe(12000);
+    });
+
+    it('still closes to the cent when the fractions can compose the residual', () => {
+      const entries = mkEntries([[33.33, 0.5], [10, 2]]);
+      const achieved = computeNetPriceRescale(entries, 100, {});
+      expect(achieved).toBe(10000);
+      expect(sumCents(entries)).toBe(10000);
+    });
+
+    it('gets within a cent when the quantities cannot land exactly', () => {
+      // A lone 0.25 line moves the total in quarter-cent steps, so an exact
+      // cent match is not always reachable — it must still come close.
+      const entries = mkEntries([[10, 0.25]]);
+      const achieved = computeNetPriceRescale(entries, 7.77, {});
+      expect(Math.abs(achieved - 777)).toBeLessThanOrEqual(1);
+    });
+
+    it('leaves whole-quantity offers byte-identical to the old behaviour', () => {
+      const entries = mkEntries([[123.45, 3], [67.89, 2], [9.99, 7], [4500, 1]]);
+      expect(computeNetPriceRescale(entries, 6000, {})).toBe(600000);
+      expect(sumCents(entries)).toBe(600000);
+    });
+  });
+
   describe('fuzz: random offers stay consistent (seeded, reproducible)', () => {
     it('exact modes always add up to the cent; magnitude mode stays band-rounded and close', () => {
       const rand = mulberry32(20260610);

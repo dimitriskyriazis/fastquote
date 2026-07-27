@@ -17,6 +17,7 @@ import {
   normalizeTreeOrderingValue,
   parseTreeOrderingPath,
 } from '../treeOrdering';
+import { normalizeQuantityForServiceType } from '../../../../../../lib/offerProductRows';
 
 type ClipboardRow = {
   productId: number | null;
@@ -122,6 +123,11 @@ const toPreparedRow = (value: unknown): PreparedRow | null => {
   if (!treeOrdering) return null;
   const path = parseTreeOrderingPath(treeOrdering);
   if (path.length === 0) return null;
+  // Pasted quantities come straight from a spreadsheet, so a product line can
+  // arrive with a decimal. Only per-unit services (the '-Day' SKUs) may keep
+  // one — rounding here means a stray decimal lands as a whole unit instead of
+  // tripping CK_OfferDetails_Quantity_Integral with a raw SQL error.
+  const serviceType = coerceString(row.serviceType ?? row.ServiceType);
   return {
     productId: coerceInt(row.productId ?? row.ProductID),
     isCategory: coerceBool(row.isCategory ?? row.IsCategory),
@@ -133,7 +139,7 @@ const toPreparedRow = (value: unknown): PreparedRow | null => {
     modelNumber: coerceString(row.modelNumber ?? row.ModelNumber),
     description: coerceString(row.description ?? row.Description),
     productDescription: coerceString(row.productDescription ?? row.ProductDescription),
-    quantity: coerceNumber(row.quantity ?? row.Quantity),
+    quantity: normalizeQuantityForServiceType(coerceNumber(row.quantity ?? row.Quantity), serviceType),
     netUnitPrice: coerceNumber(row.netUnitPrice ?? row.NetUnitPrice),
     listPrice: coerceNumber(row.listPrice ?? row.ListPrice),
     customerDiscount: coerceNumber(row.customerDiscount ?? row.CustomerDiscount),
@@ -155,7 +161,7 @@ const toPreparedRow = (value: unknown): PreparedRow | null => {
     priceListId: coerceInt(row.priceListId ?? row.PriceListID),
     priceListItemId: coerceInt(row.priceListItemId ?? row.PriceListItemID),
     isService: coerceBool(row.isService ?? row.IsService),
-    serviceType: coerceString(row.serviceType ?? row.ServiceType),
+    serviceType,
     requestedItemNo: coerceString(row.requestedItemNo ?? row.RequestedItemNo),
     requestedBrand: coerceString(row.requestedBrand ?? row.RequestedBrand),
     requestedPartNo: coerceString(row.requestedPartNo ?? row.RequestedPartNo),

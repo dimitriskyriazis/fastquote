@@ -59,7 +59,7 @@ import { pushCellEditUndo, makeOfferDetailRevert } from '../../../lib/undoHelper
 import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService, isUnlinkedOfferProductRow } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService, isUnlinkedOfferProductRow, normalizeQuantityForServiceType, allowsFractionalQuantity, SERVICE_QUANTITY_DECIMALS } from '../../../lib/offerProductRows';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import { clearPartModelNumberUpper } from '../../../lib/partModelNumber';
@@ -7332,8 +7332,8 @@ const requestedColumnDefsMap = useMemo(
     }
 
     const normalizedOldValue = coerceNumber(event.oldValue);
-    const normalizedNewValue = coerceNumber(event.newValue);
-    if (normalizedNewValue == null || normalizedNewValue < 0) {
+    const typedValue = coerceNumber(event.newValue);
+    if (typedValue == null || typedValue < 0) {
       showToastMessage('Please enter a valid quantity (zero or more).', 'error');
       try {
         event.node?.setDataValue?.('Quantity', normalizedOldValue ?? '');
@@ -7341,6 +7341,32 @@ const requestedColumnDefsMap = useMemo(
         /* noop */
       }
       return;
+    }
+
+    // Services are quoted in days, so per-unit service lines (the '-Day' SKUs)
+    // keep a fractional quantity; ServLot lump sums and product lines round to
+    // whole units. Normalising here — rather than letting the server round
+    // silently — keeps the optimistic cell, the derived totals and the undo
+    // snapshot equal to what actually lands in the database.
+    const rowServiceType = (event.data as { ServiceType?: unknown } | undefined)?.ServiceType;
+    const normalizedNewValue = normalizeQuantityForServiceType(typedValue, rowServiceType);
+    if (normalizedNewValue == null) {
+      showToastMessage('Please enter a valid quantity (zero or more).', 'error');
+      try {
+        event.node?.setDataValue?.('Quantity', normalizedOldValue ?? '');
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    if (!Object.is(normalizedNewValue, typedValue)) {
+      showToastMessage(
+        allowsFractionalQuantity(rowServiceType)
+          ? `Quantity rounded to ${normalizedNewValue} — at most ${SERVICE_QUANTITY_DECIMALS} decimals.`
+          : `Only per-day service lines take a fractional quantity. Rounded to ${normalizedNewValue}.`,
+      );
+      // 'api' source so this correction doesn't re-enter as a second edit.
+      try { event.node?.setDataValue?.('Quantity', normalizedNewValue, 'api'); } catch { /* noop */ }
     }
     if (normalizedOldValue != null && Object.is(normalizedOldValue, normalizedNewValue)) {
       return;

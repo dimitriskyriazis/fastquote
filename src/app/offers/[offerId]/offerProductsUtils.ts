@@ -1897,6 +1897,13 @@ export const floorTo = (value: number, places = 2) => {
 
 /* ── Totals-row rescale (Total Net Price / Total Margin edits) ───────── */
 
+// With whole quantities the residual is an exact integer number of cents and
+// `!== 0` is safe. Per-unit service lines can be fractional, which makes it a
+// float — compare against an epsilon so float dust doesn't read as an open gap
+// and send the closing passes chasing a difference that isn't there.
+const RESCALE_RESIDUAL_EPSILON = 1e-9;
+const isResidualClosed = (diffUnits: number) => Math.abs(diffUnits) < RESCALE_RESIDUAL_EPSILON;
+
 export type NetRescaleEntry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
 
 export type NetRescaleOptions = {
@@ -1941,7 +1948,13 @@ export const computeNetPriceRescale = (
       groupMap.set(entry.oldNet, group);
     }
     group.entries.push(entry);
-    group.totalQty += Math.round(entry.quantity);
+    // Per-unit service lines are quoted in days and may be fractional (0.5 of a
+    // '-Day' SKU), so the quantity is kept as-is. With whole quantities every
+    // figure below stays an exact integer and the cent-perfect guarantee holds;
+    // with fractional ones a group moves the total in sub-cent steps, so the
+    // residual can land inside a cent and the passes simply get as close as the
+    // quantities allow.
+    group.totalQty += entry.quantity;
     entry.newNet = group.newNet;
   }
   const groups = [...groupMap.values()];
@@ -1956,7 +1969,7 @@ export const computeNetPriceRescale = (
   const achievedUnits = () => groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
   let diffUnits = targetUnits - achievedUnits();
 
-  if (diffUnits !== 0 && useMagnitude) {
+  if (!isResidualClosed(diffUnits) && useMagnitude) {
     // The rounding band step for a group's current price, in cents.
     const stepUnits = (g: PriceGroup): number => {
       const abs = Math.abs(g.newNet);
@@ -1971,7 +1984,7 @@ export const computeNetPriceRescale = (
     const byCoinDesc = groups.filter((g) => g.totalQty > 0)
       .sort((a, b) => stepUnits(b) * b.totalQty - stepUnits(a) * a.totalQty);
     for (const g of byCoinDesc) {
-      if (diffUnits === 0) break;
+      if (isResidualClosed(diffUnits)) break;
       const coin = stepUnits(g) * g.totalQty;
       const steps = diffUnits > 0 ? Math.floor(diffUnits / coin) : Math.ceil(diffUnits / coin);
       if (steps === 0) continue;
@@ -1985,11 +1998,11 @@ export const computeNetPriceRescale = (
     }
     // Pass 2: polish with the finest movers — cheap rows are the small
     // change. Take one step wherever it shrinks the remaining gap.
-    if (diffUnits !== 0) {
+    if (!isResidualClosed(diffUnits)) {
       const byCoinAsc = groups.filter((g) => g.totalQty > 0)
         .sort((a, b) => stepUnits(a) * a.totalQty - stepUnits(b) * b.totalQty);
       for (const g of byCoinAsc) {
-        if (diffUnits === 0) break;
+        if (isResidualClosed(diffUnits)) break;
         const dir = diffUnits > 0 ? 1 : -1;
         const delta = dir * stepUnits(g) * g.totalQty;
         if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
@@ -2002,11 +2015,11 @@ export const computeNetPriceRescale = (
   // Cent-level passes: the only rounding for cents mode; for magnitude mode
   // with `exactTotal`, the finisher that closes the band-step leftover so the
   // total hits the target to the cent.
-  if (diffUnits !== 0 && requireExact) {
+  if (!isResidualClosed(diffUnits) && requireExact) {
     // Pass 1: largest-quantity groups first, take whole steps.
     const byQtyDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.totalQty - a.totalQty);
     for (const g of byQtyDesc) {
-      if (diffUnits === 0) break;
+      if (isResidualClosed(diffUnits)) break;
       const steps = diffUnits > 0 ? Math.floor(diffUnits / g.totalQty) : Math.ceil(diffUnits / g.totalQty);
       if (steps === 0) continue;
       setGroupNet(g, toUnits(g.newNet) + steps);
@@ -2016,10 +2029,10 @@ export const computeNetPriceRescale = (
     // whose totalQty would overshoot (equal-price rule means a totalQty=2
     // group moves the total by 2 cents per step, so it can't close a 1-cent
     // gap — the guard below auto-skips to the next most expensive group).
-    if (diffUnits !== 0) {
+    if (!isResidualClosed(diffUnits)) {
       const byPriceDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.newNet - a.newNet);
       for (const g of byPriceDesc) {
-        if (diffUnits === 0) break;
+        if (isResidualClosed(diffUnits)) break;
         const dir = diffUnits > 0 ? 1 : -1;
         const delta = dir * g.totalQty;
         if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {

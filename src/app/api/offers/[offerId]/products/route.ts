@@ -473,15 +473,24 @@ const normalizeRequestedTextValue = (value: unknown): string | null => {
 const normalizeRequestedItemNoValue = normalizeRequestedTextValue;
 const normalizeDeliveryValue = normalizeRequestedTextValue;
 
+// Quantity is DECIMAL(18,4); round to the column's scale so the value the
+// client keeps optimistically can't drift from what actually lands. Whether a
+// fraction survives at all is decided per row in the UPDATE, off the stored
+// ServiceType — only per-unit services (the '-Day' SKUs) keep one.
+const QUANTITY_SCALE_FACTOR = 10 ** 4;
+
 const normalizeQuantityValue = (value: unknown): number | null => {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
-  if (typeof value === 'string') {
+  let parsed: number | null = null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    parsed = value;
+  } else if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return null;
-    const parsed = Number.parseFloat(trimmed);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    const fromString = Number.parseFloat(trimmed);
+    if (Number.isFinite(fromString)) parsed = fromString;
   }
-  return null;
+  if (parsed == null || parsed < 0) return null;
+  return Math.round(parsed * QUANTITY_SCALE_FACTOR) / QUANTITY_SCALE_FACTOR;
 };
 
 const normalizePercentValue = (value: unknown, { allowNegative = false }: { allowNegative?: boolean } = {}): number | null => {
@@ -1499,6 +1508,12 @@ export async function POST(
       'IsCategory',
       'IsOption',
       'IsService',
+      // ServiceType rides along with IsService because the grid only requests
+      // fields for *visible* columns and there is no ServiceType column. The
+      // Qty edit guard needs it to tell a per-unit '-Day' service (fractional
+      // quantities allowed) from a ServLot lump sum; without it every row looks
+      // non-fractional and 0.25 rounds to 0.
+      'ServiceType',
       'Description',
       'ProductDescription',
       'BrandName',
@@ -3289,7 +3304,17 @@ export async function PATCH(
         SET od.ProductDescription = CASE WHEN PendingUpdates.HasProductDescription = 1 THEN PendingUpdates.ProductDescription ELSE od.ProductDescription END,
             od.[Comment] = CASE WHEN PendingUpdates.HasComment = 1 THEN PendingUpdates.Comment ELSE od.[Comment] END,
             od.Delivery = CASE WHEN PendingUpdates.HasDelivery = 1 THEN PendingUpdates.Delivery ELSE od.Delivery END,
-            od.Quantity = CASE WHEN PendingUpdates.HasQuantity = 1 THEN PendingUpdates.Quantity ELSE od.Quantity END,
+            -- Only per-unit services (the '-Day' SKUs) may hold a fractional
+            -- quantity; ServLot lump sums and product lines round to whole
+            -- units. Keyed off the stored ServiceType rather than anything the
+            -- client sent, and applied here so a stray decimal rounds instead
+            -- of tripping CK_OfferDetails_Quantity_Integral with a raw SQL error.
+            od.Quantity = CASE
+              WHEN PendingUpdates.HasQuantity = 1
+                THEN CASE WHEN od.ServiceType = 'ServPerUnit'
+                          THEN PendingUpdates.Quantity
+                          ELSE ROUND(PendingUpdates.Quantity, 0) END
+              ELSE od.Quantity END,
             od.CustomerDiscount = PendingUpdates.CustomerDiscount,
             od.AdditionalCustomerDiscount = PendingUpdates.AdditionalCustomerDiscount,
             od.TelmacoDiscount = PendingUpdates.TelmacoDiscount,
