@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useMemo, useCallback, useContext, useState, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useMemo, useCallback, useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
@@ -19,7 +18,7 @@ import type {
 import { GridRowDeletion } from '../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../lib/deletePermissions';
 import { useAuditUser } from '../components/AuditUserProvider';
-import PageHeader, { PageHeaderContext } from '../components/PageHeader';
+import PageHeader from '../components/PageHeader';
 import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { getUserNumberLocale } from '../../lib/localeNumber';
@@ -178,28 +177,6 @@ const normalizeProbability = (value: unknown): number | null => {
   return null;
 };
 
-function ClearCustomerFilterPortalButton({
-  label,
-  onClear,
-}: {
-  label: string;
-  onClear: () => void;
-}) {
-  const slot = useContext(PageHeaderContext);
-  if (!slot) return null;
-  return createPortal(
-    <button
-      type="button"
-      className={styles.clearCustomerFilterButton}
-      onClick={onClear}
-      title={label ? `Customer: ${label}` : undefined}
-    >
-      Clear customer filter{label ? `: ${label}` : ''}
-    </button>,
-    slot,
-  );
-}
-
 export default function OffersClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -209,8 +186,6 @@ export default function OffersClient() {
   const defaultFiltersAppliedRef = useRef(false);
   const initialSalesPersonRef = useRef((searchParams.get('salesPerson') ?? '').trim());
   const initialCustomerIdRef = useRef((searchParams.get('customerId') ?? '').trim());
-  const [customerFilterActive, setCustomerFilterActive] = useState(false);
-  const [customerFilterLabel, setCustomerFilterLabel] = useState<string>('');
   const gridApiRef = useRef<GridApi<Record<string, unknown>> | null>(null);
   const pendingColumnStateRestoreRef = useRef<ColumnState[] | null>(null);
   const [expandedVersionGroups, setExpandedVersionGroups] = useState<Set<number>>(new Set());
@@ -385,9 +360,10 @@ export default function OffersClient() {
     // user clears the filter (e.g. selects Yes & No, or Yes only).
     const needsEnabledDefault = !('Enabled' in baseModel);
     const needsTelquoteDefault = !('FromTelquote' in baseModel);
-    // The customer filter is URL-driven only. It's persisted with the rest of the filter model,
-    // so a CustomerID entry restored from an earlier deep link would silently hide almost every
-    // offer — the "Clear customer filter" button only renders while ?customerId= is in the URL.
+    // The customer filter is URL-driven only, and CustomerID is a hidden column. It's persisted
+    // with the rest of the filter model, so an entry restored from an earlier deep link would
+    // silently hide almost every offer with no visible floating filter to explain why. Drop it
+    // unless ?customerId= is in the URL; the grid's own filter chip clears it within a session.
     const hasStaleCustomerFilter = !hasCustomerIdFilter && 'CustomerID' in baseModel;
     if (hasStaleCustomerFilter) {
       delete baseModel.CustomerID;
@@ -407,53 +383,11 @@ export default function OffersClient() {
     }
     if (hasCustomerIdFilter) {
       baseModel.CustomerID = { filterType: 'number', type: 'equals', filter: customerIdNumber };
-      setCustomerFilterActive(true);
-      setCustomerFilterLabel(String(customerIdNumber));
     }
     api.setFilterModel(baseModel);
     defaultFiltersAppliedRef.current = true;
   }, []);
 
-  useEffect(() => {
-    if (!customerFilterActive) return;
-    const id = customerFilterLabel;
-    if (!id || !/^\d+$/.test(id)) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await fetch(`/api/customers/${encodeURIComponent(id)}/basicdata`, { cache: 'no-store' });
-        const payload = (await response.json().catch(() => null)) as { ok?: boolean; record?: { Name?: string | null } | null } | null;
-        const name = payload?.record?.Name;
-        if (!cancelled && response.ok && payload?.ok && typeof name === 'string' && name.trim()) {
-          setCustomerFilterLabel(name.trim());
-        }
-      } catch {
-        /* keep numeric label */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [customerFilterActive, customerFilterLabel]);
-
-  const handleClearCustomerFilter = useCallback(() => {
-    const api = gridApiRef.current;
-    if (api && !api.isDestroyed?.()) {
-      const current = (api.getFilterModel() as Record<string, unknown> | null) ?? {};
-      if ('CustomerID' in current) {
-        const next = { ...current };
-        delete next.CustomerID;
-        api.setFilterModel(next);
-      }
-    }
-    setCustomerFilterActive(false);
-    setCustomerFilterLabel('');
-    initialCustomerIdRef.current = '';
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete('customerId');
-    const query = params.toString();
-    routerRef.current.replace(query ? `/offers?${query}` : '/offers');
-  }, [searchParams]);
   const handleCreateOfferClick = useCallback(() => {
     routerRef.current.push('/offers/create');
   }, []);
@@ -939,7 +873,7 @@ export default function OffersClient() {
     // customer Basic Data page). AG Grid drops filter-model entries whose colId isn't a
     // registered column, so without this def setFilterModel({ CustomerID: … }) was silently
     // ignored and the grid listed every offer. Kept out of the columns tool panel — it's an
-    // internal key, not a column users pick; the header "Clear customer filter" button clears it.
+    // internal key, not a column users pick; the grid's filter chip clears it.
     { field: 'CustomerID', headerName: 'Customer ID', filter: 'agNumberColumnFilter', hide: true, suppressColumnsToolPanel: true },
     {
       field: 'Description',
@@ -1277,12 +1211,6 @@ export default function OffersClient() {
           }
         >
           <GridQuickSearchProvider>
-            {customerFilterActive ? (
-              <ClearCustomerFilterPortalButton
-                label={customerFilterLabel}
-                onClear={handleClearCustomerFilter}
-              />
-            ) : null}
             <div
               className={`${styles.gridFrame} offer-products-grid`}
               style={pivotMode ? { display: 'none' } : undefined}

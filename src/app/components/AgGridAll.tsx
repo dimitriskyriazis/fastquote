@@ -1447,6 +1447,33 @@ const refreshServerSideData = (api?: GridApi<RowData>, opts?: { purge?: boolean 
   }
 };
 
+// Snapshot scroll ahead of a server-side refresh so the refresh doesn't dump
+// the user at row 0. Called from the api.refreshServerSide wrapper installed at
+// grid-ready, which EVERY refresh funnels through — the grid's own filter/sort/
+// quick-search paths and any refreshServerSide a page component calls on the
+// api it was handed. Page-level code therefore needs no scroll handling of its
+// own. The matching restore lives in handleModelUpdated.
+const captureScrollBeforeRefresh = (
+  shell: HTMLElement | null,
+  pendingTopRef: { current: number | null },
+  pendingRowIdRef: { current: string | null },
+  skipViewport: boolean,
+) => {
+  // Always pin window/ancestor scroll: a grid that briefly shrinks and lets the
+  // browser clamp the page to the top is never what anyone wanted.
+  captureAndPinScroll(shell);
+  if (skipViewport) return;
+  // A row-id anchor is already queued (filter changes queue one). That's the
+  // better anchor when the row set itself changes, and it would be overridden
+  // by a pixel restore.
+  if (pendingRowIdRef.current) return;
+  if (pendingTopRef.current != null) return;
+  const viewport = shell?.querySelector<HTMLElement>('.ag-center-cols-viewport, .ag-body-viewport') ?? null;
+  if (viewport && viewport.scrollTop > 0) {
+    pendingTopRef.current = viewport.scrollTop;
+  }
+};
+
 const GUARDED_SET_FILTERS = new Map<string, string[]>([
   ['Enabled', ['true', 'false']],
   ['CustomerEnabled', ['true', 'false']],
@@ -1627,6 +1654,12 @@ export default function AgGridAll({
           } catch {
             /* noop */
           }
+          captureScrollBeforeRefresh(
+            shellRef.current,
+            pendingScrollRestoreTopRef,
+            pendingScrollRestoreRowIdRef,
+            suppressViewportScrollCaptureRef.current,
+          );
         }
         requestRefresh(() => boundOriginal(...args));
       };
@@ -1716,6 +1749,10 @@ export default function AgGridAll({
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const pendingScrollRestoreTopRef = useRef<number | null>(null);
   const pendingScrollRestoreRowIdRef = useRef<string | null>(null);
+  // Set around refreshes where landing at the top is the RIGHT answer because
+  // the result set itself changed (quick search). The page/window pin still
+  // applies — only the grid's own pixel-offset restore is skipped.
+  const suppressViewportScrollCaptureRef = useRef(false);
   const pendingWindowScrollYRef = useRef<number | null>(null);
   const pendingAncestorScrollRef = useRef<{ el: HTMLElement; top: number } | null>(null);
   const columnSaveTimerRef = useRef<number | null>(null);
@@ -2692,7 +2729,17 @@ export default function AgGridAll({
     const queueQuickSearchRefresh = () => {
       quickSearchRefreshTimerRef.current = null;
       requestRefresh(() => {
-        const refreshAction = () => refreshServerSideData(api);
+        // A new search term means a new result set, so the old pixel offset is
+        // meaningless — let this one land at the top (the page itself is still
+        // pinned by the wrapper).
+        const refreshAction = () => {
+          suppressViewportScrollCaptureRef.current = true;
+          try {
+            refreshServerSideData(api);
+          } finally {
+            suppressViewportScrollCaptureRef.current = false;
+          }
+        };
         if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
           window.requestAnimationFrame(refreshAction);
         } else {
@@ -4338,13 +4385,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       pendingSortRefreshAfterRestoreRef.current = true;
       return;
     }
-    // Sorting reorders the same row set, so the scroll offset stays meaningful
-    // — snapshot it (and pin the page) so the grid doesn't snap to row 0.
-    const sortViewport = getViewportElement();
-    if (sortViewport && sortViewport.scrollTop > 0) {
-      pendingScrollRestoreTopRef.current = sortViewport.scrollTop;
-    }
-    captureAndPinScroll(shellRef.current);
+    // Sorting reorders the same row set, so the scroll offset stays meaningful.
+    // The refreshServerSide wrapper snapshots it and pins the page for us.
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
 
@@ -4375,7 +4417,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         gridUrlState.writeSortModelToUrl(modelToSave);
       }, 0);
     }
-  }, [getViewportElement, sortStateStorageKey, gridUrlState]);
+  }, [sortStateStorageKey, gridUrlState]);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     if (quickSearchRefreshRequestedRef.current) {
@@ -4445,23 +4487,31 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         setTimeout(() => { if (tryScroll()) pendingScrollRestoreRowIdRef.current = null; }, 200);
       }
     }
-    const restoreTop = pendingScrollRestoreTopRef.current;
-    if (restoreTop != null) {
-      const viewport = getViewportElement();
-      if (viewport) {
-        const restore = () => {
-          viewport.scrollTop = restoreTop;
-          // Only clear if the scroll actually stuck (viewport has enough content)
-          if (viewport.scrollTop > 0 || restoreTop === 0) {
-            pendingScrollRestoreTopRef.current = null;
-          }
-        };
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(restore);
-        } else {
-          setTimeout(restore, 0);
+    // Skip when a row-id anchor is queued above — that one is a better match
+    // for the new row set and this would override it.
+    if (pendingScrollRestoreTopRef.current != null && !pendingScrollRestoreRowIdRef.current) {
+      const restore = () => {
+        const restoreTop = pendingScrollRestoreTopRef.current;
+        if (restoreTop == null) return;
+        const viewport = getViewportElement();
+        if (!viewport) return;
+        // The user scrolled elsewhere while blocks were loading — leave them be.
+        if (viewport.scrollTop !== 0 && viewport.scrollTop !== restoreTop) {
+          pendingScrollRestoreTopRef.current = null;
+          return;
         }
-      }
+        viewport.scrollTop = restoreTop;
+        // Only clear if the scroll actually stuck (viewport has enough content)
+        if (viewport.scrollTop > 0 || restoreTop === 0) {
+          pendingScrollRestoreTopRef.current = null;
+        }
+      };
+      const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 0));
+      raf(restore);
+      // The viewport can still be too short for the target offset when the
+      // first post-refresh block lands; retry while it's pinned at 0.
+      setTimeout(restore, 120);
+      setTimeout(restore, 320);
     }
     const restoreWindowY = pendingWindowScrollYRef.current;
     if (restoreWindowY != null && typeof window !== 'undefined') {

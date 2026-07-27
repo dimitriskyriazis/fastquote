@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOfferProductTemplateExportRows,
   computeDisplayOrderingMap,
   computeNetPriceRescale,
   findDuplicateTreeOrderings,
@@ -8,6 +9,7 @@ import {
   planTreeOrderingEdit,
   type NetRescaleEntry,
 } from './offerProductsUtils';
+import type { OfferExportRow } from './offerProductsPanelTypes';
 import { roundPriceByMagnitude } from '../../../lib/pricing';
 
 type Row = Record<string, unknown>;
@@ -913,5 +915,50 @@ describe('computeNetPriceRescale', () => {
           .toBeLessThanOrEqual(Math.max(1, Math.round(targetCents * 0.005)));
       }
     });
+  });
+});
+
+describe('buildOfferProductTemplateExportRows — ServLot quantity', () => {
+  // A lump-sum service quoted as 27 lots: the offer charges 27 x 410.
+  const servLot = (extra: Row = {}): Row => ({
+    OfferDetailID: newId(),
+    TreeOrdering: '1',
+    PartNumber: 'Install-Lot',
+    IsService: 1,
+    ServiceType: 'ServLot',
+    Quantity: 27,
+    ListPrice: 410,
+    NetCost: 205,
+    ...extra,
+  });
+
+  const build = (rows: Row[], options?: { collapseServLotQty?: boolean }) =>
+    buildOfferProductTemplateExportRows(rows as unknown as OfferExportRow[], options);
+
+  it('keeps the real quantity by default (AVC4 pairs Qty with a per-unit price)', () => {
+    const [row] = build([servLot()]);
+    expect(row.qty).toBe(27);
+    // The price side stays per-unit — the template has no extended-total field,
+    // so the receiving workbook multiplies these two itself.
+    expect(row.unitPrice).toBe(410);
+    expect(row.cost).toBe(205);
+  });
+
+  it('collapses to a single unit only when asked (EP LINC request sheet)', () => {
+    const [row] = build([servLot()], { collapseServLotQty: true });
+    expect(row.qty).toBe(1);
+    expect(row.unitPrice).toBe(410);
+  });
+
+  it('never collapses ServPerUnit day-rate lines, whatever the option says', () => {
+    const perUnit = { ServiceType: 'ServPerUnit', PartNumber: 'Comm-Day', Quantity: 4 };
+    expect(build([servLot(perUnit)])[0].qty).toBe(4);
+    expect(build([servLot(perUnit)], { collapseServLotQty: true })[0].qty).toBe(4);
+  });
+
+  it('leaves ordinary product lines alone', () => {
+    const plain = { IsService: undefined, ServiceType: undefined, PartNumber: 'PN-1', Quantity: 3 };
+    expect(build([servLot(plain)])[0].qty).toBe(3);
+    expect(build([servLot(plain)], { collapseServLotQty: true })[0].qty).toBe(3);
   });
 });

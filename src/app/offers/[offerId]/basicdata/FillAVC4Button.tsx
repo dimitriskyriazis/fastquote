@@ -39,6 +39,9 @@ export default function FillAVC4Button({ offerId, className }: Props) {
       throw new Error(payload?.error ?? `Failed to fetch rows (status ${response.status})`);
     }
 
+    // No collapseServLotQty: AVC4 writes Qty alongside a per-unit price column
+    // and has no total column, so a lump-sum service line must carry its real
+    // quantity or the workbook's line total prices just one unit of it.
     return buildOfferProductTemplateExportRows(payload.rows);
   }, [offerId]);
 

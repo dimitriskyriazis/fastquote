@@ -2076,6 +2076,18 @@ export type OfferProductTemplateExportOptions = {
   // comparison on their side, whichever way it lands (see lib/epLincPricing.ts).
   // Plain RRP lines get a truly-blank cost cell.
   epLincCostGating?: boolean;
+  // Write ServLot (lump-sum service) lines as a single unit instead of their
+  // real quantity. OFF by default: `qty` is always paired with a per-unit price
+  // (`unitPrice`/`cost`) and no template can emit an extended total, so a
+  // template that writes qty needs the true quantity or its own line-total
+  // formula silently prices one unit of a multi-lot line.
+  //
+  // Only Fill EP LINC wants this, and only because its pricing sheet
+  // (Offer_List_Supplies) never receives qty at all — it writes the five
+  // pricing columns onto EP LINC's own pre-filled rows, which carry EP LINC's
+  // quantities. There the forced 1 reaches only Request_List_Supplies'
+  // product_qty. AVC4 does write qty, next to 'Unit price (RRP / Euro)'.
+  collapseServLotQty?: boolean;
 };
 
 // Single source of truth for turning raw offer-export rows (as returned by the
@@ -2094,6 +2106,7 @@ export function buildOfferProductTemplateExportRows(
   });
 
   const epLincCostGating = options?.epLincCostGating === true;
+  const collapseServLotQty = options?.collapseServLotQty === true;
 
   return included.map((row): OfferProductsTemplateExportRow => {
     const rowType = resolveOfferProductRowType(row as unknown as Record<string, unknown>);
@@ -2102,7 +2115,7 @@ export function buildOfferProductTemplateExportRows(
     const descriptionType = [model, description].filter((part) => part.length > 0).join(' ').trim();
     const rawQty = coerceNumber(row.Quantity);
     const isServLot = row.ServiceType === 'ServLot';
-    const qty = isServLot ? 1 : rawQty;
+    const qty = isServLot && collapseServLotQty ? 1 : rawQty;
     const listPrice = coerceNumber(row.ListPrice);
     const additionalDiscount = coerceNumber(row.AdditionalCustomerDiscount);
     const rawCost = coerceNumber(row.NetCost);

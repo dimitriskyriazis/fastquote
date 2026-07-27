@@ -49,7 +49,14 @@ export default function FillEPLINCButton({ offerId, salesPersonName, erpProjectC
 
     // EP LINC pricing policy: only UPLIFT and COMPARISON lines reveal their
     // cost in the workbook; plain RRP lines get blank cost cells.
-    return buildOfferProductTemplateExportRows(payload.rows, { epLincCostGating: true });
+    // collapseServLotQty keeps EP LINC's long-standing behaviour of reporting a
+    // lump-sum service as a single unit. It is inert on the priced sheet
+    // (Offer_List_Supplies takes no qty from us) and applies only to
+    // Request_List_Supplies' product_qty.
+    return buildOfferProductTemplateExportRows(payload.rows, {
+      epLincCostGating: true,
+      collapseServLotQty: true,
+    });
   }, [offerId]);
 
   return (
