@@ -13,6 +13,9 @@ export type FarnellSearchRow = {
   ListPrice: number | null;
   UnitPrice: number | null;
   PriceListName: string;
+  /** Turns the Part Number cell into a link to the Farnell listing, so the
+   *  user can eyeball which of several same-MPN order codes is the right one. */
+  WebLink: string;
   __source: 'farnell-search';
   __farnellSku: string;
   __farnellProduct: FarnellLookupResult;
@@ -32,6 +35,8 @@ function mapFarnellProduct(
     ListPrice: product.matchedPrice,
     UnitPrice: product.matchedPrice,
     PriceListName: 'Farnell API',
+    WebLink: product.productURL
+      ?? `https://be.farnell.com/en-BE/search?st=${encodeURIComponent(product.sku)}`,
     __source: 'farnell-search',
     __farnellSku: product.sku,
     __farnellProduct: product,
@@ -125,5 +130,31 @@ export function useFarnellSearch({ partNumber, description, quantity }: UseFarne
     setNoFarnellResults(false);
   }, []);
 
-  return { farnellResults, farnellLoading, noFarnellResults, searchFarnell, clearFarnellResults };
+  // Show candidates that were already fetched elsewhere (Populate hands over
+  // the listings it refused to choose between) without re-hitting the API.
+  const seedFarnellResults = useCallback((
+    products: FarnellLookupResult[],
+    farnellBrandId: number | null,
+  ) => {
+    abortRef.current?.abort();
+    const seen = new Set<string>();
+    const rows: FarnellSearchRow[] = [];
+    for (const product of products) {
+      if (!product?.sku || seen.has(product.sku)) continue;
+      seen.add(product.sku);
+      rows.push(mapFarnellProduct(product, farnellBrandId));
+    }
+    setFarnellResults(rows);
+    setFarnellLoading(false);
+    setNoFarnellResults(false);
+  }, []);
+
+  return {
+    farnellResults,
+    farnellLoading,
+    noFarnellResults,
+    searchFarnell,
+    clearFarnellResults,
+    seedFarnellResults,
+  };
 }

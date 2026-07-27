@@ -163,7 +163,19 @@ export async function fetchFarnellProducts(
     const products = parseApiProducts(data);
     if (products.length === 0) return [];
     const qty = quantity != null && quantity > 0 ? quantity : 1;
-    return products.map((p) => mapRawProduct(p, sku, qty));
+    // Deduplicate by order code. Callers use the result COUNT to decide whether
+    // a search term was ambiguous (see the manufacturer-part-number gate in the
+    // offer Populate flow), so a repeated listing must not read as a second
+    // candidate.
+    const seen = new Set<string>();
+    const mapped: FarnellProduct[] = [];
+    for (const raw of products) {
+      const product = mapRawProduct(raw, sku, qty);
+      if (seen.has(product.sku)) continue;
+      seen.add(product.sku);
+      mapped.push(product);
+    }
+    return mapped;
   } catch (err) {
     // Propagate rate-limit errors so callers can stop making further requests
     if (err instanceof Error && err.message === 'FARNELL_RATE_LIMITED') throw err;

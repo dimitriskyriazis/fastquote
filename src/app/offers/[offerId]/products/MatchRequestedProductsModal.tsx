@@ -23,6 +23,7 @@ import {
   type HiddenFilterTokens,
   type FilterExpansions,
   type PromptRouting,
+  type FarnellLookupResult,
 } from '../offerProductsUtils';
 import {
   AiSearchPromptPill,
@@ -71,7 +72,26 @@ export type RequestedProductMatchEntry = {
   requestedDescription: string | null;
   requestedDescription2: string | null;
   requestedDescription3: string | null;
+  /**
+   * Farnell listings that all carry the requested manufacturer part number.
+   * Populate sets these (instead of assigning) when a part number resolved to
+   * more than one Farnell order code — the prices can differ by two orders of
+   * magnitude, so the choice is the user's. Seeded straight into the pinned
+   * Farnell rows, no second API call.
+   */
+  farnellCandidates?: FarnellLookupResult[] | null;
+  farnellBrandId?: number | null;
+  /** The ambiguous part number the candidates above were looked up with. */
+  farnellAmbiguousPartNumber?: string | null;
 };
+
+/**
+ * The Farnell listing the user picked. Carries the listing itself, not just its
+ * order code: some order codes returned by a manufacturer-part-number search
+ * (e.g. 1906326) come back empty from an order-code lookup, so re-fetching to
+ * get the price would silently lose it. The price tiers are already here.
+ */
+export type FarnellAssignSelection = { sku: string; product: FarnellLookupResult };
 
 type MatcherRowData = Record<string, unknown>;
 type MatcherSortEntry = { colId: string; sort: 'asc' | 'desc' };
@@ -92,7 +112,12 @@ type Props = {
   entry: RequestedProductMatchEntry;
   position: number;
   total: number;
-  onAssign: (productId: number, comment: string, metrics?: AssignmentMetrics | null) => Promise<boolean>;
+  onAssign: (
+    productId: number,
+    comment: string,
+    metrics?: AssignmentMetrics | null,
+    farnell?: FarnellAssignSelection | null,
+  ) => Promise<boolean>;
   onSkip: () => void;
   onRequestAddProduct: () => void;
   newProductId?: number | null;
@@ -208,11 +233,23 @@ export default function MatchRequestedProductsModal({
   const [farnellPartNumber, setFarnellPartNumber] = useState<string | null>(entry.requestedPartNumber ?? null);
   const [farnellDescription, setFarnellDescription] = useState<string | null>(entry.requestedDescription ?? null);
 
-  const { farnellResults, farnellLoading, noFarnellResults, searchFarnell, clearFarnellResults } = useFarnellSearch({
+  const {
+    farnellResults,
+    farnellLoading,
+    noFarnellResults,
+    searchFarnell,
+    clearFarnellResults,
+    seedFarnellResults,
+  } = useFarnellSearch({
     partNumber: farnellPartNumber,
     description: farnellDescription,
     quantity: entry.quantity ?? undefined,
   });
+  // Populate refused to guess between these — surface them up front.
+  const farnellAmbiguousCandidateCount = entry.farnellCandidates?.length ?? 0;
+  const farnellAmbiguousPartNumber = entry.farnellAmbiguousPartNumber
+    ?? entry.requestedPartNumber
+    ?? null;
   const farnellResultsRef = useRef<FarnellSearchRow[]>([]);
   farnellResultsRef.current = farnellResults;
 
@@ -253,7 +290,7 @@ export default function MatchRequestedProductsModal({
   }, [setPinnedSuggestions]);
 
   // Sync pinned rows when suggestedProducts, farnellResults, or visibility changes
-  useEffect(() => {
+  const syncPinnedRows = useCallback(() => {
     const rows: MatcherRowData[] = [];
     if (suggestedProducts.length > 0 && suggestionsVisible) {
       rows.push(...suggestedProducts);
@@ -267,6 +304,14 @@ export default function MatchRequestedProductsModal({
       clearPinnedTopRow();
     }
   }, [suggestedProducts, suggestionsVisible, farnellResults, farnellVisible, setPinnedSuggestions, clearPinnedTopRow]);
+  useEffect(() => {
+    syncPinnedRows();
+  }, [syncPinnedRows]);
+  // Farnell candidates handed over by Populate are seeded on mount, i.e. before
+  // the grid exists — without a replay on grid-ready the pinned rows would be
+  // written to a null API and never appear.
+  const syncPinnedRowsRef = useRef(syncPinnedRows);
+  syncPinnedRowsRef.current = syncPinnedRows;
 
   const getRowStyle = useCallback((params: RowClassParams): RowStyle | undefined => {
     // Pinned top row default/hover/selected styling handled via CSS on .ag-floating-top
@@ -774,7 +819,11 @@ export default function MatchRequestedProductsModal({
     }
   }, []);
 
-  const handleAssignWithId = useCallback(async (productId: number, assignComment?: string) => {
+  const handleAssignWithId = useCallback(async (
+    productId: number,
+    assignComment?: string,
+    farnellRow?: FarnellSearchRow | null,
+  ) => {
     if (assigning) return;
     setAssigning(true);
     try {
@@ -820,7 +869,14 @@ export default function MatchRequestedProductsModal({
           return null;
         }
       })();
-      await onAssign(productId, assignComment ?? comment, metrics);
+      await onAssign(
+        productId,
+        assignComment ?? comment,
+        metrics,
+        farnellRow
+          ? { sku: farnellRow.__farnellSku, product: farnellRow.__farnellProduct }
+          : null,
+      );
       // Don't reset selectedProduct/comment here — the cleanup effect handles
       // it when the entry changes (which now happens optimistically inside onAssign,
       // so the microtask resolution of this await would override autoSelectTopProduct).
@@ -842,9 +898,10 @@ export default function MatchRequestedProductsModal({
   const handleAssign = useCallback(async () => {
     // Handle Farnell row: resolve/create product first
     if (selectedProductIsFarnell && selectedProduct) {
-      const resolvedId = await resolveFarnellProduct(selectedProduct as unknown as FarnellSearchRow);
+      const farnellRow = selectedProduct as unknown as FarnellSearchRow;
+      const resolvedId = await resolveFarnellProduct(farnellRow);
       if (resolvedId == null) return;
-      void handleAssignWithId(resolvedId);
+      void handleAssignWithId(resolvedId, undefined, farnellRow);
       return;
     }
     const id = selectedProductId ?? getSelectedProductIdFromApi();
@@ -856,9 +913,10 @@ export default function MatchRequestedProductsModal({
     const data = event.data as MatcherRowData;
     // Handle Farnell row
     if (isFarnellRow(data as Record<string, unknown>)) {
-      const resolvedId = await resolveFarnellProduct(data as unknown as FarnellSearchRow);
+      const farnellRow = data as unknown as FarnellSearchRow;
+      const resolvedId = await resolveFarnellProduct(farnellRow);
       if (resolvedId == null) return;
-      void handleAssignWithId(resolvedId, comment);
+      void handleAssignWithId(resolvedId, comment, farnellRow);
       return;
     }
     const rawProductId = (data as { ProductID?: unknown }).ProductID ?? null;
@@ -1398,6 +1456,7 @@ export default function MatchRequestedProductsModal({
     autoSelectTopProduct(api);
     attachCellClickListener(api);
     attachFilterListener(api);
+    syncPinnedRowsRef.current?.();
     // The grid restores persisted filter state asynchronously via requestAnimationFrame,
     // which can overwrite the programmatic filters we just set for the current product.
     // Re-apply only if the persisted restoration actually changed the filter model,
@@ -1478,8 +1537,15 @@ export default function MatchRequestedProductsModal({
     exactPartAbortRef.current?.abort();
     userManuallySelectedRef.current = false;
     setSuggestionsVisible(true);
-    // Reset Farnell state for the new entry
-    clearFarnellResults();
+    // Reset Farnell state for the new entry.  When Populate handed the row over
+    // because one manufacturer part number matched several Farnell order codes,
+    // pin those exact candidates instead of making the user re-run the lookup.
+    const handedOverCandidates = entry.farnellCandidates ?? null;
+    if (handedOverCandidates && handedOverCandidates.length > 0) {
+      seedFarnellResults(handedOverCandidates, entry.farnellBrandId ?? null);
+    } else {
+      clearFarnellResults();
+    }
     setBrandFilterIsFarnell(isFarnellBrand(entry.requestedBrand));
     setFarnellVisible(true);
     setFarnellPartNumber(entry.requestedPartNumber ?? null);
@@ -1691,6 +1757,16 @@ export default function MatchRequestedProductsModal({
           </div>
           <div className={styles.searchSlot} ref={handleSlotRef} />
           <GridQuickSearchProvider>
+            {farnellAmbiguousCandidateCount > 1 ? (
+              <div className={styles.farnellAmbiguityNotice}>
+                <strong>{farnellAmbiguousCandidateCount} Farnell listings</strong>
+                {farnellAmbiguousPartNumber
+                  ? <> share manufacturer part no. <strong>{farnellAmbiguousPartNumber}</strong></>
+                  : <> share this manufacturer part number</>}
+                {' '}— prices differ per order code, so Populate did not pick one.
+                Choose the right listing from the pinned rows below.
+              </div>
+            ) : null}
             <div className={styles.hint}>Use the filters or quick search to find a matching product.</div>
             <div className={styles.details}>
               {entry.details.length > 0 ? entry.details.map((detail: DetailEntry) => (

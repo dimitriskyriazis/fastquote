@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../lib/authz';
-import { fetchFarnellProduct, fetchFarnellProducts, type FarnellProduct } from '../../../../lib/farnell';
+import { fetchFarnellProducts, type FarnellProduct } from '../../../../lib/farnell';
 import { getPool } from '../../../../lib/sql';
 import OpenAI from 'openai';
 
@@ -15,7 +15,6 @@ let cachedFarnellBrandId: number | null | undefined = undefined;
 
 // Cache Farnell API results for 10 minutes to avoid repeated slow external calls
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const singleCache = new Map<string, { product: FarnellProduct | null; ts: number }>();
 const multiCache = new Map<string, { products: FarnellProduct[]; ts: number }>();
 
 function evictStale<T>(cache: Map<string, { ts: number } & T>) {
@@ -25,20 +24,6 @@ function evictStale<T>(cache: Map<string, { ts: number } & T>) {
       if (now - v.ts > CACHE_TTL_MS) cache.delete(k);
     }
   }
-}
-
-async function fetchCached(sku: string, quantity: number, searchType: 'id' | 'manuPartNum' | 'keyword'): Promise<FarnellProduct | null> {
-  const key = `${searchType}::${sku}::${quantity}`;
-  const entry = singleCache.get(key);
-  if (entry && Date.now() - entry.ts <= CACHE_TTL_MS) return entry.product;
-  const product = await fetchFarnellProduct(sku, quantity, searchType);
-  if (product != null) {
-    singleCache.set(key, { product, ts: Date.now() });
-    evictStale(singleCache);
-  } else {
-    singleCache.delete(key);
-  }
-  return product;
 }
 
 async function fetchCachedMulti(sku: string, quantity: number, searchType: 'id' | 'manuPartNum' | 'keyword'): Promise<FarnellProduct[]> {
@@ -247,11 +232,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, product: products[0], products, farnellBrandId });
     }
 
-    // Single-product lookup (used by offers flow)
+    // Direct lookup by order code / manufacturer part number (used by the
+    // offers flow). Returns EVERY match, not just the first: a Farnell order
+    // code is unique but a manufacturer part number is not — the same MPN is
+    // routinely listed under several order codes at very different prices — so
+    // callers need the full list to detect that ambiguity instead of silently
+    // taking the top hit.
     const searchType = searchTypeParam === 'manuPartNum' ? 'manuPartNum' : 'id';
-    const product = await fetchCached(sku, quantity, searchType);
+    const products = await fetchCachedMulti(sku, quantity, searchType);
 
-    if (!product) {
+    if (products.length === 0) {
       return NextResponse.json(
         { ok: false, error: `No product found for SKU ${sku}` },
         { status: 404 },
@@ -259,7 +249,7 @@ export async function GET(req: NextRequest) {
     }
 
     const farnellBrandId = await resolveFarnellBrandId();
-    return NextResponse.json({ ok: true, product, farnellBrandId });
+    return NextResponse.json({ ok: true, product: products[0], products, farnellBrandId });
   } catch (err) {
     if (err instanceof Error && err.message === 'FARNELL_RATE_LIMITED') {
       return NextResponse.json(

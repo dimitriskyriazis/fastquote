@@ -67,6 +67,7 @@ import { buildAddWebLinksMenuItem } from '../../../lib/addWebLinksClient';
 import { coerceRoles, roleHasPermission } from '../../../lib/roles';
 import MatchRequestedProductsModal, {
   type RequestedProductMatchEntry,
+  type FarnellAssignSelection,
 } from './products/MatchRequestedProductsModal';
 import AddProductModal, { type AddProductInitialValues } from '../../products/AddProductModal';
 import { useAuditUser } from '../../components/AuditUserProvider';
@@ -146,6 +147,7 @@ import {
   resolveFarnellProductByPartNumber,
   createFarnellProduct,
   buildFarnellPricingPatch,
+  matchFarnellPriceTier,
   OFFER_PRODUCTS_EXPORT_FIELDS,
   buildOfferProductTemplateExportRows,
   recalcProductTotals,
@@ -171,6 +173,7 @@ import {
   isRequestedFieldKey,
   type ProductSummary,
   type FarnellLookupResponse,
+  type AssignedRequestedPricing,
   type FilterExpansions,
   type HiddenFilterTokens,
 } from './offerProductsUtils';
@@ -3488,6 +3491,13 @@ const requestedColumnDefsMap = useMemo(
     // lookup). Tracked so the user is warned rather than silently getting a
     // priceless line.
     const unpricedFarnellPartNumbers: string[] = [];
+    // Farnell part numbers that matched several order codes at prices we can't
+    // choose between. The row is still assigned (the product was already in the
+    // catalogue) but no price is written — guessing one is a coin flip.
+    const ambiguousFarnellPricePartNumbers: string[] = [];
+    // Part numbers whose rows were handed to the manual matcher because one
+    // manufacturer part number maps to several Farnell order codes.
+    const ambiguousFarnellMatchPartNumbers: string[] = [];
     const farnellProductCache = new Map<string, number>();
     const farnellLookupCache = new Map<string, FarnellLookupResponse | null>();
     const getFarnellLookupCacheKey = (partNumber: string, quantity: number, searchType: 'id' | 'manuPartNum' = 'id') => `${searchType}::${partNumber}::${quantity}`;
@@ -3632,6 +3642,14 @@ const requestedColumnDefsMap = useMemo(
           continue;
         }
 
+        // Farnell prices are tiered by quantity. Probe with the quantity the
+        // server will end up assigning (RequestedQuantity, else 1) so the
+        // pricing lookup further down reuses the same cache entry instead of
+        // paying for a second API call.
+        const farnellProbeQuantity = requestedQuantityValue != null && requestedQuantityValue > 0
+          ? Math.trunc(requestedQuantityValue)
+          : 1;
+
         try {
           const brandIsFarnell = isFarnellBrand(lookupInfo.brand);
           let farnellLookupResponse: FarnellLookupResponse | null = null;
@@ -3639,6 +3657,35 @@ const requestedColumnDefsMap = useMemo(
 
           if (brandIsFarnell && lookupInfo.partNumber) {
             const partKey = lookupInfo.partNumber;
+
+            // Ask Farnell what this part number actually resolves to BEFORE
+            // looking at our own product table.
+            //
+            // A Farnell ORDER CODE is unique; a MANUFACTURER PART NUMBER is
+            // not — DZ5CE015 is listed as 1207001 (8,15 €), 4913067 (0,12 €)
+            // and 1906326 (0,27 €). Earlier versions of this code auto-created
+            // a product keyed by the MPN itself, so "we already have a product
+            // with that part number" is NOT evidence that the ambiguity was
+            // ever resolved. Probing first is what makes the gate below reach
+            // those rows instead of silently re-using a coin-flip match.
+            farnellLookupResponse = await getFarnellLookupCached(partKey, farnellProbeQuantity);
+            if (!farnellLookupResponse) {
+              farnellLookupResponse = await getFarnellLookupCached(partKey, farnellProbeQuantity, 'manuPartNum');
+            }
+
+            const farnellCandidates = farnellLookupResponse?.products ?? [];
+            if (farnellCandidates.length > 1) {
+              // Hand the row to the manual matcher with exactly those listings
+              // pinned and let the user pick the order code they mean.
+              ambiguousFarnellMatchPartNumbers.push(partKey);
+              unmatchedRequestedRows.push({
+                ...buildRequestedProductMatchEntry(data, offerDetailId),
+                farnellCandidates,
+                farnellBrandId: farnellLookupResponse?.farnellBrandId ?? null,
+                farnellAmbiguousPartNumber: partKey,
+              });
+              continue;
+            }
 
             // Check dedup cache first (same part number already processed in this batch)
             if (farnellProductCache.has(partKey)) {
@@ -3650,16 +3697,6 @@ const requestedColumnDefsMap = useMemo(
 
             // Auto-create product if not found
             if (productId == null) {
-              // Fetch from Farnell API by item code (also returns the Farnell brand ID from DB)
-              if (lookupInfo.partNumber) {
-                farnellLookupResponse = await getFarnellLookupCached(lookupInfo.partNumber, 1);
-              }
-
-              // Fallback: retry the same part number as a manufacturer part number search
-              if (!farnellLookupResponse && partKey) {
-                farnellLookupResponse = await getFarnellLookupCached(partKey, 1, 'manuPartNum');
-              }
-
               const farnellBrandId = farnellLookupResponse?.farnellBrandId ?? null;
               if (farnellBrandId != null && farnellLookupResponse) {
                 productId = await createFarnellProduct(
@@ -3726,28 +3763,38 @@ const requestedColumnDefsMap = useMemo(
           }
 
           // productMeta already fetched above (before brand mismatch check)
-          const assignedProductBrandIsFarnell = brandIsFarnell || isFarnellBrand(productMeta?.BrandName ?? null);
+          const matchedProductIsFarnell = isFarnellBrand(productMeta?.BrandName ?? null);
+          const assignedProductBrandIsFarnell = brandIsFarnell || matchedProductIsFarnell;
           const productPartNumber = typeof productMeta?.PartNumber === 'string'
             ? productMeta.PartNumber.trim()
             : '';
-          const assignedPartNumber = lookupInfo.partNumber
-            ?? (productPartNumber.length > 0 ? productPartNumber : null);
+          // For a catalogued Farnell product the stored PartNumber is its
+          // ORDER CODE, which resolves to exactly one listing. The requested
+          // part number is often the manufacturer part number, which doesn't —
+          // so price off the order code whenever we have one.
+          const assignedPartNumber = (matchedProductIsFarnell && productPartNumber.length > 0)
+            ? productPartNumber
+            : (lookupInfo.partNumber ?? (productPartNumber.length > 0 ? productPartNumber : null));
 
           if (assignedProductBrandIsFarnell && assignedPartNumber) {
             const quantityForLookupRaw = assignment.pricing?.quantity ?? requestedQuantityValue ?? actualQuantityValue ?? 1;
             const quantityForLookup = quantityForLookupRaw > 0 ? Math.trunc(quantityForLookupRaw) : 1;
-            let lookupResponse = farnellLookupResponse;
-            if (!lookupResponse || quantityForLookup !== 1 || lookupInfo.partNumber !== assignedPartNumber) {
-              lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
-            }
+            // Everything goes through the per-batch cache, so when this repeats
+            // the probe above it costs nothing.
+            let lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup);
             // The part number may be a manufacturer part number rather than a
-            // Farnell order code. The default 'id' lookup only searches order
-            // codes, so fall back to a manufacturer-part-number search (mirrors
-            // the product-creation fallback above) before giving up on a price.
-            if (lookupResponse?.product.matchedPrice == null) {
+            // Farnell order code. The 'id' lookup only searches order codes, so
+            // fall back to a manufacturer-part-number search — but ONLY when the
+            // order-code search found nothing at all. A listing that exists but
+            // carries no price must not be repriced from a DIFFERENT order code
+            // that merely shares its manufacturer part number.
+            if (!lookupResponse) {
               lookupResponse = await getFarnellLookupCached(assignedPartNumber, quantityForLookup, 'manuPartNum');
             }
-            const farnellPatch = lookupResponse?.product.matchedPrice != null
+            // Several listings behind one part number means several possible
+            // prices — write none rather than a random one.
+            const priceIsAmbiguous = (lookupResponse?.products.length ?? 0) > 1;
+            const farnellPatch = !priceIsAmbiguous && lookupResponse?.product.matchedPrice != null
               ? buildFarnellPricingPatch(
                   offerDetailId,
                   lookupResponse.product.matchedPrice,
@@ -3756,6 +3803,8 @@ const requestedColumnDefsMap = useMemo(
               : null;
             if (farnellPatch) {
               updates.push(farnellPatch);
+            } else if (priceIsAmbiguous) {
+              ambiguousFarnellPricePartNumbers.push(assignedPartNumber);
             } else {
               // Product matched/created but no usable price came back — warn
               // instead of leaving a silently unpriced line.
@@ -3837,6 +3886,26 @@ const requestedColumnDefsMap = useMemo(
             'error',
           );
         }
+      }
+      if (ambiguousFarnellMatchPartNumbers.length > 0) {
+        const uniqueParts = [...new Set(ambiguousFarnellMatchPartNumbers)];
+        showToastMessage(
+          uniqueParts.length === 1
+            ? `Several Farnell order codes share part no. ${uniqueParts[0]} — pick the right one in the matcher.`
+            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')} — pick the right ones in the matcher.`,
+          'info',
+          8000,
+        );
+      }
+      if (ambiguousFarnellPricePartNumbers.length > 0) {
+        const uniqueParts = [...new Set(ambiguousFarnellPricePartNumbers)];
+        showToastMessage(
+          uniqueParts.length === 1
+            ? `Several Farnell order codes share part no. ${uniqueParts[0]}, each with a different price — no price was applied. Please set it manually.`
+            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')}, each with a different price — no prices were applied. Please set them manually.`,
+          'warning',
+          8000,
+        );
       }
       if (unpricedFarnellPartNumbers.length > 0) {
         const uniqueParts = [...new Set(unpricedFarnellPartNumbers)];
@@ -3978,10 +4047,80 @@ const requestedColumnDefsMap = useMemo(
     return duplicates;
   }, [requestedMatchQueue]);
 
+  // Farnell products live outside the price lists, so `assign-requested` has no
+  // ListPrice to copy and the matched line would land unpriced. Populate patches
+  // the live Farnell price in afterwards; a manual match has to do the same.
+  // Looked up by ORDER CODE (unique), never by part number — that's the whole
+  // point of sending ambiguous part numbers through the matcher.
+  const applyFarnellPriceAfterAssign = useCallback(async (
+    productId: number,
+    selection: FarnellAssignSelection | null,
+    targets: Array<{ offerDetailId: number; pricing: AssignedRequestedPricing | null }>,
+  ) => {
+    if (targets.length === 0) return;
+    let sku = selection?.sku?.trim() ?? '';
+    if (!sku) {
+      // Picked from our own catalogue rather than a live Farnell listing. Only
+      // Farnell-branded products need the API price, and for those the stored
+      // PartNumber is the order code.
+      const summary = await fetchProductSummary(productId);
+      if (!isFarnellBrand(summary?.BrandName ?? null)) return;
+      sku = typeof summary?.PartNumber === 'string' ? summary.PartNumber.trim() : '';
+      if (!sku) return;
+    }
+    const priceByQuantity = new Map<number, number | null>();
+    const updates: Array<Record<string, unknown>> = [];
+    for (const target of targets) {
+      const rawQuantity = target.pricing?.quantity ?? 1;
+      const quantity = rawQuantity != null && rawQuantity > 0 ? Math.trunc(rawQuantity) : 1;
+      if (!priceByQuantity.has(quantity)) {
+        // Prefer the tiers on the listing the user actually picked: some order
+        // codes surfaced by a manufacturer-part-number search can't be fetched
+        // back by order code, so a re-lookup would drop the price we already have.
+        let price = matchFarnellPriceTier(selection?.product.prices, quantity);
+        if (price == null) {
+          const lookup = await fetchFarnellLookup(sku, quantity, 'id');
+          price = lookup?.product.matchedPrice ?? null;
+        }
+        priceByQuantity.set(quantity, price);
+      }
+      const price = priceByQuantity.get(quantity) ?? null;
+      if (price == null) continue;
+      const patch = buildFarnellPricingPatch(target.offerDetailId, price, target.pricing);
+      if (patch) updates.push(patch);
+    }
+    if (updates.length === 0) {
+      showToastMessage(
+        `Assigned the Farnell product but couldn't get a price for order code ${sku}. Please enter the price manually.`,
+        'warning',
+        8000,
+      );
+      return;
+    }
+    try {
+      const res = await fetch(resolvedEndpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      });
+      const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+      if (!res.ok || !payload?.ok) throw new Error(`status ${res.status}`);
+      refreshOfferProductGrid(null, { purge: true });
+    } catch (err) {
+      console.error('Failed to apply Farnell price after manual assignment', err);
+      showToastMessage(
+        `Assigned the Farnell product but couldn't save the price for order code ${sku}. Please enter it manually.`,
+        'warning',
+        8000,
+      );
+    }
+  }, [refreshOfferProductGrid, resolvedEndpoint]);
+
   const handleManualAssign = useCallback(async (
     productId: number,
     comment: string,
     metrics?: Record<string, unknown> | null,
+    farnell?: FarnellAssignSelection | null,
   ) => {
     if (!currentRequestedMatch) return false;
     const match = currentRequestedMatch;
@@ -4021,6 +4160,19 @@ const requestedColumnDefsMap = useMemo(
           try {
             refreshOfferProductGrid(null, { purge: true });
           } catch { /* noop */ }
+        }
+
+        // Farnell products carry no price list, so the assignment above left the
+        // line unpriced — patch the live price in for whichever rows landed.
+        if (failed < results.length) {
+          const targets = [match, ...duplicates]
+            .map((row, idx) => ({ row, result: results[idx] }))
+            .filter(({ result }) => result != null)
+            .map(({ row, result }) => ({
+              offerDetailId: row.offerDetailId,
+              pricing: result?.pricing ?? null,
+            }));
+          await applyFarnellPriceAfterAssign(productId, farnell ?? null, targets);
         }
 
         // Other rows with identical requested data may already be populated
@@ -4066,7 +4218,7 @@ const requestedColumnDefsMap = useMemo(
       });
 
     return true;
-  }, [assignRequestedRowToProduct, consumeQueueHeadWithDuplicates, currentRequestedMatch, refreshOfferProductGrid]);
+  }, [applyFarnellPriceAfterAssign, assignRequestedRowToProduct, consumeQueueHeadWithDuplicates, currentRequestedMatch, refreshOfferProductGrid]);
 
   const handleManualSkip = useCallback(() => {
     if (!currentRequestedMatch) return;

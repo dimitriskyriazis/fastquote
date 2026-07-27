@@ -450,6 +450,20 @@
   font-weight: 500;
 }
 
+/* Shown when Populate handed the row over because one manufacturer part number
+   matched several Farnell order codes at different prices. */
+.farnellAmbiguityNotice {
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-left-width: 4px;
+  border-radius: 10px;
+  color: #78350f;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .descriptionCell {
   display: flex;
   flex-direction: column;

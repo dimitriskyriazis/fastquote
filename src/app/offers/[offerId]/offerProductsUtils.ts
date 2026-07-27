@@ -1671,6 +1671,13 @@ export type FarnellLookupResult = {
 
 export type FarnellLookupResponse = {
   product: FarnellLookupResult;
+  /**
+   * Every Farnell listing that matched the search term, deduplicated by order
+   * code. `product` is just `products[0]`. More than one entry means the term
+   * was AMBIGUOUS — a manufacturer part number can map to several order codes
+   * with very different prices, so callers must not silently take the first.
+   */
+  products: FarnellLookupResult[];
   farnellBrandId: number | null;
 };
 
@@ -1698,11 +1705,16 @@ export const fetchFarnellLookup = async (
     const payload = (await res.json().catch(() => null)) as {
       ok?: boolean;
       product?: FarnellLookupResult;
+      products?: FarnellLookupResult[];
       farnellBrandId?: number | null;
     } | null;
     if (!payload?.ok || !payload.product) return null;
+    const products = Array.isArray(payload.products) && payload.products.length > 0
+      ? payload.products
+      : [payload.product];
     return {
       product: payload.product,
+      products,
       farnellBrandId: typeof payload.farnellBrandId === 'number' ? payload.farnellBrandId : null,
     };
   } catch (err) {
@@ -1825,6 +1837,20 @@ export const createFarnellProduct = async (
     console.error('Failed to create Farnell product', err);
     return null;
   }
+};
+
+/**
+ * Client-side twin of `matchPriceTier` in src/lib/farnell.ts — kept local so
+ * the offer grid never has to import the server module (and its API key) into
+ * the browser bundle. Keep the two in step.
+ */
+export const matchFarnellPriceTier = (
+  prices: { from: number; to: number; cost: number }[] | null | undefined,
+  quantity: number,
+): number | null => {
+  if (!Array.isArray(prices) || prices.length === 0) return null;
+  const tier = prices.find((p) => quantity >= p.from && quantity <= p.to);
+  return tier?.cost ?? prices[0]?.cost ?? null;
 };
 
 export const buildFarnellPricingPatch = (
