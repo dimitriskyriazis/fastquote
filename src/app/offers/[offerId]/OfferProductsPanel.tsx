@@ -2242,7 +2242,41 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     }
   }, []);
 
+  // Re-apply a grid-viewport scroll position captured before a refresh. Kept
+  // separate from the model-updated body so it can run BEFORE that handler's
+  // skip guards — a purge landing inside a collapse/skip window used to drop
+  // the pending restore entirely and strand the user at row 0. Retries for a
+  // few hundred ms because the assignment can't stick until the SSRM has
+  // re-hydrated enough blocks to make the viewport tall again.
+  const restorePendingGridScroll = useCallback(() => {
+    if (pendingGridScrollRestoreRef.current == null) return;
+    if (typeof window === 'undefined') return;
+    const apply = () => {
+      const restoreTop = pendingGridScrollRestoreRef.current;
+      if (restoreTop == null) return;
+      const viewport = getGridViewportElement();
+      if (!viewport) return;
+      // The user scrolled somewhere else while we waited for blocks to land —
+      // leave them there rather than yanking the grid back.
+      if (viewport.scrollTop !== 0 && viewport.scrollTop !== restoreTop) {
+        pendingGridScrollRestoreRef.current = null;
+        return;
+      }
+      viewport.scrollTop = restoreTop;
+      if (viewport.scrollTop > 0 || restoreTop === 0) {
+        pendingGridScrollRestoreRef.current = null;
+      }
+    };
+    window.requestAnimationFrame(apply);
+    window.setTimeout(apply, 120);
+    window.setTimeout(apply, 320);
+  }, [getGridViewportElement]);
+
   const handleGridModelUpdated = useCallback(() => {
+    // Before the skip guards: those exist to suppress the rest of this
+    // handler's work, not to throw away a scroll position the user is
+    // standing on.
+    restorePendingGridScroll();
     if (skipModelUpdateRef.current) {
       skipModelUpdateRef.current = false;
       return;
@@ -2264,16 +2298,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
       pendingInitialSelectionRestoreRef.current?.();
       tryRestoreInitialViewportScroll();
       // Restore grid viewport scroll after refreshOfferProductGrid-triggered refreshes
-      const restoreTop = pendingGridScrollRestoreRef.current;
-      if (restoreTop != null) {
-        const viewport = getGridViewportElement();
-        if (viewport) {
-          viewport.scrollTop = restoreTop;
-          if (viewport.scrollTop > 0 || restoreTop === 0) {
-            pendingGridScrollRestoreRef.current = null;
-          }
-        }
-      }
+      restorePendingGridScroll();
       // Force-refresh all cells when auxiliary row data changed (e.g. WebLink
       // after "Add web links") but the cell's field value didn't change.
       // AG Grid normally skips re-running cell renderers in that case.
@@ -2346,7 +2371,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
         window.setTimeout(repin, 220);
       }
     });
-  }, [getGridViewportElement, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
+  }, [restorePendingGridScroll, scheduleCategoryAncestorsUpdate, tryRestoreInitialViewportScroll]);
 
   const toggleCategoryCollapsed = useCallback((row: Record<string, unknown> | null | undefined) => {
     if (manualMode) return; // Manual mode: collapse is disabled to keep numbering stable.
@@ -4808,9 +4833,12 @@ const requestedColumnDefsMap = useMemo(
     }
   }, []);
 
-  const getViewportScrollTop = useCallback((): number => {
+  // null (not 0) when the viewport can't be found: callers feed this straight
+  // back in as initialViewportScrollTop, and a spurious 0 there reads as "the
+  // user was at the top" and force-scrolls the grid there.
+  const getViewportScrollTop = useCallback((): number | null => {
     const viewport = getGridViewportElement();
-    return viewport?.scrollTop ?? 0;
+    return viewport ? viewport.scrollTop : null;
   }, [getGridViewportElement]);
 
   // Restore selection from initialSelectedOfferDetailIds after grid data loads

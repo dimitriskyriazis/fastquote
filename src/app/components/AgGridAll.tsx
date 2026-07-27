@@ -1455,7 +1455,12 @@ const GUARDED_SET_FILTERS = new Map<string, string[]>([
 ]);
 
 // UTILITY FUNCTIONS - Server-Side Data & Row Management
-const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
+// Re-sorts the loaded rows by removing them all and re-adding them at index 0.
+// That momentarily empties the row model, so the viewport collapses and the
+// browser clamps scrollTop to 0 — pass the viewport in to have the position
+// put back (the row set is unchanged, only its order, so the pixel offset is
+// still meaningful).
+const reorderRowsByTreeOrdering = (api: GridApi<RowData>, viewport?: HTMLElement | null) => {
   if (typeof api.applyServerSideTransaction !== 'function') return;
   const entries: Array<{ data: RowData; parsed: ParsedTreeOrdering }> = [];
   api.forEachNode((node) => {
@@ -1467,11 +1472,19 @@ const reorderRowsByTreeOrdering = (api: GridApi<RowData>) => {
   if (entries.length === 0) return;
   entries.sort((a, b) => compareFullPaths(a.parsed, b.parsed));
   const sortedData = entries.map(entry => entry.data);
+  const scrollTop = viewport ? viewport.scrollTop : null;
   try {
     api.applyServerSideTransaction({ route: [], remove: sortedData });
     api.applyServerSideTransaction({ route: [], add: sortedData, addIndex: 0 });
   } catch (err) {
     console.warn('Failed to reorder rows using server-side transaction', err);
+  }
+  if (viewport && scrollTop != null && scrollTop > 0) {
+    const restore = () => { viewport.scrollTop = scrollTop; };
+    restore();
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
+    setTimeout(restore, 0);
+    setTimeout(restore, 60);
   }
 };
 const TREE_DEPENDENT_COLUMNS = ['TreeOrdering', 'BrandName', 'TotalPrice', 'TotalNet', 'TotalCost'];
@@ -2561,7 +2574,10 @@ export default function AgGridAll({
       if (!nextField) return;
       event.preventDefault();
       event.stopPropagation();
-      nextField.focus();
+      // preventScroll: focusing a filter input that sits above the current
+      // scroll position otherwise makes the browser scroll it into view,
+      // dragging the whole page to the top.
+      nextField.focus({ preventScroll: true });
     };
     shell.addEventListener('keydown', handleFilterTab, true);
     return () => {
@@ -4322,6 +4338,13 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       pendingSortRefreshAfterRestoreRef.current = true;
       return;
     }
+    // Sorting reorders the same row set, so the scroll offset stays meaningful
+    // — snapshot it (and pin the page) so the grid doesn't snap to row 0.
+    const sortViewport = getViewportElement();
+    if (sortViewport && sortViewport.scrollTop > 0) {
+      pendingScrollRestoreTopRef.current = sortViewport.scrollTop;
+    }
+    captureAndPinScroll(shellRef.current);
     // Keep rows visible for responsiveness while requesting the sorted data set from the server
     refreshServerSideData(event.api, { purge: false });
 
@@ -4352,7 +4375,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         gridUrlState.writeSortModelToUrl(modelToSave);
       }, 0);
     }
-  }, [sortStateStorageKey, gridUrlState]);
+  }, [getViewportElement, sortStateStorageKey, gridUrlState]);
 
   const handleModelUpdated = useCallback((event: ModelUpdatedEvent<RowData>) => {
     if (quickSearchRefreshRequestedRef.current) {
@@ -4497,9 +4520,9 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       applyOrder: false,
     });
     if (!manualMode) {
-      reorderRowsByTreeOrdering(api);
+      reorderRowsByTreeOrdering(api, getViewportElement());
     }
-  }, [isGridReady, manualMode, shouldPersistColumnState]);
+  }, [getViewportElement, isGridReady, manualMode, shouldPersistColumnState]);
 
   // EFFECTS - Tree Ordering, Refresh Token, Lifecycle
   useEffect(() => {
@@ -4744,14 +4767,14 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
         defaultState: { sort: null },
         applyOrder: false,
       });
-      reorderRowsByTreeOrdering(event.api);
+      reorderRowsByTreeOrdering(event.api, getViewportElement());
       requestRefresh(() => event.api.refreshCells({ columns: TREE_DEPENDENT_COLUMNS, force: true }));
       void persistTreeOrderingChanges();
     }
     if (typeof externalCellValueChangeHandler === 'function') {
       externalCellValueChangeHandler(event);
     }
-  }, [externalCellValueChangeHandler, makeInvalidCellKey, manualMode, persistTreeOrderingChanges, requestRefresh]);
+  }, [externalCellValueChangeHandler, getViewportElement, makeInvalidCellKey, manualMode, persistTreeOrderingChanges, requestRefresh]);
 
   const handleSelectionChanged = useCallback((event: SelectionChangedEvent<RowData>) => {
     if (typeof externalSelectionChangedHandler !== 'function') return;

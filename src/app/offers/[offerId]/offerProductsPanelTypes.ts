@@ -44,7 +44,8 @@ export type OfferProductsPanelHandle = {
   getSelectedOfferDetailIds: () => Promise<number[]>;
   getSelectedRequestedOfferDetailId: () => number | null;
   forceReapplyRequestedColumnsVisibility: () => void;
-  getViewportScrollTop: () => number;
+  /** Current grid-viewport scrollTop, or null when the viewport isn't mounted. */
+  getViewportScrollTop: () => number | null;
   getSelectedRowData: () => Array<Record<string, unknown>>;
   getAllVisibleRowData: () => Array<Record<string, unknown>>;
   canUndo: boolean;

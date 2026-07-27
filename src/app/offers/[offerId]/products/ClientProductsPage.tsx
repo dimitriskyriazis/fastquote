@@ -522,7 +522,7 @@ export default function ClientProductsPage({
       setSavedSelectionIds(ids);
       setInitialRequestedRowId(requestedId);
       setInitialProductsViewportScrollTop(
-        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? 0,
+        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? null,
       );
       const page = pageRef.current;
       pendingPageScrollRestoreRef.current = {
@@ -551,7 +551,7 @@ export default function ClientProductsPage({
       setSavedSelectionIds(ids);
       setInitialRequestedRowId(requestedId);
       setInitialProductsViewportScrollTop(
-        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? 0,
+        offerProductsPanelRef.current?.getViewportScrollTop?.() ?? null,
       );
       const page = pageRef.current;
       pendingPageScrollRestoreRef.current = {
@@ -1655,7 +1655,15 @@ export default function ClientProductsPage({
     <button
       type="button"
       className={pivotToggleClass}
-      onClick={() => setPivotView((prev) => !prev)}
+      onClick={() => {
+        // Entering pivot unmounts the products grid; remember where the user
+        // was so switching back doesn't dump them at row 1.
+        if (!pivotView) {
+          const top = offerProductsPanelRef.current?.getViewportScrollTop?.() ?? null;
+          if (top != null) setInitialProductsViewportScrollTop(top);
+        }
+        setPivotView((prev) => !prev);
+      }}
     >
       Pivot
     </button>
