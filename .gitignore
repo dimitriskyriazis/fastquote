@@ -81,3 +81,5 @@ sql/
 # word template working files
 /public/word file empty.docx
 /public/word file filled in.docx
+
+/public/Datasheets
