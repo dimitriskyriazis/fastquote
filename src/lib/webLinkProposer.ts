@@ -35,21 +35,31 @@ export const buildProposerPrompt = (product: ProposerProduct, domain: string | n
     ``,
     `Product:`,
     `- Brand: ${product.brand || "(unknown)"}`,
-    `- Part number: ${product.partNumber || "(none)"}`,
-    ...(product.partNumberCore && product.partNumberCore !== product.partNumber
-      ? [`- Base part number (search with this): ${product.partNumberCore}`]
-      : []),
-    `- Model number: ${product.modelNumber || "(none)"}`,
+    // Model first, and named as the primary search term: the part number we hold is an internal
+    // order/distributor code that is often absent from the manufacturer's own pages, while the
+    // model name is what their pages are titled with.
+    `- Model / product name (PRIMARY search term): ${product.modelNumber || "(none)"}`,
     `- Description: ${product.description || "(none)"}`,
+    `- Part / order code (internal; use to CONFIRM a page, not as the main search term): ${product.partNumber || "(none)"}`,
+    ...(product.partNumberCore && product.partNumberCore !== product.partNumber
+      ? [`- Base part number (better search term than the full order code): ${product.partNumberCore}`]
+      : []),
     ``,
     domain
       ? `Search the web (use at most 5 searches) for this product's page on the manufacturer's official site: ${domain}.`
       : `Search the web (use at most 5 searches) to identify the manufacturer's official website and find this product's page on it.`,
     ``,
     `Rules:`,
-    `- ONLY pages on the manufacturer's own website — never distributors, resellers, or marketplaces.`,
+    // Hard-won 2026-07-28: told to look at a catalog subdomain, the model returned URLs built by
+    // slotting our part number into the site's URL template. They 404 in spirit but answer HTTP
+    // 200 (client-rendered shells), so nothing downstream can catch them. Only real search
+    // results are usable.
+    `- Return ONLY URLs that actually appeared in your search results. NEVER construct, guess, complete or pattern-fill a URL (e.g. by inserting the part number into a URL shape you saw on another product). If you did not see the URL in results, do not return it.`,
+    `- Search by the MODEL NAME and product type. A search for the internal order code alone usually returns nothing, or a different variant's page.`,
+    `- ONLY pages on the manufacturer's own website (its subdomains count) — never distributors, resellers, or marketplaces.`,
     `- The page must be in ENGLISH. When the site is regionalized, prefer European-English or international-English variants.`,
-    `- Product or product-family pages only — never news/blog/press articles, knowledge-base or support articles, community/forum pages, store/checkout pages, or PDF/datasheet files.`,
+    `- Product pages only — never news/blog/press articles, knowledge-base or support articles, community/forum pages, store/checkout pages, or PDF/datasheet files.`,
+    `- STRONGLY prefer the page for THIS specific model over the product family/range page it belongs to. A family page is a last resort: return it only when the site genuinely has no page for this model, and never as your first candidate when a per-model page exists.`,
     `- Match the EXACT part number, not a similar variant. Manufacturers list many size/length/colour/configuration variants of one product; the page must be for THIS exact part number, not a sibling. If the URL carries a variant/SKU/configuration code (e.g. ?variantId=..., /sku/..., a trailing product code), it must correspond to this part number — the part number often appears there with punctuation removed (e.g. "8660.034" → "8660034"). Do not settle for the right product family at the wrong variant.`,
     ...(product.partNumberCore && product.partNumberCore !== product.partNumber
       ? [
@@ -128,27 +138,48 @@ export const proposeWebLinks = async (
   model: string,
   product: ProposerProduct,
   domain: string | null,
+  opts?: {
+    /** Per-attempt ceiling. This call runs up to 5 agentic searches, so it is much slower than an
+     *  ordinary completion — measured 10-25s alone and past 60s under a concurrent batch. The
+     *  caller passes what its own budget allows; the SDK client's default is far too tight for it. */
+    timeoutMs?: number;
+    /** Remaining budget, so a retry is only attempted when there is time to use it. */
+    timeLeftMs?: () => number;
+  },
 ): Promise<ProposerResult> => {
   const MAX_RETRIES = 5;
   let lastErr: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const res = await openai.responses.create({
-        model,
-        tools: [
-          {
-            type: "web_search",
-            search_context_size: "low",
-            ...(domain ? { filters: { allowed_domains: [domain] } } : {}),
-          },
-        ],
-        input: buildProposerPrompt(product, domain),
-      });
+      const res = await openai.responses.create(
+        {
+          model,
+          tools: [
+            {
+              type: "web_search",
+              search_context_size: "low",
+              ...(domain ? { filters: { allowed_domains: [domain] } } : {}),
+            },
+          ],
+          input: buildProposerPrompt(product, domain),
+        },
+        opts?.timeoutMs ? { timeout: opts.timeoutMs } : undefined,
+      );
       return parseProposerReply(res.output_text ?? "");
     } catch (err) {
       lastErr = err;
       const status = (err as { status?: number })?.status;
-      if ((status === 429 || (status !== undefined && status >= 500)) && attempt < MAX_RETRIES - 1) {
+      // A timeout / dropped connection carries no HTTP status. It used to fall straight through to
+      // `throw`, which turned one slow search into a per-product "Web search failed" — 5 of 10
+      // products in a measured batch. Retry those too, but only while the caller still has budget.
+      const isTransport =
+        status === undefined &&
+        /timed out|timeout|ECONNRESET|socket hang up|network|fetch failed/i.test(
+          (err as Error)?.message ?? "",
+        );
+      const retryable = status === 429 || (status !== undefined && status >= 500) || isTransport;
+      const budgetLeft = opts?.timeLeftMs?.() ?? Number.POSITIVE_INFINITY;
+      if (retryable && attempt < MAX_RETRIES - 1 && budgetLeft > 20_000) {
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs(err, attempt)));
         continue;
       }

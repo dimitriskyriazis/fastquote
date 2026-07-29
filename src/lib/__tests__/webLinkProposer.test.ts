@@ -26,8 +26,24 @@ describe("buildProposerPrompt", () => {
       { brand: "Rittal", partNumber: "8660.034-RT", partNumberCore: "8660.034", modelNumber: "", description: "trim panel" },
       "rittal.com",
     );
-    expect(prompt).toContain("Base part number (search with this): 8660.034");
+    expect(prompt).toContain("Base part number (better search term than the full order code): 8660.034");
     expect(prompt).toContain("use the BASE part number");
+  });
+  it("leads with the model name and forbids constructing URLs", () => {
+    const prompt = buildProposerPrompt(
+      { brand: "biamp", partNumber: "920-01956-00002", modelNumber: "Voltera D 1200.8", description: "amplifier" },
+      "biamp.com",
+    );
+    // The part number is an internal order code — the model name is what manufacturer pages
+    // are titled with, so it must be presented as the primary search term. Assert both lines are
+    // PRESENT before comparing positions: two -1s would satisfy a bare "<" comparison.
+    const modelAt = prompt.indexOf("Model / product name (PRIMARY search term): Voltera D 1200.8");
+    const partAt = prompt.indexOf("Part / order code");
+    expect(modelAt).toBeGreaterThan(-1);
+    expect(partAt).toBeGreaterThan(-1);
+    expect(modelAt).toBeLessThan(partAt);
+    expect(prompt).toContain("NEVER construct, guess, complete or pattern-fill a URL");
+    expect(prompt).toContain("STRONGLY prefer the page for THIS specific model");
   });
   it("omits the base-part-number guidance when there is no suffix", () => {
     const prompt = buildProposerPrompt(product, "commerce.keenfinity.tech"); // no partNumberCore

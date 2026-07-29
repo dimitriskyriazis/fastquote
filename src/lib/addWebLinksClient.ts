@@ -7,7 +7,14 @@
 // feedback; the old single 200-product request regularly outlived both the 60s toast and
 // the proxy, so the client reported failure while the server kept writing.
 
-import { chunkArray, isRealWebLink, type WebLinkStatus, type WebLinkVerification } from './webLinkResolution';
+import {
+  chunkArray,
+  countProductsPerLink,
+  isRealWebLink,
+  normalizedUrlKey,
+  type WebLinkStatus,
+  type WebLinkVerification,
+} from './webLinkResolution';
 import { showToastMessage, showProgressToast } from './toast';
 import { showConfirmDialog, showMultiChoiceDialog } from './confirm';
 import { showWebLinkPreviewDialog, type WebLinkPreviewRow } from './webLinkPreviewDialog';
@@ -233,16 +240,24 @@ export async function runAddWebLinksFlow({
     return;
   }
 
-  const previewRows: WebLinkPreviewRow[] = sorted.map((r) => ({
-    label: `#${r.productId}`,
-    brand: r.brand,
-    partNumber: r.partNumber?.trim() || r.modelNumber?.trim() || null,
-    oldLink: isRealWebLink(r.oldWebLink) ? r.oldWebLink : null,
-    newLink: r.webLink,
-    status: r.status,
-    verification: r.verification,
-    note: r.note,
-  }));
+  // One page proposed for several products means it identifies a family, not a model — whatever
+  // tier it was verified at. Counted across the whole run, since the chunked server never sees it.
+  const productsPerLink = countProductsPerLink(sorted);
+
+  const previewRows: WebLinkPreviewRow[] = sorted.map((r) => {
+    const sharedWith = r.webLink ? (productsPerLink.get(normalizedUrlKey(r.webLink)) ?? 1) : 1;
+    return {
+      label: `#${r.productId}`,
+      brand: r.brand,
+      partNumber: r.partNumber?.trim() || r.modelNumber?.trim() || null,
+      oldLink: isRealWebLink(r.oldWebLink) ? r.oldWebLink : null,
+      newLink: r.webLink,
+      status: r.status,
+      verification: r.verification,
+      note: r.note,
+      sharedWith,
+    };
+  });
 
   const selected = await showWebLinkPreviewDialog(previewRows);
   if (selected === false) {

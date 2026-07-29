@@ -17,17 +17,40 @@ export type WebLinkPreviewRow = {
   status: WebLinkStatus;
   verification?: WebLinkVerification;
   note?: string;
+  /** How many products in this run were given this same page (1 = unique to this product).
+   *  More than one means the page identifies a family, not a model. */
+  sharedWith?: number;
 };
 
-const STATUS_BADGES: Record<string, { text: string; color: string; bg: string }> = {
+type Badge = { text: string; color: string; bg: string };
+
+// Typed by the unions so adding a WebLinkVerification / WebLinkStatus member fails the build
+// rather than crashing the dialog on a missing badge at render time.
+const STATUS_BADGES: Record<WebLinkVerification | WebLinkStatus, Badge> = {
+  previewed: { text: 'Found', color: '#166534', bg: '#f0fdf4' }, // never rendered: previewed maps to its verification
   content: { text: 'Verified on page', color: '#166534', bg: '#f0fdf4' },
+  // The page renders nothing our server can read (JS-only catalog), but the search index listed
+  // this exact URL with a title naming this model — the crawler rendered what we couldn't.
+  index: { text: 'Verified via search index', color: '#155e75', bg: '#ecfeff' },
   llm: { text: 'AI judged', color: '#92400e', bg: '#fffbeb' },
+  // Right product range, wrong granularity: every sibling SKU would get this same link.
+  family: { text: 'Family page only', color: '#9a3412', bg: '#fff7ed' },
   url: { text: 'URL match', color: '#92400e', bg: '#fffbeb' },
   // The site blocked automated verification — the link is a best guess; the user must open it.
   unverified: { text: 'Unverified — open to check', color: '#b45309', bg: '#fff7ed' },
   not_found: { text: 'No link found', color: '#6b7280', bg: 'transparent' },
   error: { text: 'Error', color: '#b91c1c', bg: 'transparent' },
 };
+
+/**
+ * A proposal that must not be applied without a human look, so it is shown but NOT pre-selected:
+ *  - a page judged to be only the product family/range (it does not identify this model), or
+ *  - a page proposed for more than one product in this run, which makes it a family page in
+ *    disguise whatever tier verified it.
+ * Everything else selectable starts checked, "unverified" rows included (user preference).
+ */
+export const isWeakWebLinkProposal = (r: Pick<WebLinkPreviewRow, 'verification' | 'sharedWith'>): boolean =>
+  r.verification === 'family' || (r.sharedWith ?? 1) > 1;
 
 /**
  * Returns the indices (into `rows`) that the user chose to apply,
@@ -39,15 +62,18 @@ export const showWebLinkPreviewDialog = async (
   if (typeof window === 'undefined' || typeof document === 'undefined') return [];
 
   return new Promise<number[] | false>((resolve) => {
-    // Selectable = anything with a proposed link the user could apply — verified ("previewed")
-    // or "unverified" (site blocked automated checking). Both are checked by default; the
-    // "unverified" badge flags the ones worth opening to confirm before applying.
+    // Selectable = anything with a proposed link the user could apply — verified ("previewed") or
+    // "unverified" (site blocked automated checking). Selectable rows start CHECKED, including
+    // "unverified" ones (autoselect, by explicit user request — its badge flags them as worth
+    // opening first); the two exceptions are the weak proposals below.
     const isRowSelectable = (r: WebLinkPreviewRow) =>
       (r.status === 'previewed' || r.status === 'unverified') && !!r.newLink;
+    const isWeakProposal = isWeakWebLinkProposal;
     const selectableIndices = rows.map((r, i) => ({ r, i })).filter(({ r }) => isRowSelectable(r)).map(({ i }) => i);
     const foundCount = rows.filter((r) => r.status === 'previewed' && !!r.newLink).length;
     const unverifiedCount = rows.filter((r) => r.status === 'unverified' && !!r.newLink).length;
-    const checked = new Set<number>(selectableIndices); // all selectable rows on by default
+    const weakCount = rows.filter((r) => isRowSelectable(r) && isWeakProposal(r)).length;
+    const checked = new Set<number>(selectableIndices.filter((i) => !isWeakProposal(rows[i])));
 
     const overlay = document.createElement('div');
     overlay.className = 'fastquote-confirm-overlay';
@@ -66,9 +92,18 @@ export const showWebLinkPreviewDialog = async (
     const sub = document.createElement('p');
     sub.className = 'fastquote-confirm-message';
     sub.style.marginBottom = '14px';
-    sub.textContent = unverifiedCount
-      ? 'Click a link to check the page. "Unverified" rows could not be checked automatically (the site blocked us) — open them to confirm, and uncheck anything wrong. Nothing is saved until you apply.'
-      : 'Click a link to check the page. Uncheck any rows you don’t want to save, then click "Apply". Nothing is saved until you apply.';
+    sub.textContent = [
+      'Click a link to check the page.',
+      unverifiedCount
+        ? '"Unverified" rows could not be checked automatically (the site blocked us) — open them to confirm.'
+        : '',
+      weakCount
+        ? `${weakCount} row(s) start unchecked: a family page, or the same page found for several products — tick them only after checking.`
+        : '',
+      'Uncheck anything you don’t want, then click "Apply". Nothing is saved until you apply.',
+    ]
+      .filter(Boolean)
+      .join(' ');
     dialog.appendChild(sub);
 
     const wrapper = document.createElement('div');
@@ -192,7 +227,7 @@ export const showWebLinkPreviewDialog = async (
       if (isSelectable) {
         const cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = checked.has(idx); // verified: on; unverified: off
+        cb.checked = checked.has(idx); // on unless it is a weak proposal (family / shared page)
         cb.style.cursor = 'pointer';
         cb.addEventListener('change', () => {
           setRowChecked(idx, cb.checked);
@@ -213,13 +248,23 @@ export const showWebLinkPreviewDialog = async (
       tr.appendChild(makeLinkCell(row.oldLink, '(none)'));
       tr.appendChild(makeLinkCell(row.newLink, row.note ?? '-'));
 
-      const badge = STATUS_BADGES[row.status === 'previewed' ? row.verification ?? 'llm' : row.status];
+      const badgeKey = row.status === 'previewed' ? row.verification ?? 'llm' : row.status;
+      const badge: Badge = STATUS_BADGES[badgeKey] ?? { text: badgeKey, color: '#92400e', bg: '#fffbeb' };
       const statusCell = document.createElement('td');
       statusCell.style.cssText =
         `padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;line-height:1.4;` +
         `color:${badge.color};background:${badge.bg};font-weight:500;`;
       statusCell.textContent = badge.text;
-      if (row.note && row.status !== 'previewed') statusCell.title = row.note;
+      // The same page proposed for several products is a family page in disguise, whatever tier it
+      // verified at — say so on the row, since that is what makes duplicate links spottable here.
+      const shared = row.sharedWith ?? 1;
+      if (isSelectable && shared > 1) {
+        const dupe = document.createElement('div');
+        dupe.textContent = `Same page as ${shared - 1} other product${shared > 2 ? 's' : ''}`;
+        dupe.style.cssText = 'margin-top:2px;font-weight:400;font-size:0.74rem;color:#9a3412;';
+        statusCell.appendChild(dupe);
+      }
+      if (row.note) statusCell.title = row.note;
       tr.appendChild(statusCell);
 
       tbody.appendChild(tr);
