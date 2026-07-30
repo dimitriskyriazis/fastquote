@@ -11,7 +11,7 @@ import type {
   MarketOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
-import { searchIncludes } from '../../../lib/textSearch';
+import { searchEquals, searchIncludes } from '../../../lib/textSearch';
 import { getBodyScale } from '../../../lib/bodyScale';
 import { showConfirmDialog } from '../../../lib/confirm';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -865,9 +865,9 @@ export default function OfferBasicDataClient({
       payloadValue = parsed;
       resolvedDisplayValue = String(parsed);
     } else if (def.datalistOptions && def.datalistOptions.length > 0) {
-      const trimmed = rawValue.trim().toLowerCase();
+      const trimmed = rawValue.trim();
       const match = def.datalistOptions.find(
-        (option) => option.label.trim().toLowerCase() === trimmed
+        (option) => searchEquals(option.label.trim(), trimmed)
       );
       if (!match) {
         showToastMessage('Please choose a valid user', 'error');
@@ -885,9 +885,9 @@ export default function OfferBasicDataClient({
     if (def.id === 'probability') {
       oldPayloadValue = normalizeProbability(oldDisplayValue) ?? null;
     } else if (def.datalistOptions && def.datalistOptions.length > 0) {
-      const trimmedOld = oldDisplayValue.trim().toLowerCase();
+      const trimmedOld = oldDisplayValue.trim();
       const oldMatch = def.datalistOptions.find(
-        (option) => option.label.trim().toLowerCase() === trimmedOld,
+        (option) => searchEquals(option.label.trim(), trimmedOld),
       );
       oldPayloadValue = oldMatch != null ? normalizeValueForApi(oldMatch.value, def.valueType) : null;
     } else {

@@ -478,6 +478,151 @@ export const showSelectableConfirmDialog = async ({
   });
 };
 
+// ---------------------------------------------------------------------------
+// Checklist dialog
+// A short list of independent on/off choices (not a per-row picker like
+// showSelectableConfirmDialog) — e.g. "which row types go into this export".
+// Each item keeps its own default, and the answer comes back keyed by item.
+// ---------------------------------------------------------------------------
+export type ChecklistDialogItem = {
+  /** Key the answer is returned under. */
+  key: string;
+  label: string;
+  /** Secondary line under the label (counts, caveats). */
+  hint?: string;
+  /** Starts ticked unless explicitly false. */
+  checked?: boolean;
+};
+
+export type ChecklistDialogOptions = {
+  title?: string;
+  message: string;
+  items: ChecklistDialogItem[];
+  confirmLabel?: string;
+  cancelLabel?: string;
+};
+
+/**
+ * Returns each item's final state keyed by `key`, or `false` if cancelled.
+ * Confirming with everything unticked is allowed — that is a meaningful answer.
+ */
+export const showChecklistDialog = async ({
+  title,
+  message,
+  items,
+  confirmLabel = 'Continue',
+  cancelLabel = 'Cancel',
+}: ChecklistDialogOptions): Promise<Record<string, boolean> | false> => {
+  const defaults = () => Object.fromEntries(items.map((item) => [item.key, item.checked !== false]));
+  if (typeof window === 'undefined' || typeof document === 'undefined' || items.length === 0) {
+    // SSR / nothing to ask: keep the defaults rather than blocking the caller.
+    return defaults();
+  }
+
+  return new Promise<Record<string, boolean> | false>((resolve) => {
+    const state: Record<string, boolean> = defaults();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fastquote-confirm-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'fastquote-confirm-dialog';
+
+    if (title) {
+      const heading = document.createElement('h3');
+      heading.className = 'fastquote-confirm-title';
+      heading.textContent = title;
+      dialog.appendChild(heading);
+    }
+
+    const messageEl = document.createElement('p');
+    messageEl.className = 'fastquote-confirm-message';
+    messageEl.textContent = message;
+    dialog.appendChild(messageEl);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:10px;margin:4px 0 18px;';
+
+    items.forEach((item) => {
+      const row = document.createElement('label');
+      row.style.cssText =
+        'display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:0.9rem;line-height:1.35;';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = state[item.key];
+      checkbox.style.cssText = 'margin-top:2px;cursor:pointer;flex:0 0 auto;';
+      checkbox.addEventListener('change', () => { state[item.key] = checkbox.checked; });
+
+      const text = document.createElement('span');
+      const labelEl = document.createElement('span');
+      labelEl.textContent = item.label;
+      text.appendChild(labelEl);
+      if (item.hint) {
+        const hintEl = document.createElement('span');
+        hintEl.textContent = item.hint;
+        hintEl.style.cssText = 'display:block;color:#6b7280;font-size:0.82rem;';
+        text.appendChild(hintEl);
+      }
+
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      list.appendChild(row);
+    });
+
+    dialog.appendChild(list);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'fastquote-confirm-buttons';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--cancel';
+    cancelBtn.textContent = cancelLabel;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--confirm';
+    confirmBtn.textContent = confirmLabel;
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(confirmBtn);
+    dialog.appendChild(buttons);
+    overlay.appendChild(dialog);
+
+    const cleanup = (result: Record<string, boolean> | false) => {
+      overlay.classList.remove('visible');
+      window.setTimeout(() => overlay.remove(), 180);
+      window.removeEventListener('keydown', handleKey);
+      resolve(result);
+    };
+
+    cancelBtn.addEventListener('click', () => cleanup(false));
+    confirmBtn.addEventListener('click', () => cleanup({ ...state }));
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) cleanup(false);
+    });
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cleanup(false);
+      } else if (event.key === 'Enter') {
+        // Space still toggles the focused checkbox; Enter always confirms.
+        event.preventDefault();
+        cleanup({ ...state });
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.classList.add('visible');
+      confirmBtn.focus();
+    });
+  });
+};
+
 export const showMultiChoiceDialog = async ({
   title,
   message,

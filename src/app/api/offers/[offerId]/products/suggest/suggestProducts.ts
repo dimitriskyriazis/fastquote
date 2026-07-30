@@ -2,6 +2,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
+import { collateSearch } from '../../../../../../lib/textSearch';
 import OpenAI from 'openai';
 
 let _openai: OpenAI | null = null;
@@ -42,8 +43,12 @@ const normalizeBrandKey = (value: string | null): string | null => {
   return value.replace(/\u00A0/g, ' ').replace(/\s+/g, '').toLowerCase() || null;
 };
 
+// Collated accent-insensitively so a Greek brand typed flat ("Ελλας Ηχος")
+// still matches the accented catalog spelling ("Ελλάς Ήχος").
 const brandKeySql = (expr: string) =>
-  `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(LTRIM(RTRIM(ISNULL(${expr}, N'')))), NCHAR(160), N''), NCHAR(9), N''), NCHAR(10), N''), NCHAR(13), N''), N' ', N'')`;
+  collateSearch(
+    `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(LTRIM(RTRIM(ISNULL(${expr}, N'')))), NCHAR(160), N''), NCHAR(9), N''), NCHAR(10), N''), NCHAR(13), N''), N' ', N'')`,
+  );
 
 export async function suggestProducts(input: SuggestInput): Promise<CandidateRow[]> {
   const brand = trim(input.requestedBrand);
@@ -172,7 +177,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     if (t.length < 3 || !modelLikeRegex.test(t)) return;
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), `%${t}%`);
-    conditions.push(`p.Description LIKE @${p}`);
+    conditions.push(`${collateSearch('p.Description')} LIKE @${p}`);
     weights.push(weight);
   };
 
@@ -214,8 +219,10 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   }
 
   const fullDesc = [desc1, desc2, desc3, partNumber, modelNumber].filter(Boolean).join(' ');
+  // Keep Greek (U+0370-U+03FF) alongside Latin and Latin Extended \u2014 without it a
+  // Greek requested description was stripped to nothing and contributed no words.
   const descWords = fullDesc
-    .replace(/[^a-zA-Z0-9\u00C0-\u024F]+/g, ' ')
+    .replace(/[^a-zA-Z0-9\u00C0-\u024F\u0370-\u03FF]+/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 3)
     .slice(0, 6);
@@ -223,7 +230,7 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
   for (const word of descWords) {
     const p = `dw_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), `%${word}%`);
-    conditions.push(`p.Description LIKE @${p}`);
+    conditions.push(`${collateSearch('p.Description')} LIKE @${p}`);
     weights.push(1);
   }
 

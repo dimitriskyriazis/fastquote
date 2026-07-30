@@ -1076,7 +1076,10 @@ async function handleProductGrid(
       if (brandExpr) {
         const paramKey = 'requested_brand_match';
         params.push({ key: paramKey, value: normalizedRequestedBrand });
-        const normalizedColExpr = `REPLACE(REPLACE(UPPER(COALESCE(CAST(${brandExpr} AS NVARCHAR(MAX)), '')), ' ', ''), '-', '')`;
+        // Accent-insensitive so a Greek brand typed flat still scores.
+        const normalizedColExpr = collateSearch(
+          `REPLACE(REPLACE(UPPER(COALESCE(CAST(${brandExpr} AS NVARCHAR(MAX)), '')), ' ', ''), '-', '')`,
+        );
         const normalizedParam = `REPLACE(REPLACE(UPPER(@${paramKey}), ' ', ''), '-', '')`;
         // CHARINDEX > 0 handles both directions: catalog row "Televic"
         // matches requested "Televic Audio Technologies" and vice versa, so

@@ -7,6 +7,7 @@ import { showToastMessage } from '../../lib/toast';
 import { useDuplicateCheck } from '../lib/useDuplicateCheck';
 import DuplicateWarning from './DuplicateWarning';
 import { matchesCountrySearch } from '../../lib/countryAliases';
+import { searchEquals } from '../../lib/textSearch';
 
 const SUPPLIER_CREATE_ENDPOINT = '/api/suppliers/create';
 
@@ -117,9 +118,9 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
     clearCountryListCloseTimer();
     setCountryText(text);
     setShowCountryList(true);
-    const normalized = text.trim().toLowerCase();
+    const normalized = text.trim();
     const exactMatch = normalized
-      ? localCountries.find((c) => c.name.trim().toLowerCase() === normalized)
+      ? localCountries.find((c) => searchEquals(c.name.trim(), normalized))
       : null;
     setCountryId(exactMatch?.id ?? null);
   }, [clearCountryListCloseTimer, localCountries]);
@@ -144,7 +145,7 @@ export default function AddSupplierModal({ open, onClose, onCreated, countries, 
       return;
     }
     const match = localCountries.find(
-      (c) => c.name.trim().toLowerCase() === trimmed.toLowerCase(),
+      (c) => searchEquals(c.name.trim(), trimmed),
     );
     if (match) {
       setCountryText(match.name);

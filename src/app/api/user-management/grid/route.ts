@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { logRequest } from '../../../../lib/apiHelpers';
 import { getPool } from "../../../../lib/sql";
 import { requirePermission } from "../../../../lib/authz";
+import { normalizeSearchText } from "../../../../lib/textSearch";
 import type {
   TextCondition as TextFilterModel,
   CompoundTextFilter as CompoundTextFilterModel,
@@ -66,12 +67,10 @@ const normalizeRoles = (roles: string[]) => {
 };
 
 const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = normalizeSearchText(query).split(/\s+/).filter(Boolean);
   if (terms.length === 0) return rows;
   return rows.filter((row) => {
-    const values = Object.values(row).map((v) =>
-      v == null ? "" : String(v).toLowerCase()
-    );
+    const values = Object.values(row).map((v) => normalizeSearchText(v));
     return terms.every((term) =>
       values.some((v) => v.includes(term))
     );
@@ -79,9 +78,9 @@ const applyQuickFilter = (rows: Record<string, unknown>[], query: string) => {
 };
 
 const applyTextCondition = (value: unknown, model: TextFilterModel): boolean => {
-  const filterValue = String(model.filter ?? "").toLowerCase();
+  const filterValue = normalizeSearchText(model.filter);
   if (!filterValue) return true;
-  const text = String(value ?? "").toLowerCase();
+  const text = normalizeSearchText(value);
   switch (model.type ?? "contains") {
     case "equals":
       return text === filterValue;

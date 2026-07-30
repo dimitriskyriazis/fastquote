@@ -6,7 +6,7 @@ import lookupStyles from '../../../components/LookupModal.module.css';
 import styles from './DraftOrderWizard.module.css';
 // Same rounding the server and the ERP payload use, so previewed totals match.
 import { round2 } from '@/lib/offerDiscount';
-import { searchIncludes } from '@/lib/textSearch';
+import { searchEquals, searchIncludes } from '@/lib/textSearch';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -428,8 +428,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     const resolved = fastquoteBrand ? resolvedBrandMap.get(fastquoteBrand) : undefined;
     let brand = resolved?.erpName ?? fastquoteBrand;
     if (!resolved && fastquoteBrand && erpBrandList.length > 0) {
-      const lower = fastquoteBrand.toLowerCase();
-      const ci = erpBrandList.find(b => b.name.toLowerCase() === lower);
+      const ci = erpBrandList.find(b => searchEquals(b.name, fastquoteBrand));
       if (ci) brand = ci.name;
     }
     setManualSearchProduct(ns);
@@ -727,8 +726,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     if (!current) return;
     const exact = erpBrandList.find(b => b.name === current);
     if (exact) return;
-    const lower = current.toLowerCase();
-    const ci = erpBrandList.find(b => b.name.toLowerCase() === lower);
+    const ci = erpBrandList.find(b => searchEquals(b.name, current));
     if (ci) setManualSearchBrandQuery(ci.name);
   }, [manualSearchProduct, erpBrandList, manualSearchBrandQuery]);
 

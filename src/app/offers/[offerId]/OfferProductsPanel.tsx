@@ -61,7 +61,8 @@ import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, typ
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
 import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isOfferProductService, isUnlinkedOfferProductRow, normalizeQuantityForServiceType, allowsFractionalQuantity, SERVICE_QUANTITY_DECIMALS } from '../../../lib/offerProductRows';
-import type { ExportValueResolverFactory } from '../../../lib/gridExport';
+import type { ExportValueResolverFactory, ExportRowFilterFactory } from '../../../lib/gridExport';
+import { promptOfferExportRowTypes } from './products/offerExportRowTypes';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import { clearPartModelNumberUpper } from '../../../lib/partModelNumber';
@@ -4887,6 +4888,14 @@ const requestedColumnDefsMap = useMemo(
       field === 'TreeOrdering' ? formatOfferItemNoDisplay(data, displayMap) : value
     );
   }, []);
+
+  // Excel/CSV export: ask whether the internal-only row types belong in the
+  // file before writing it. Silent (no dialog) when the export contains neither
+  // non-printable rows nor options.
+  const getExportRowFilter = useCallback<ExportRowFilterFactory>(
+    ({ rows }) => promptOfferExportRowTypes(rows, userId),
+    [userId],
+  );
 
   const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null => {
     const api = gridApiRef.current;
@@ -10255,6 +10264,7 @@ const requestedColumnDefsMap = useMemo(
             onServerRequest={handleServerRequest}
             requestPayload={standardPackageRequestPayload}
             getExportValueResolver={getExportValueResolver}
+            getExportRowFilter={getExportRowFilter}
             getRowHeight={getRowHeight}
             floatingFilter
             rowGroupPanelShow="never"

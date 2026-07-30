@@ -9,7 +9,7 @@ import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
-import { searchIncludes } from '../../../lib/textSearch';
+import { searchEquals, searchIncludes } from '../../../lib/textSearch';
 import type {
   CustomerBasicRecord,
   CustomerDropdownOption,
@@ -456,8 +456,10 @@ export default function CustomerBasicDataClient({
         if (!trimmed) {
           payloadValue = null;
         } else {
+          // Accent-insensitive: an accent-only mismatch used to fall through to
+          // onCreateOption below and create a duplicate record.
           let option: CustomerDropdownOption | null | undefined = def.datalistOptions.find(
-            (candidate) => candidate.label.trim().toLowerCase() === trimmed.toLowerCase(),
+            (candidate) => searchEquals(candidate.label.trim(), trimmed),
           );
           if (!option && typeof def.onCreateOption === 'function') {
             option = await def.onCreateOption(trimmed);
@@ -484,7 +486,7 @@ export default function CustomerBasicDataClient({
         const trimmedOld = oldDisplayValue.trim();
         const oldOption = trimmedOld
           ? def.datalistOptions.find(
-              (candidate) => candidate.label.trim().toLowerCase() === trimmedOld.toLowerCase(),
+              (candidate) => searchEquals(candidate.label.trim(), trimmedOld),
             ) ?? null
           : null;
         oldPayloadValue = oldOption != null

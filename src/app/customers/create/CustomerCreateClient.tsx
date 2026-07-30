@@ -13,7 +13,7 @@ import { showToastMessage } from '../../../lib/toast';
 import { useDuplicateCheck } from '../../lib/useDuplicateCheck';
 import DuplicateWarning from '../../components/DuplicateWarning';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
-import { searchIncludes } from '../../../lib/textSearch';
+import { searchEquals, searchIncludes } from '../../../lib/textSearch';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useAuditUser } from '../../components/AuditUserProvider';
 
@@ -548,9 +548,9 @@ export default function CustomerCreateClient({
     clearCountryListCloseTimer();
     setCountryText(text);
     setShowCountryList(true);
-    const normalized = text.trim().toLowerCase();
+    const normalized = text.trim();
     const exactMatch = normalized
-      ? countryOptions.find((opt) => (opt.label?.trim().toLowerCase() ?? '') === normalized)
+      ? countryOptions.find((opt) => searchEquals(opt.label?.trim() ?? '', normalized))
       : null;
     setValues((prev) => ({ ...prev, country: exactMatch?.value ?? '' }));
     setErrors((prev) => {
@@ -587,7 +587,7 @@ export default function CustomerCreateClient({
       return;
     }
     const match = countryOptions.find(
-      (opt) => (opt.label?.trim().toLowerCase() ?? '') === trimmed.toLowerCase(),
+      (opt) => searchEquals(opt.label?.trim() ?? '', trimmed),
     );
     if (match) {
       setCountryText(match.label);

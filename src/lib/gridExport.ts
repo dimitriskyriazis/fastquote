@@ -37,7 +37,52 @@ export type ExportValueResolverFactory = (context: {
   completeRowSet: boolean;
 }) => ExportCellValueResolver | null | undefined;
 
+/**
+ * A grid's answer to "which of these rows should the export actually write?".
+ * `cancelled` aborts the export silently (the user backed out of a prompt).
+ */
+export type ExportRowFilter = {
+  cancelled?: boolean;
+  shouldSkipRow?: (row: Record<string, unknown>) => boolean;
+};
+
+/**
+ * Called once per export, before anything is written, with the rows in hand — so
+ * a grid can inspect what is actually there and (a)synchronously prompt the user
+ * about it. Returning null/undefined exports every row.
+ *
+ * Skipped rows are dropped AFTER the value resolver is built from the full row
+ * set, so excluding rows never shifts the values of the rows that remain.
+ */
+export type ExportRowFilterFactory = (context: {
+  rows: Record<string, unknown>[];
+  completeRowSet: boolean;
+}) => Promise<ExportRowFilter | null | undefined> | ExportRowFilter | null | undefined;
+
+/** Per-grid export customisation. Omit any hook to keep the default behaviour. */
+export type GridExportHooks = {
+  getExportValueResolver?: ExportValueResolverFactory | null;
+  getExportRowFilter?: ExportRowFilterFactory | null;
+};
+
 const passThroughResolver: ExportCellValueResolver = ({ value }) => value;
+
+/**
+ * Run the row-filter hook and apply its verdict to a row array (the paths that
+ * write rows themselves; see resolveSkipRowPredicate for the AG-Grid-driven ones).
+ */
+async function applyExportRowFilter<Row>(
+  factory: ExportRowFilterFactory | null | undefined,
+  rows: Row[],
+  completeRowSet: boolean,
+): Promise<{ cancelled: boolean; rows: Row[] }> {
+  const skipRow = await resolveSkipRowPredicate(factory, rows, completeRowSet);
+  if (skipRow === 'cancelled') return { cancelled: true, rows: [] };
+  return {
+    cancelled: false,
+    rows: skipRow ? rows.filter((row) => !skipRow(row as Record<string, unknown>)) : rows,
+  };
+}
 
 /**
  * True when an "export all filtered rows" run is really exporting everything:
@@ -482,7 +527,7 @@ export async function exportAllFilteredRowsAsCsv<RowData>(
   requestPayload?: Record<string, unknown>,
   quickFilterText?: string | null,
   excludeRowIds?: Set<string>,
-  getExportValueResolver?: ExportValueResolverFactory | null,
+  hooks?: GridExportHooks | null,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportAllFilteredRowsAsCsv] No API provided');
@@ -495,12 +540,18 @@ export async function exportAllFilteredRowsAsCsv<RowData>(
     const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText, excludeRowIds);
     console.log('[exportAllFilteredRowsAsCsv] Fetched rows:', allRows.length);
 
-    const csv = generateCsvFromRows(
-      api,
-      allRows,
-      getExportValueResolver,
-      isCompleteRowSet(api, quickFilterText, excludeRowIds),
-    );
+    const completeRowSet = isCompleteRowSet(api, quickFilterText, excludeRowIds);
+    const gate = await applyExportRowFilter(hooks?.getExportRowFilter, allRows, completeRowSet);
+    if (gate.cancelled) {
+      console.log('[exportAllFilteredRowsAsCsv] Cancelled by row filter');
+      return;
+    }
+
+    const csv = generateCsvFromRows(api, gate.rows, {
+      getExportValueResolver: hooks?.getExportValueResolver,
+      completeRowSet,
+      resolverRows: allRows,
+    });
     console.log('[exportAllFilteredRowsAsCsv] Generated CSV, length:', csv.length);
 
     downloadCsv(csv, fileName ?? 'export.csv');
@@ -517,15 +568,18 @@ export async function exportAllFilteredRowsAsCsv<RowData>(
 function generateCsvFromRows<RowData>(
   api: GridApi<RowData>,
   rows: RowData[],
-  getExportValueResolver?: ExportValueResolverFactory | null,
-  completeRowSet = false,
+  options: RowGenerationOptions<RowData> = {},
 ): string {
   // Get visible columns, skipping utility columns (drag handles, selection checkboxes)
   const columns = (api.getAllDisplayedColumns?.() ?? []).filter(col => !isUtilityColumn(col));
 
   console.log('[generateCsvFromRows] Generating CSV for', rows.length, 'rows and', columns.length, 'columns');
 
-  const resolveCell = createCellValueResolver(getExportValueResolver, rows, completeRowSet);
+  const resolveCell = createCellValueResolver(
+    options.getExportValueResolver,
+    options.resolverRows ?? rows,
+    options.completeRowSet === true,
+  );
 
   // Generate header row
   const headers = columns.map(col => {
@@ -604,11 +658,21 @@ function downloadCsv(content: string, fileName: string): void {
  * Generate Excel file from rows.
  * Builds the worksheet cell-by-cell for full control over formatting and hyperlinks.
  */
+/**
+ * Shared options for the two row-based generators. `resolverRows` is the row set
+ * the value resolver is derived from — pass the UNFILTERED set when rows have
+ * been dropped, so the remaining rows keep the values they had on screen.
+ */
+type RowGenerationOptions<RowData> = {
+  getExportValueResolver?: ExportValueResolverFactory | null;
+  completeRowSet?: boolean;
+  resolverRows?: RowData[];
+};
+
 async function generateExcelFromRows<RowData>(
   api: GridApi<RowData>,
   rows: RowData[],
-  getExportValueResolver?: ExportValueResolverFactory | null,
-  completeRowSet = false,
+  options: RowGenerationOptions<RowData> = {},
 ): Promise<ArrayBuffer> {
   // Get visible columns, skipping utility columns (drag handles, selection checkboxes)
   const allColumns = api.getAllDisplayedColumns?.() ?? [];
@@ -627,7 +691,11 @@ async function generateExcelFromRows<RowData>(
     };
   });
 
-  const resolveCell = createCellValueResolver(getExportValueResolver, rows, completeRowSet);
+  const resolveCell = createCellValueResolver(
+    options.getExportValueResolver,
+    options.resolverRows ?? rows,
+    options.completeRowSet === true,
+  );
   const cellValue = (rowData: Record<string, unknown>, field: string) =>
     resolveCell({ field, value: rowData[field], data: rowData });
 
@@ -709,11 +777,11 @@ function downloadExcel(buffer: ArrayBuffer, fileName: string): void {
 /**
  * Export selected rows as CSV
  */
-export function exportSelectedRowsAsCsv<RowData>(
+export async function exportSelectedRowsAsCsv<RowData>(
   api: GridApi<RowData> | null,
   fileName?: string,
-  getExportValueResolver?: ExportValueResolverFactory | null,
-): void {
+  hooks?: GridExportHooks | null,
+): Promise<void> {
   if (!api) {
     console.warn('[exportSelectedRowsAsCsv] No API provided');
     return;
@@ -724,19 +792,60 @@ export function exportSelectedRowsAsCsv<RowData>(
   const selectedNodes = api.getSelectedNodes?.();
   console.log('[exportSelectedRowsAsCsv] Selected nodes:', selectedNodes?.length);
 
+  const rows = (selectedNodes ?? [])
+    .map((node) => node.data)
+    .filter((data): data is RowData => data != null);
+  // AG Grid does the writing here, so the row filter can't drop rows from an
+  // array — ask it once and hand the verdict over as shouldRowBeSkipped.
+  const skipRow = await resolveSkipRowPredicate(hooks?.getExportRowFilter, rows, false);
+  if (skipRow === 'cancelled') {
+    console.log('[exportSelectedRowsAsCsv] Cancelled by row filter');
+    return;
+  }
+
   api.exportDataAsCsv?.({
     fileName: fileName ?? 'export.csv',
     onlySelected: true,
+    ...(skipRow
+      ? { shouldRowBeSkipped: (params) => skipRow((params.node?.data ?? {}) as Record<string, unknown>) }
+      : {}),
     // This path uses AG Grid's own writer, so the resolver is applied per cell
     // through processCellCallback instead of our row loop.
-    ...buildProcessCellCallback(
-      getExportValueResolver,
-      (selectedNodes ?? []).map((node) => node.data).filter((data): data is RowData => data != null),
-      false,
-    ),
+    ...buildProcessCellCallback(hooks?.getExportValueResolver, rows, false),
   });
 
   console.log('[exportSelectedRowsAsCsv] Export initiated');
+}
+
+/**
+ * Ask the row-filter hook for its verdict, as a skip predicate (or 'cancelled').
+ * A hook that throws is treated as "no filtering" rather than cancelling — a
+ * broken prompt must not silently swallow the user's export.
+ */
+async function resolveSkipRowPredicate<Row>(
+  factory: ExportRowFilterFactory | null | undefined,
+  rows: Row[],
+  completeRowSet: boolean,
+): Promise<((row: Record<string, unknown>) => boolean) | null | 'cancelled'> {
+  if (typeof factory !== 'function') return null;
+  let filter: ExportRowFilter | null | undefined;
+  try {
+    filter = await factory({ rows: rows as Record<string, unknown>[], completeRowSet });
+  } catch (err) {
+    console.warn('[gridExport] Export row filter failed', err);
+    return null;
+  }
+  if (filter?.cancelled) return 'cancelled';
+  const shouldSkipRow = filter?.shouldSkipRow;
+  if (typeof shouldSkipRow !== 'function') return null;
+  return (row) => {
+    try {
+      return shouldSkipRow(row);
+    } catch (err) {
+      console.warn('[gridExport] Export row filter predicate failed', err);
+      return false;
+    }
+  };
 }
 
 /**
@@ -784,11 +893,11 @@ function buildProcessCellCallback(
 /**
  * Export selected cells as CSV
  */
-export function exportSelectedCellsAsCsv<RowData>(
+export async function exportSelectedCellsAsCsv<RowData>(
   api: GridApi<RowData> | null,
   fileName?: string,
-  getExportValueResolver?: ExportValueResolverFactory | null,
-): void {
+  hooks?: GridExportHooks | null,
+): Promise<void> {
   if (!api) {
     console.warn('[exportSelectedCellsAsCsv] No API provided');
     return;
@@ -808,7 +917,13 @@ export function exportSelectedCellsAsCsv<RowData>(
   // For Server-Side Row Model, we need to manually extract cell range data
   // because AG Grid's built-in export doesn't work well with SSRM
   try {
-    const csv = generateCsvFromCellRanges(api, cellRanges, getExportValueResolver);
+    const rangeRows = collectCellRangeRows(api, cellRanges);
+    const skipRow = await resolveSkipRowPredicate(hooks?.getExportRowFilter, rangeRows, false);
+    if (skipRow === 'cancelled') {
+      console.log('[exportSelectedCellsAsCsv] Cancelled by row filter');
+      return;
+    }
+    const csv = generateCsvFromCellRanges(api, cellRanges, hooks?.getExportValueResolver, skipRow);
     downloadCsv(csv, fileName ?? 'export.csv');
     console.log('[exportSelectedCellsAsCsv] Export completed');
   } catch (err) {
@@ -816,9 +931,33 @@ export function exportSelectedCellsAsCsv<RowData>(
     // Fallback to AG Grid's built-in export
     api.exportDataAsCsv?.({
       fileName: fileName ?? 'export.csv',
-      ...buildProcessCellCallback(getExportValueResolver, [], false),
+      ...buildProcessCellCallback(hooks?.getExportValueResolver, [], false),
     });
   }
+}
+
+/**
+ * The row data behind a set of cell ranges, in range order. Used to ask the row
+ * filter about a range export before any of it is written.
+ */
+function collectCellRangeRows<RowData>(
+  api: GridApi<RowData>,
+  cellRanges: unknown[],
+): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  cellRanges.forEach((range: unknown) => {
+    const rangeObj = range as { startRow?: { rowIndex: number }; endRow?: { rowIndex: number } };
+    const startRow = rangeObj.startRow;
+    const endRow = rangeObj.endRow;
+    if (!startRow || !endRow) return;
+    const startIndex = Math.min(startRow.rowIndex, endRow.rowIndex);
+    const endIndex = Math.max(startRow.rowIndex, endRow.rowIndex);
+    for (let rowIndex = startIndex; rowIndex <= endIndex; rowIndex++) {
+      const rowNode = api.getDisplayedRowAtIndex?.(rowIndex);
+      if (rowNode?.data) rows.push(rowNode.data as Record<string, unknown>);
+    }
+  });
+  return rows;
 }
 
 /**
@@ -828,6 +967,7 @@ function generateCsvFromCellRanges<RowData>(
   api: GridApi<RowData>,
   cellRanges: unknown[],
   getExportValueResolver?: ExportValueResolverFactory | null,
+  shouldSkipRow?: ((row: Record<string, unknown>) => boolean) | null,
 ): string {
   const rows: string[][] = [];
   // Ranges are a subset of the displayed rows by construction, so the resolver
@@ -864,6 +1004,7 @@ function generateCsvFromCellRanges<RowData>(
       if (!rowNode || !rowNode.data) continue;
 
       const rowData = rowNode.data as Record<string, unknown>;
+      if (shouldSkipRow?.(rowData)) continue;
       const rowValues = columns.map((col) => {
         const colDef = col.getColDef?.() ?? {};
         const field = (colDef as { field?: string }).field ?? col.getColId();
@@ -890,7 +1031,7 @@ export async function exportAllFilteredRowsAsExcel<RowData>(
   requestPayload?: Record<string, unknown>,
   quickFilterText?: string | null,
   excludeRowIds?: Set<string>,
-  getExportValueResolver?: ExportValueResolverFactory | null,
+  hooks?: GridExportHooks | null,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportAllFilteredRowsAsExcel] No API provided');
@@ -903,12 +1044,18 @@ export async function exportAllFilteredRowsAsExcel<RowData>(
     const allRows = await fetchAllFilteredRows(api, endpoint, requestPayload, quickFilterText, excludeRowIds);
     console.log('[exportAllFilteredRowsAsExcel] Fetched rows:', allRows.length);
 
-    const excelBuffer = await generateExcelFromRows(
-      api,
-      allRows,
-      getExportValueResolver,
-      isCompleteRowSet(api, quickFilterText, excludeRowIds),
-    );
+    const completeRowSet = isCompleteRowSet(api, quickFilterText, excludeRowIds);
+    const gate = await applyExportRowFilter(hooks?.getExportRowFilter, allRows, completeRowSet);
+    if (gate.cancelled) {
+      console.log('[exportAllFilteredRowsAsExcel] Cancelled by row filter');
+      return;
+    }
+
+    const excelBuffer = await generateExcelFromRows(api, gate.rows, {
+      getExportValueResolver: hooks?.getExportValueResolver,
+      completeRowSet,
+      resolverRows: allRows,
+    });
     console.log('[exportAllFilteredRowsAsExcel] Generated Excel file');
 
     const excelFileName = fileName ?? 'export.xlsx';
@@ -926,7 +1073,7 @@ export async function exportAllFilteredRowsAsExcel<RowData>(
 export async function exportSelectedRowsAsExcel<RowData>(
   api: GridApi<RowData> | null,
   fileName?: string,
-  getExportValueResolver?: ExportValueResolverFactory | null,
+  hooks?: GridExportHooks | null,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportSelectedRowsAsExcel] No API provided');
@@ -945,8 +1092,17 @@ export async function exportSelectedRowsAsExcel<RowData>(
     return;
   }
 
+  const gate = await applyExportRowFilter(hooks?.getExportRowFilter, rows, false);
+  if (gate.cancelled) {
+    console.log('[exportSelectedRowsAsExcel] Cancelled by row filter');
+    return;
+  }
+
   // Only the selected subset — position-derived values must come from grid state.
-  const excelBuffer = await generateExcelFromRows(api, rows, getExportValueResolver, false);
+  const excelBuffer = await generateExcelFromRows(api, gate.rows, {
+    getExportValueResolver: hooks?.getExportValueResolver,
+    resolverRows: rows,
+  });
   const excelFileName = fileName ?? 'export.xlsx';
   downloadExcel(excelBuffer, excelFileName);
 
@@ -959,7 +1115,7 @@ export async function exportSelectedRowsAsExcel<RowData>(
 export async function exportSelectedCellsAsExcel<RowData>(
   api: GridApi<RowData> | null,
   fileName?: string,
-  getExportValueResolver?: ExportValueResolverFactory | null,
+  hooks?: GridExportHooks | null,
 ): Promise<void> {
   if (!api) {
     console.warn('[exportSelectedCellsAsExcel] No API provided');
@@ -978,7 +1134,18 @@ export async function exportSelectedCellsAsExcel<RowData>(
 
   // For Server-Side Row Model, generate Excel from cell ranges
   try {
-    const excelBuffer = await generateExcelFromCellRanges(api, cellRanges, getExportValueResolver);
+    const rangeRows = collectCellRangeRows(api, cellRanges);
+    const skipRow = await resolveSkipRowPredicate(hooks?.getExportRowFilter, rangeRows, false);
+    if (skipRow === 'cancelled') {
+      console.log('[exportSelectedCellsAsExcel] Cancelled by row filter');
+      return;
+    }
+    const excelBuffer = await generateExcelFromCellRanges(
+      api,
+      cellRanges,
+      hooks?.getExportValueResolver,
+      skipRow,
+    );
     const excelFileName = fileName ?? 'export.xlsx';
     downloadExcel(excelBuffer, excelFileName);
     console.log('[exportSelectedCellsAsExcel] Export completed:', excelFileName);
@@ -987,7 +1154,7 @@ export async function exportSelectedCellsAsExcel<RowData>(
     // Fallback to AG Grid's built-in export
     api.exportDataAsExcel?.({
       fileName: fileName ?? 'export.xlsx',
-      ...buildProcessCellCallback(getExportValueResolver, [], false),
+      ...buildProcessCellCallback(hooks?.getExportValueResolver, [], false),
     });
   }
 }
@@ -1000,6 +1167,7 @@ async function generateExcelFromCellRanges<RowData>(
   api: GridApi<RowData>,
   cellRanges: unknown[],
   getExportValueResolver?: ExportValueResolverFactory | null,
+  shouldSkipRow?: ((row: Record<string, unknown>) => boolean) | null,
 ): Promise<ArrayBuffer> {
   // Collect rows and column metadata from ranges
   const sourceRows: Record<string, unknown>[] = [];
@@ -1037,7 +1205,9 @@ async function generateExcelFromCellRanges<RowData>(
     for (let rowIndex = startIndex; rowIndex <= endIndex; rowIndex++) {
       const rowNode = api.getDisplayedRowAtIndex?.(rowIndex);
       if (!rowNode || !rowNode.data) continue;
-      sourceRows.push(rowNode.data as Record<string, unknown>);
+      const rowData = rowNode.data as Record<string, unknown>;
+      if (shouldSkipRow?.(rowData)) continue;
+      sourceRows.push(rowData);
     }
   });
 

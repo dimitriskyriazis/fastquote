@@ -20,7 +20,7 @@ import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
 import { openLinkInNewTab } from '../../lib/navigation';
-import { searchIncludes } from '../../lib/textSearch';
+import { searchEquals, searchIncludes } from '../../lib/textSearch';
 import styles from './OfferDetailsClient.module.css';
 
 const viewInOfferMenuIcon = `
@@ -861,8 +861,10 @@ export default function OfferDetailsClient() {
             // slight delay so click on option registers first
             setTimeout(() => {
               setShowBrandList(false);
-              // if text doesn't match a brand exactly, clear it
-              const match = options.brands.find(b => b.toLowerCase() === brandSearch.toLowerCase());
+              // if text doesn't match a brand exactly, clear it. Accent-insensitive
+              // so a brand picked from the (accent-insensitive) suggestion list is
+              // not thrown away on blur; the stored spelling wins below.
+              const match = options.brands.find(b => searchEquals(b, brandSearch));
               if (!match) {
                 setBrandSearch('');
                 handleFilterChange('BrandName', '');
