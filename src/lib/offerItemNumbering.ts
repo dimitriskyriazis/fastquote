@@ -5,7 +5,7 @@
 // printed "No" column always matches what the user sees in the grid.
 //
 // Pure module: no ag-grid, React, or browser APIs. Safe to import on the server.
-import { resolveOfferProductRowType } from './offerProductRows';
+import { resolveOfferProductRowType, isOfferProductOption, isNonPrintableComment } from './offerProductRows';
 
 // Numeric-aware collator so "2" sorts before "10" and "1.2" before "1.10".
 const treeOrderingCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
@@ -139,4 +139,27 @@ export function computeDisplayOrderingMap(
   }
 
   return result;
+}
+
+// The full "Item No" the user sees for one row: the display map's entry (auto or
+// manual mode) plus the option suffix. Single source of truth for the grid cell
+// renderer AND every export path, so a copied/exported Item No can never
+// disagree with the one on screen. Falls back to the raw TreeOrdering when the
+// row isn't in the map (e.g. a row loaded after the map was built).
+export function formatOfferItemNoDisplay(
+  row: Record<string, unknown> | null | undefined,
+  displayMap: Map<string, string> | null | undefined,
+): string {
+  if (!row) return '';
+  const raw = normalizePath((row as { TreeOrdering?: unknown }).TreeOrdering);
+  const id = normalizeOfferDetailId((row as { OfferDetailID?: unknown }).OfferDetailID ?? null);
+  const mapped = id != null ? displayMap?.get(String(id)) : undefined;
+  const display = mapped ?? raw;
+  if (!display || !isOfferProductOption(row)) return display;
+  // Non-printable comments normally render a "…np" suffix; as an option they
+  // read "…no" (e.g. "1no") rather than "1npo". Everything else (products,
+  // printable comments) just gets a trailing "o" (e.g. "1o").
+  return isNonPrintableComment(row) && display.endsWith('np')
+    ? `${display.slice(0, -2)}no`
+    : `${display}o`;
 }

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, type FormEvent } fro
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
+import { searchIncludes } from '../../../lib/textSearch';
 import { useAuditUser } from '../../components/AuditUserProvider';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -924,12 +925,10 @@ export default function OfferCreateClient({
 
     if (field.id === 'customerId') {
       const filtered = customerText.trim()
-        ? localCustomers.filter((option) => {
-            const label = option.label?.toLowerCase() ?? '';
-            const val = option.value?.toLowerCase() ?? '';
-            const search = customerText.toLowerCase();
-            return label.includes(search) || val.includes(search);
-          })
+        ? localCustomers.filter(
+            (option) => searchIncludes(option.label, customerText)
+              || searchIncludes(option.value, customerText),
+          )
         : localCustomers;
       return (
         <div className={`${styles.controlStack} ${styles.comboWrapper}`}>

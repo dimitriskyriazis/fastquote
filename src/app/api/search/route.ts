@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from 'mssql';
 import { getPool } from '../../../lib/sql';
+import { SEARCH_COLLATION } from '../../../lib/textSearch';
+
+// Accent-insensitive so "Ελλας" finds "Ελλάς". Applied to human-language columns
+// only — part numbers, IDs and e-mails are Latin/digits, where it is a no-op.
+const AI = `COLLATE ${SEARCH_COLLATION}`;
 
 type SearchResult = {
   id: string;
@@ -43,9 +48,9 @@ export async function GET(req: NextRequest) {
           SELECT TOP (@limit) o.ID, o.Title, c.Name AS CustomerName
           FROM dbo.Offer AS o
           LEFT JOIN dbo.Customers AS c ON c.ID = o.CustomerID
-          WHERE o.Title LIKE @pattern
-             OR o.Description LIKE @pattern
-             OR c.Name LIKE @pattern
+          WHERE o.Title ${AI} LIKE @pattern
+             OR o.Description ${AI} LIKE @pattern
+             OR c.Name ${AI} LIKE @pattern
              OR CAST(o.ID AS NVARCHAR(20)) LIKE @pattern
           ORDER BY o.ModifiedOn DESC
         `),
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest) {
         .query<{ ID: number; Name: string | null }>(`
           SELECT TOP (@limit) ID, Name
           FROM dbo.Customers
-          WHERE Name LIKE @pattern
+          WHERE Name ${AI} LIKE @pattern
              OR CAST(ID AS NVARCHAR(20)) LIKE @pattern
           ORDER BY Name
         `),
@@ -69,11 +74,11 @@ export async function GET(req: NextRequest) {
           FROM dbo.Contacts AS c
           LEFT JOIN dbo.Customers AS cu ON cu.ID = c.CustomerID
           WHERE c.Enabled = 1
-            AND (c.FirstName LIKE @pattern
-             OR c.LastName LIKE @pattern
+            AND (c.FirstName ${AI} LIKE @pattern
+             OR c.LastName ${AI} LIKE @pattern
              OR c.Email LIKE @pattern
-             OR cu.Name LIKE @pattern
-             OR (c.FirstName + ' ' + c.LastName) LIKE @pattern)
+             OR cu.Name ${AI} LIKE @pattern
+             OR (c.FirstName + ' ' + c.LastName) ${AI} LIKE @pattern)
           ORDER BY c.LastName, c.FirstName
         `),
       pool
@@ -85,7 +90,7 @@ export async function GET(req: NextRequest) {
             NULLIF(LTRIM(RTRIM(PartNumber)), '') AS PartNumber,
             NULLIF(LTRIM(RTRIM(ModelNumber)), '') AS ModelNumber
           FROM dbo.Products
-          WHERE Description LIKE @pattern
+          WHERE Description ${AI} LIKE @pattern
              OR PartNumber LIKE @pattern
              OR ModelNumber LIKE @pattern
           ORDER BY Description

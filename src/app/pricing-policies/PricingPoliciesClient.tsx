@@ -19,6 +19,7 @@ import styles from "./PricingPoliciesClient.module.css";
 import { showConfirmDialog } from "../../lib/confirm";
 import { checkDeletePermissionForClient, canDeleteAnyForClient } from "../../lib/deletePermissions";
 import { showToastMessage } from "../../lib/toast";
+import { searchIncludes } from "../../lib/textSearch";
 import { getUserNumberLocale, parseLocaleNumber } from "../../lib/localeNumber";
 import LookupModal from "../components/LookupModal";
 import AddBrandModal from "../components/AddBrandModal";
@@ -296,13 +297,11 @@ export default function PricingPoliciesClient({ pricingPolicies, brands }: Props
   );
 
   const filteredBrandOptions = useMemo(() => {
-    const query = brandText.trim().toLowerCase();
+    const query = brandText.trim();
     if (!query) return localBrands;
-    return localBrands.filter((option) => {
-      const label = option.label.toLowerCase();
-      const value = option.value.toLowerCase();
-      return label.includes(query) || value.includes(query);
-    });
+    return localBrands.filter(
+      (option) => searchIncludes(option.label, query) || searchIncludes(option.value, query),
+    );
   }, [localBrands, brandText]);
 
   useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);

@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import type { CellValueChangedEvent, ColDef, GetContextMenuItemsParams, GridApi } from "ag-grid-community";
 import { GridRowDeletion } from "../../../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../../../lib/deletePermissions";
+import { searchIncludes } from "../../../../lib/textSearch";
 import { useAuditUser } from "../../../components/AuditUserProvider";
 import styles from "./CustomerContactsClient.module.css";
 import lookupStyles from "../../../components/LookupModal.module.css";
@@ -255,13 +256,11 @@ export default function CustomerContactsClient({ customerId, customerName, statu
   }, [cancelChangeCustomerListClose]);
 
   const filteredChangeCustomerOptions = useMemo(() => {
-    const query = changeCustomerText.trim().toLowerCase();
+    const query = changeCustomerText.trim();
     if (!query) return customerOptions;
-    return customerOptions.filter((option) => {
-      const label = option.label.toLowerCase();
-      const value = option.value.toLowerCase();
-      return label.includes(query) || value.includes(query);
-    });
+    return customerOptions.filter(
+      (option) => searchIncludes(option.label, query) || searchIncludes(option.value, query),
+    );
   }, [customerOptions, changeCustomerText]);
 
   useEffect(() => () => cancelChangeCustomerListClose(), [cancelChangeCustomerListClose]);

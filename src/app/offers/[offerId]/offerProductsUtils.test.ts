@@ -4,6 +4,7 @@ import {
   computeDisplayOrderingMap,
   computeNetPriceRescale,
   findDuplicateTreeOrderings,
+  formatOfferItemNoDisplay,
   getCurrentStartingItemNo,
   planStartingItemNoShift,
   planTreeOrderingEdit,
@@ -516,6 +517,66 @@ describe('computeDisplayOrderingMap', () => {
     expect(map.get('1.1')).toBe('1.1');
     expect(map.get('1.3')).toBe('1.2');
     expect(map.get('2')).toBe('2');
+  });
+});
+
+// The Item No the grid renders — and, since the export resolver shares this
+// helper, exactly what an Excel/CSV export writes for the Item No column.
+describe('formatOfferItemNoDisplay', () => {
+  const itemNo = (rows: Row[], tree: string, options?: { manualMode?: boolean }) => {
+    const map = computeDisplayOrderingMap(rows, options);
+    const row = rows.find((r) => String(r.TreeOrdering) === tree);
+    return formatOfferItemNoDisplay(row, map);
+  };
+
+  it('renders the renumbered value for ordinary rows', () => {
+    const rows = [product('1'), product('2'), product('4')];
+    expect(itemNo(rows, '4')).toBe('3');
+  });
+
+  it('suffixes non-printable comments with np, anchored on the row above', () => {
+    const rows = [product('1'), nonPrintableComment('2'), product('3')];
+    expect(itemNo(rows, '2')).toBe('1np');
+    // The product after a non-printable comment keeps the next visible number.
+    expect(itemNo(rows, '3')).toBe('2');
+  });
+
+  it('suffixes options with o', () => {
+    const rows = [product('1'), product('2', { IsOption: 1 }), product('3')];
+    expect(itemNo(rows, '2')).toBe('2o');
+  });
+
+  it('renders a non-printable comment marked as an option as "no", not "npo"', () => {
+    const rows = [
+      product('1'),
+      { ...nonPrintableComment('2'), IsOption: 1 },
+      product('3'),
+    ];
+    expect(itemNo(rows, '2')).toBe('1no');
+  });
+
+  it('keeps the suffixes in manual mode, on top of the raw value', () => {
+    const rows = [
+      product('6.3.1'),
+      { ...nonPrintableComment('6.3.2'), IsOption: 1 },
+      product('6.3.4', { IsOption: 1 }),
+    ];
+    expect(itemNo(rows, '6.3.1', { manualMode: true })).toBe('6.3.1');
+    expect(itemNo(rows, '6.3.2', { manualMode: true })).toBe('6.3.1no');
+    expect(itemNo(rows, '6.3.4', { manualMode: true })).toBe('6.3.4o');
+  });
+
+  it('falls back to the raw TreeOrdering when the row is not in the map', () => {
+    const row = product('7', { IsOption: 1 });
+    expect(formatOfferItemNoDisplay(row, new Map())).toBe('7o');
+    expect(formatOfferItemNoDisplay(product('7'), new Map())).toBe('7');
+  });
+
+  it('returns an empty string for a missing row or a blank TreeOrdering', () => {
+    expect(formatOfferItemNoDisplay(null, new Map())).toBe('');
+    expect(formatOfferItemNoDisplay({ OfferDetailID: 1, TreeOrdering: '  ' }, new Map())).toBe('');
+    // An option with no number stays blank rather than becoming a bare "o".
+    expect(formatOfferItemNoDisplay({ OfferDetailID: 1, IsOption: 1 }, new Map())).toBe('');
   });
 });
 

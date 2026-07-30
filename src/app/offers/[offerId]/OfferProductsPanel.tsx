@@ -60,7 +60,8 @@ import { pushCellEditUndo, makeOfferDetailRevert } from '../../../lib/undoHelper
 import { showConfirmDialog, showMultiChoiceDialog, showEnhancePreviewDialog, type EnhancePreviewRow } from '../../../lib/confirm';
 import { GridRowDeletion, getContextMenuSelectionSnapshot, getServerSideDeselectedRowIds, setGridRowDeletionContextMenuSelectionSnapshot } from '../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../lib/deletePermissions';
-import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isNonPrintableComment, isOfferProductService, isUnlinkedOfferProductRow, normalizeQuantityForServiceType, allowsFractionalQuantity, SERVICE_QUANTITY_DECIMALS } from '../../../lib/offerProductRows';
+import { resolveOfferProductRowType, isOfferProductProduct, isOfferProductCategory, isOfferProductComment, isOfferProductOption, isOfferProductService, isUnlinkedOfferProductRow, normalizeQuantityForServiceType, allowsFractionalQuantity, SERVICE_QUANTITY_DECIMALS } from '../../../lib/offerProductRows';
+import type { ExportValueResolverFactory } from '../../../lib/gridExport';
 import { useRealtimeGridUpdates } from '../../hooks/useRealtimeGridUpdates';
 import { captureAndPinScroll } from '../../../lib/scrollPreservation';
 import { clearPartModelNumberUpper } from '../../../lib/partModelNumber';
@@ -121,6 +122,7 @@ import {
   parseTreeOrderingPath,
   buildTreeOrderingKey,
   computeDisplayOrderingMap,
+  formatOfferItemNoDisplay,
   planTreeOrderingEdit,
   planStartingItemNoShift,
   getCurrentStartingItemNo,
@@ -2566,22 +2568,10 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     // Display map is keyed by OfferDetailID so rows that share the same
     // raw TreeOrdering (corrupted offers) each render their own number.
     // Non-printable comments get a "<prev>np"-style entry from the map in
-    // both modes, so we don't special-case them to empty here.
-    const offerDetailId = normalizeOfferDetailId(
-      (rowData as { OfferDetailID?: unknown } | null | undefined)?.OfferDetailID ?? null,
-    );
-    const idKey = offerDetailId != null ? String(offerDetailId) : '';
-    let display: string = idKey
-      ? (displayOrderingMapRef.current.get(idKey) ?? formatDisplayTreeOrdering(rawValue))
-      : formatDisplayTreeOrdering(rawValue);
-    if (display && isOfferProductOption(rowData)) {
-      // Non-printable comments normally render a "…np" suffix; as an option
-      // they read "…no" (e.g. "1no") rather than "1npo". Everything else
-      // (products, printable comments) just gets a trailing "o" (e.g. "1o").
-      display = isNonPrintableComment(rowData) && display.endsWith('np')
-        ? `${display.slice(0, -2)}no`
-        : `${display}o`;
-    }
+    // both modes, so we don't special-case them to empty here. The map lookup
+    // and the option suffix live in formatOfferItemNoDisplay so the exports
+    // write exactly this string (see getExportValueResolver below).
+    const display = formatOfferItemNoDisplay(rowData, displayOrderingMapRef.current);
     const rowHoldMarginRaw = (rowData as { PricingHoldMarginOnCost?: unknown } | null | undefined)?.PricingHoldMarginOnCost;
     const rowHoldMarginExplicit = rowHoldMarginRaw === true || rowHoldMarginRaw === 1 ? true
       : rowHoldMarginRaw === false || rowHoldMarginRaw === 0 ? false
@@ -4877,6 +4867,26 @@ const requestedColumnDefsMap = useMemo(
     const rows = await fetchExportRows();
     return buildOfferProductTemplateExportRows(rows);
   }, [fetchExportRows]);
+
+  // Excel/CSV export: the Item No column stores the raw TreeOrdering (AG Grid
+  // needs it for sorting/filtering) while the cell renderer shows the renumbered
+  // value plus the "np"/"o" suffixes. Exports read row data directly, so without
+  // this a non-printable comment lands in Excel as a bare number instead of
+  // "2np", and an option loses its "o" — the two row types whose display never
+  // matches the stored value.
+  const getExportValueResolver = useCallback<ExportValueResolverFactory>(({ rows, completeRowSet }) => {
+    // A complete row set IS the whole offer, so recomputing reproduces the
+    // on-screen numbering even for rows the grid never loaded into a block.
+    // Otherwise reuse the grid's own map: a filtered or selected subset would
+    // renumber itself 1..N. Rows missing from the map fall back to their raw
+    // TreeOrdering, exactly as the cell renderer does.
+    const displayMap = completeRowSet
+      ? computeDisplayOrderingMap(rows, { manualMode: manualModeRef.current })
+      : displayOrderingMapRef.current;
+    return ({ field, value, data }) => (
+      field === 'TreeOrdering' ? formatOfferItemNoDisplay(data, displayMap) : value
+    );
+  }, []);
 
   const getAddInsertionAnchor = useCallback((): { offerDetailId: number; parentPath: number[]; label: string; treeOrdering: string; isRequested: boolean } | null => {
     const api = gridApiRef.current;
@@ -10244,6 +10254,7 @@ const requestedColumnDefsMap = useMemo(
             onColumnStateRestored={handleColumnStateRestored}
             onServerRequest={handleServerRequest}
             requestPayload={standardPackageRequestPayload}
+            getExportValueResolver={getExportValueResolver}
             getRowHeight={getRowHeight}
             floatingFilter
             rowGroupPanelShow="never"

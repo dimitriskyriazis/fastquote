@@ -20,6 +20,7 @@ import { GridQuickSearchProvider } from '../components/GridQuickSearchProvider';
 import { formatDateTime } from '../lib/formatDateTime';
 import { showToastMessage } from '../../lib/toast';
 import { openLinkInNewTab } from '../../lib/navigation';
+import { searchIncludes } from '../../lib/textSearch';
 import styles from './OfferDetailsClient.module.css';
 
 const viewInOfferMenuIcon = `
@@ -825,7 +826,7 @@ export default function OfferDetailsClient() {
 
   // Filtered brand suggestions
   const brandSuggestions = brandSearch.trim()
-    ? options.brands.filter(b => b.toLowerCase().includes(brandSearch.toLowerCase()))
+    ? options.brands.filter(b => searchIncludes(b, brandSearch))
     : options.brands;
 
   const pivotModeButton = (

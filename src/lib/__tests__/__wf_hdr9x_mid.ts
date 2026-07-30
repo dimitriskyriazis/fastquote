@@ -498,8 +498,7 @@ const isLikelyHeaderRow = (row: unknown[]) => {
 
   // Reject number-heavy rows: a data row whose product name happens to contain a keyword
   // ("i3CONNECT Lift 4 Wall/Common part") must not outrank the real header above it.
-  const numericCells = normalizedCells.filter((cell) => isCellNumeric(cell)).length;
-  if (numericCells / normalizedCells.length >= MAX_HEADER_NUMERIC_RATIO) return false;
+  // MID: numeric-ratio guard removed
 
   const matchedKeys = matchHeaderKeys(row);
   // Accept partNumber OR modelNumber as the identifier column —

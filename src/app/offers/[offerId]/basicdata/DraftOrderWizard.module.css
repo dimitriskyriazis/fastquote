@@ -342,6 +342,97 @@
   text-align: center;
 }
 
+/* ── Additional-discount allocation step ───────────────────────────────── */
+
+.discountChoices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.discountChoice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.discountChoice:hover {
+  border-color: #93c5fd;
+  background: #f8fafc;
+}
+
+.discountChoiceSelected,
+.discountChoiceSelected:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px #2563eb;
+}
+
+.discountRadio {
+  margin-top: 3px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+
+.discountChoiceBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.discountChoiceTitle {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.discountChoiceDetail {
+  font-size: 0.82rem;
+  color: #4b5563;
+  line-height: 1.4;
+}
+
+.discountTable {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-top: 4px;
+}
+
+.discountTable td {
+  padding: 3px 0;
+  color: #374151;
+}
+
+.discountTable td:first-child {
+  padding-right: 16px;
+  white-space: nowrap;
+}
+
+.discountTableTotal td {
+  border-top: 1px solid #d1d5db;
+  padding-top: 5px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.discountNote {
+  font-size: 0.8rem;
+  color: #6b7280;
+  line-height: 1.4;
+  margin-top: 6px;
+}
+
+.quotedPrice {
+  color: #9ca3af;
+  text-decoration: line-through;
+}
+
 /* ── Manual Soft1 search modal ─────────────────────────────────────────── */
 
 .manualSearchBody {

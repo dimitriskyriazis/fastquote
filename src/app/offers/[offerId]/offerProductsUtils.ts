@@ -21,6 +21,7 @@ import {
   parseTreeOrderingPath,
   getCurrentStartingItemNo,
   computeDisplayOrderingMap,
+  formatOfferItemNoDisplay,
   normalizeOfferDetailId,
 } from '../../../lib/offerItemNumbering';
 
@@ -29,6 +30,7 @@ export {
   parseTreeOrderingPath,
   getCurrentStartingItemNo,
   computeDisplayOrderingMap,
+  formatOfferItemNoDisplay,
   normalizeOfferDetailId,
 };
 

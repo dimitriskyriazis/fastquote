@@ -13,6 +13,7 @@ import {
   QueryParam,
 } from '../../../../../../lib/gridFilters';
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
+import { collateSearch } from '../../../../../../lib/textSearch';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
 import { applyEpLincMethodRepricing } from '../../../../../../lib/epLincRepriceSql';
@@ -636,7 +637,7 @@ async function tryStage1QuickMatch(
       `(${partClearedX} LIKE '%' + @${key}_clean + '%'`
       + ` OR ${modelClearedX} LIKE '%' + @${key}_clean + '%'`
       + ` OR ${legacyClearedX} LIKE '%' + @${key}_clean + '%'`
-      + ` OR UPPER(ISNULL(p.Description, '')) LIKE '%' + @${key}_raw + '%')`,
+      + ` OR ${collateSearch(`UPPER(ISNULL(p.Description, ''))`)} LIKE '%' + @${key}_raw + '%')`,
     );
   });
   const whereSql = `WHERE ISNULL(p.Enabled, 1) = 1 AND (${orGroups.join(' OR ')})`;

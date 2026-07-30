@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import LookupModal from '../components/LookupModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import { showToastMessage } from '../../lib/toast';
+import { searchIncludes } from '../../lib/textSearch';
 
 type GroupEntry = {
   ContactGroupListID: number;
@@ -85,9 +86,9 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
 
   const filteredAddGroupOptions = useMemo(() => {
     const available = allGroupOptions.filter((o) => !memberGroupIds.has(o.value));
-    const query = addGroupText.trim().toLowerCase();
+    const query = addGroupText.trim();
     if (!query) return available;
-    return available.filter((o) => o.label.toLowerCase().includes(query) || o.value.includes(query));
+    return available.filter((o) => searchIncludes(o.label, query) || o.value.includes(query));
   }, [allGroupOptions, memberGroupIds, addGroupText]);
 
   const cancelAddGroupListClose = useCallback(() => {

@@ -488,6 +488,13 @@ const matchHeaderKeys = (row: unknown[]): Set<HeaderColumnKey> => {
   return matchedKeys;
 };
 
+const isNumberHeavyRow = (row: unknown[]): boolean => {
+  const cells = row.map((cell) => normalizeHeaderText(cell)).filter((v): v is string => Boolean(v));
+  if (cells.length === 0) return false;
+  const numeric = cells.filter((cell) => isCellNumeric(cell)).length;
+  return numeric / cells.length >= MAX_HEADER_NUMERIC_RATIO;
+};
+
 const isLikelyHeaderRow = (row: unknown[]) => {
   const normalizedCells = row
     .map((cell) => normalizeHeaderText(cell))
@@ -610,6 +617,9 @@ export const detectHeaderRow = (rows: unknown[][]): HeaderDetectionResult => {
     const nextRow = rows[idx + 1];
     if (!Array.isArray(row) || !Array.isArray(nextRow)) continue;
     if (hasLongTextCell(row) || hasLongTextCell(nextRow)) continue;
+    // FIX: a number-heavy row is data, not a header base; do not let a merge with the row
+    // below dilute its numeric ratio into acceptance.
+    if (isNumberHeavyRow(row) || isNumberHeavyRow(nextRow)) continue;
     const merged = mergeHeaderRows(row, nextRow);
     if (isLikelyHeaderRow(merged)) return { index: idx, span: 2, mergedRow: merged };
   }

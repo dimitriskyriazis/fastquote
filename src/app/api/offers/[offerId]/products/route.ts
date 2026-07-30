@@ -18,6 +18,7 @@ import {
   QueryParam,
 } from '../../../../../lib/gridFilters';
 import { clearPartModelNumber, stripXBetweenDigitsSql } from '../../../../../lib/partModelNumber';
+import { collateSearch } from '../../../../../lib/textSearch';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
 import { checkDeletePermission } from '../../../../../lib/deletePermissions';
@@ -1176,8 +1177,10 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
     && Array.isArray((filter as { conditions?: unknown }).conditions)
   );
 
+  // Accent-insensitive: offer line descriptions are often Greek, and the database
+  // collation is accent-sensitive, so "καλωδιο" would not match "καλώδιο".
   const descriptionSqlExpr = (expr: string) =>
-    `UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`;
+    collateSearch(`UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`);
 
   Object.entries(typedModel).forEach(([col, fm], idx) => {
     if (!fm) return;

@@ -4,6 +4,7 @@ import sql from 'mssql';
 import { getPool } from '../../../../lib/sql';
 import { requirePermission } from '../../../../lib/authz';
 import { toDropdownOptions, type DropdownOption, type RawDropdownRow } from '../../../../lib/dropdownOptions';
+import { collateSearch } from '../../../../lib/textSearch';
 
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
@@ -77,7 +78,7 @@ async function fetchCustomers(search?: string) {
     const result = await req.query<LookupRow>(`
       SELECT TOP 50 ID, Name
       FROM dbo.Customers
-      WHERE Name LIKE @customerSearch
+      WHERE ${collateSearch('Name')} LIKE @customerSearch
       ORDER BY Name
     `);
     return toLookupOptions(result.recordset);

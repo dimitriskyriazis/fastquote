@@ -11,6 +11,7 @@ import type {
   MarketOption,
 } from './OfferBasicDataTypes';
 import { showToastMessage } from '../../../lib/toast';
+import { searchIncludes } from '../../../lib/textSearch';
 import { getBodyScale } from '../../../lib/bodyScale';
 import { showConfirmDialog } from '../../../lib/confirm';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -1145,13 +1146,11 @@ export default function OfferBasicDataClient({
   }, []);
 
   const filteredCustomerOptions = useMemo(() => {
-    const search = customerText.trim().toLowerCase();
+    const search = customerText.trim();
     if (!search) return customerOptions;
-    return customerOptions.filter((option) => {
-      const label = option.label?.toLowerCase() ?? '';
-      const value = option.value?.toLowerCase() ?? '';
-      return label.includes(search) || value.includes(search);
-    });
+    return customerOptions.filter(
+      (option) => searchIncludes(option.label, search) || searchIncludes(option.value, search),
+    );
   }, [customerOptions, customerText]);
 
   const handleCustomerSelection = useCallback((option: OfferDropdownOption) => {

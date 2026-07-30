@@ -1,5 +1,6 @@
 import sql from 'mssql';
 import type { ConnectionPool } from 'mssql';
+import { foldAccents, SEARCH_COLLATION } from './textSearch';
 
 export type CustomerMatch = {
   TRDR: number;
@@ -26,14 +27,6 @@ const LATIN_TO_GREEK: Record<string, string> = {
 };
 
 /**
- * Strips Greek diacritical marks (accents) from a string.
- * E.g., "Ελλάς" → "Ελλας", "ΕΝΈΡΓΕΙΑ" → "ΕΝΕΡΓΕΙΑ"
- */
-function stripGreekAccents(s: string): string {
-  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-}
-
-/**
  * Generates fuzzy search terms from a customer name.
  * Includes original words, accent-stripped variants, uppercase versions,
  * and Latin-to-Greek transliterations.
@@ -48,7 +41,7 @@ export function buildFuzzyTerms(customerName: string): string[] {
     // Uppercase
     terms.add(word.toUpperCase());
     // Accent-stripped
-    const stripped = stripGreekAccents(word);
+    const stripped = foldAccents(word);
     terms.add(stripped);
     terms.add(stripped.toUpperCase());
     // Latin-to-Greek transliteration
@@ -123,7 +116,7 @@ export async function fuzzyCustomerSearch(
       .query<CustomerMatch>(`
         SELECT TOP (10) TRDR, CODE, NAME
         FROM dbo.TRDR
-        WHERE NAME LIKE @FuzzyTerm AND ISACTIVE = 1 AND COMPANY = 1
+        WHERE NAME COLLATE ${SEARCH_COLLATION} LIKE @FuzzyTerm AND ISACTIVE = 1 AND COMPANY = 1
         ORDER BY NAME
       `);
     for (const row of result.recordset ?? []) {

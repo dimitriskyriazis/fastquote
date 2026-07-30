@@ -8,6 +8,7 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { getUserNumberLocale } from "../../lib/localeNumber";
 import type { DropdownOption } from "../../lib/dropdownOptions";
+import { searchIncludes } from "../../lib/textSearch";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -60,9 +61,9 @@ export default function BrandOffersClient({ brands }: Props) {
   const [refreshToken, setRefreshToken] = useState(0);
 
   const filteredBrands = useMemo(() => {
-    const q = brandText.trim().toLowerCase();
+    const q = brandText.trim();
     if (!q) return brands;
-    return brands.filter((b) => b.label.toLowerCase().includes(q));
+    return brands.filter((b) => searchIncludes(b.label, q));
   }, [brands, brandText]);
 
   const clearBrandCloseTimer = useCallback(() => {

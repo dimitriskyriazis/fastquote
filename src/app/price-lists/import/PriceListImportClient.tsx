@@ -17,6 +17,7 @@ import lookupButtonStyles from "../../components/LookupAddButton.module.css";
 import { useRouter } from "next/navigation";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
+import { searchIncludes } from "../../../lib/textSearch";
 import { formatDateUK } from "../../lib/formatDateTime";
 import { showConfirmDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
@@ -628,13 +629,11 @@ export default function PriceListImportClient({
   }, [previousPriceLists, values.brandId]);
 
   const filteredBrandOptions = useMemo(() => {
-    const search = brandText.trim().toLowerCase();
+    const search = brandText.trim();
     if (!search) return localBrands;
-    return localBrands.filter((option) => {
-      const label = option.label?.toLowerCase() ?? "";
-      const value = option.value?.toLowerCase() ?? "";
-      return label.includes(search) || value.includes(search);
-    });
+    return localBrands.filter(
+      (option) => searchIncludes(option.label, search) || searchIncludes(option.value, search),
+    );
   }, [brandText, localBrands]);
 
   const refreshBrands = useCallback(async () => {
@@ -1292,6 +1291,8 @@ export default function PriceListImportClient({
           listPrice: sheet.selection.listPrice ?? null,
           costPrice: sheet.selection.costPrice ?? null,
           warning: sheet.selection.warning ?? null,
+          // MOQ is mappable in the UI and stored by the API — it must be sent, or it imports as NULL.
+          moq: sheet.selection.moq ?? null,
           weblink: sheet.selection.weblink ?? null,
           legacyPartNumber: sheet.selection.legacyPartNumber ?? null,
           servicePriceGR: sheet.selection.servicePriceGR ?? null,

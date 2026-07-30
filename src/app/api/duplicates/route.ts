@@ -5,6 +5,12 @@ import { getPool } from "../../../lib/sql";
 import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../lib/partModelNumber";
+import { SEARCH_COLLATION, foldAccents } from "../../../lib/textSearch";
+
+// Duplicate detection is deliberately fuzzy: creating "Ελλας ΑΕ" when "Ελλάς ΑΕ"
+// already exists is exactly the collision we want to warn about, but the database
+// collation is accent-sensitive so those two never matched.
+const AI = `COLLATE ${SEARCH_COLLATION}`;
 
 type DuplicateMatch = {
   id: number;
@@ -21,7 +27,9 @@ type WarningGroup = {
 };
 
 function normalizeForCompare(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
+  // Fold accents before scoring, so "Ελλάς" and "Ελλας" are distance 0 rather
+  // than 1 and stay above the similarity threshold.
+  return foldAccents(value).trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function levenshtein(a: string, b: string): number {
@@ -108,8 +116,8 @@ export async function POST(req: NextRequest) {
           .input("nameLike", sql.NVarChar(512), `%${name}%`)
           .query<{ ID: number; Name: string; TaxID: string | null }>(
             `SELECT TOP 50 ID, Name, TaxID FROM dbo.Customers
-             WHERE Name LIKE @nameLike
-                OR @name LIKE '%' + Name + '%'
+             WHERE Name ${AI} LIKE @nameLike
+                OR @name ${AI} LIKE '%' + Name + '%'
                 OR SOUNDEX(Name) = SOUNDEX(@name)
                 OR DIFFERENCE(Name, @name) >= 3`
           );
@@ -151,8 +159,8 @@ export async function POST(req: NextRequest) {
           .input("nameLike", sql.NVarChar(255), `%${name}%`)
           .query<{ ID: number; Name: string; TaxID: string | null }>(
             `SELECT TOP 50 ID, Name, TaxID FROM dbo.Suppliers
-             WHERE Name LIKE @nameLike
-                OR @name LIKE '%' + Name + '%'
+             WHERE Name ${AI} LIKE @nameLike
+                OR @name ${AI} LIKE '%' + Name + '%'
                 OR SOUNDEX(Name) = SOUNDEX(@name)
                 OR DIFFERENCE(Name, @name) >= 3`
           );
@@ -178,8 +186,8 @@ export async function POST(req: NextRequest) {
           .input("nameLike", sql.NVarChar(255), `%${name}%`)
           .query<{ ID: number; Name: string }>(
             `SELECT TOP 50 ID, Name FROM dbo.Brands
-             WHERE Name LIKE @nameLike
-                OR @name LIKE '%' + Name + '%'
+             WHERE Name ${AI} LIKE @nameLike
+                OR @name ${AI} LIKE '%' + Name + '%'
                 OR SOUNDEX(Name) = SOUNDEX(@name)
                 OR DIFFERENCE(Name, @name) >= 3`
           );
@@ -205,7 +213,7 @@ export async function POST(req: NextRequest) {
           .input("firstName", sql.NVarChar(120), `%${firstName}%`)
           .input("lastName", sql.NVarChar(120), `%${lastName}%`)
           .query<{ ContactID: number; FirstName: string | null; LastName: string | null }>(
-            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE FirstName LIKE @firstName AND LastName LIKE @lastName`
+            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE FirstName ${AI} LIKE @firstName AND LastName ${AI} LIKE @lastName`
           );
         if (result.recordset.length > 0) {
           warnings.push({
@@ -221,7 +229,7 @@ export async function POST(req: NextRequest) {
         const result = await pool.request()
           .input("lastName", sql.NVarChar(120), `%${lastName}%`)
           .query<{ ContactID: number; FirstName: string | null; LastName: string | null }>(
-            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE LastName LIKE @lastName`
+            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE LastName ${AI} LIKE @lastName`
           );
         if (result.recordset.length > 0) {
           warnings.push({

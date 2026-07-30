@@ -23,6 +23,12 @@ export type CreateOrderWithLinesParams = {
   integrationKey: string;
   series: number;
   createdByUser: number;
+  /**
+   * Document-level discount in euros (setDocs `discval`). Set only when the
+   * offer's additional discount is sent as a document discount instead of being
+   * baked into the line unit prices. Null/0 = no header discount.
+   */
+  documentDiscount?: number | null;
   lines: OrderLineForCreation[];
 };
 

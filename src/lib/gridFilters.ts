@@ -1,4 +1,5 @@
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "./partModelNumber";
+import { collateSearch } from "./textSearch";
 
 export type QueryParam = { key: string; value: string | number | boolean };
 
@@ -86,7 +87,10 @@ export const buildTextMatchPredicate = (
   const trimmed = term.trim();
   const upper = trimmed.toUpperCase();
   const safeExpr = `LTRIM(RTRIM(COALESCE(CAST(${expression} AS NVARCHAR(MAX)), '')))`;
-  const ciExpr = `UPPER(${safeExpr})`;
+  // Accent-insensitive: the database collation is accent-sensitive, so without this
+  // a user typing "ΕΛΛΑΣ" would not match stored "Ελλάς" (and vice versa). Covers
+  // every mode below plus the fuzzy variant clauses, which all reuse ciExpr.
+  const ciExpr = collateSearch(`UPPER(${safeExpr})`);
   const params: QueryParam[] = [];
 
   let value = upper;

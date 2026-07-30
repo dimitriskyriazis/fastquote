@@ -14,6 +14,7 @@ import {
   QueryParam,
 } from "../../../lib/gridFilters";
 import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../lib/partModelNumber";
+import { collateSearch } from "../../../lib/textSearch";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 import { normalizeId } from '../../../lib/normalize';
@@ -113,8 +114,10 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   const params: QueryParam[] = [];
   const typedFilterModel = filterModel as Record<string, KnownFilterModel>;
 
+  // Accent-insensitive: product descriptions are often Greek, and the database
+  // collation is accent-sensitive, so "καλωδιο" would not match "καλώδιο".
   const descriptionSql = (expr: string) =>
-    `UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`;
+    collateSearch(`UPPER(COALESCE(CAST(${expr} AS NVARCHAR(MAX)), ''))`);
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;

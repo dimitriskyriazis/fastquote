@@ -13,7 +13,21 @@ import { logger } from '../../../../../lib/logger';
 import { requirePermission } from '../../../../../lib/authz';
 import { findCustomerViaProc } from '../../../../../lib/customerSearch';
 import { clearPartModelNumberUpper } from '../../../../../lib/partModelNumber';
+import { collateSearch, searchIncludes } from '../../../../../lib/textSearch';
 import { sendDraftOrderCompletionEmail } from '../../../../../lib/draftOrderCompletionEmail';
+import type {
+  DraftOrderDiscountSummary,
+  DraftOrderDiscountVerification,
+  DraftOrderOptionsSummary,
+} from '../../../../../lib/draftOrderCompletionEmail';
+import {
+  buildOfferDiscountInfo,
+  discountPayload,
+  discountedUnitPrice,
+  planDiscount,
+  round2,
+} from '../../../../../lib/offerDiscount';
+import type { DiscountAllocation, OfferDiscountInfo } from '../../../../../lib/offerDiscount';
 
 type ProductMatch = {
   productId: number;
@@ -75,6 +89,14 @@ type CreateDraftOfferRequestBody = {
   // SoftOne as the line COMMENTS (MTRLINES.COMMENTS) at execute time. Independent
   // of OfferDetails.Comment, which is left untouched.
   lineComments?: Array<{ lineId: number; comment: string }>;
+  // How the offer-level additional discount is projected onto the Soft1
+  // pre-order. Chosen by the user in the Discount step; required whenever the
+  // offer actually has an additional discount.
+  discountAllocation?: DiscountAllocation | null;
+  // Whether OfferDetails.IsOption lines go on the order. Chosen in the Options
+  // step; required whenever the offer actually has option lines. Must be passed
+  // to every step that enumerates offer products, not just the ones that write.
+  includeOptions?: boolean;
   manualSearch?: {
     partOrModel?: string | null;
     description?: string | null;
@@ -130,7 +152,9 @@ type WizardStep =
   | 'match-products'
   | 'manual-search-product'
   | 'list-brands'
+  | 'include-options'
   | 'compare-products'
+  | 'discount-allocation'
   | 'prepare-summary'
   | 'execute';
 
@@ -151,6 +175,10 @@ type OfferContext = {
   erpProjectCode: string | null;
   orderSignedDate: string | null;
   userId: string;
+  /** Offer.ExtraNetDiscount — offer-level additional discount off the net subtotal. */
+  extraNetDiscount: number | null;
+  /** Offer.ExtraNetDiscountMode — 'pct' (percentage) or 'abs' (euro amount). */
+  extraNetDiscountMode: 'pct' | 'abs';
 };
 
 type MatchResultsState = {
@@ -159,6 +187,159 @@ type MatchResultsState = {
   userSelected: Array<{ productId: number; MTRL: number; CODE: string | null }>;
   skipped: Array<{ productId: number }>;
 };
+
+// ── Offer-level additional discount ────────────────────────────────────────────
+// The arithmetic lives in src/lib/offerDiscount.ts (unit-tested); this file owns
+// only the SQL that loads the offer header values and the wizard plumbing.
+
+// Canonical set of rows that count toward an offer's totals — keep in sync with
+// TOTALS_ROW_PREDICATE in src/app/api/offers/[offerId]/products/route.ts and the
+// copy in src/lib/projectForm/projectFormData.ts.
+const TOTALS_ROW_PREDICATE =
+  '(od.ProductID IS NOT NULL OR ISNULL(od.IsComment, 0) = 1) AND ISNULL(od.IsOption, 0) = 0';
+
+async function loadOfferDiscount(ctx: OfferContext): Promise<OfferDiscountInfo> {
+  const mode = ctx.extraNetDiscountMode;
+  const value = ctx.extraNetDiscount;
+  if (value == null || !Number.isFinite(value) || value <= 0) {
+    return buildOfferDiscountInfo(value, mode, 0);
+  }
+
+  // 'pct' needs no basis; 'abs' has to be turned into a fraction of the offer's
+  // own net subtotal before it can be applied to the pre-order's subset of lines.
+  let offerNetBeforeExtra = 0;
+  if (mode === 'abs') {
+    const req = ctx.pool.request();
+    req.input('offerId', sql.Int, ctx.offerId);
+    const res = await req.query<{ offerNet: number | null }>(`
+      SELECT SUM(CASE WHEN ${TOTALS_ROW_PREDICATE} THEN COALESCE(od.TotalNet, 0) ELSE 0 END) AS offerNet
+      FROM dbo.OfferDetails od
+      WHERE od.OfferID = @offerId
+    `);
+    offerNetBeforeExtra = Number(res.recordset?.[0]?.offerNet ?? 0) || 0;
+  }
+
+  return buildOfferDiscountInfo(value, mode, offerNetBeforeExtra);
+}
+
+// ── Option lines ───────────────────────────────────────────────────────────────
+// OfferDetails.IsOption rows are alternates / add-ons that the offer's own totals
+// deliberately exclude (see TOTALS_ROW_PREDICATE), so ordering them would make the
+// pre-order worth more than the offer it came from. Whether the customer actually
+// bought them is not something we can infer, so the wizard asks — and the answer
+// has to reach EVERY step that enumerates offer lines, otherwise we would create
+// ERP items and brands for products that never make it onto the order.
+
+/** SQL fragment gating option rows; `od` must be the OfferDetails alias. */
+const optionFilterSql = (includeOptions: boolean): string =>
+  includeOptions ? '' : 'AND ISNULL(od.IsOption, 0) = 0';
+
+type OfferOptionInfo = {
+  hasOptions: boolean;
+  optionLineCount: number;
+  optionValue: number;
+  baseLineCount: number;
+  baseValue: number;
+};
+
+/**
+ * Counts the offer's priced product lines split by option flag. These are offer
+ * lines, not resolved order lines — matching has not run yet when this is asked,
+ * which is exactly why the question can be posed before any ERP writes happen.
+ */
+async function loadOfferOptionLines(ctx: OfferContext): Promise<OfferOptionInfo> {
+  const req = ctx.pool.request();
+  req.input('offerId', sql.Int, ctx.offerId);
+  const res = await req.query<{
+    optionLineCount: number | null;
+    optionValue: number | null;
+    baseLineCount: number | null;
+    baseValue: number | null;
+  }>(`
+    SELECT
+      SUM(CASE WHEN ISNULL(od.IsOption, 0) = 1 THEN 1 ELSE 0 END) AS optionLineCount,
+      SUM(CASE WHEN ISNULL(od.IsOption, 0) = 1
+               THEN CAST(od.Quantity AS DECIMAL(18,4)) * CAST(COALESCE(od.NetUnitPrice, 0) AS DECIMAL(18,4))
+               ELSE 0 END) AS optionValue,
+      SUM(CASE WHEN ISNULL(od.IsOption, 0) = 0 THEN 1 ELSE 0 END) AS baseLineCount,
+      SUM(CASE WHEN ISNULL(od.IsOption, 0) = 0
+               THEN CAST(od.Quantity AS DECIMAL(18,4)) * CAST(COALESCE(od.NetUnitPrice, 0) AS DECIMAL(18,4))
+               ELSE 0 END) AS baseValue
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON od.ProductID = p.ID
+    WHERE od.OfferID = @offerId
+      AND od.ProductID IS NOT NULL
+      AND ISNULL(od.IsService, 0) = 0
+      AND od.Quantity IS NOT NULL AND od.Quantity > 0
+  `);
+  const row = res.recordset?.[0];
+  const optionLineCount = Number(row?.optionLineCount ?? 0) || 0;
+  return {
+    hasOptions: optionLineCount > 0,
+    optionLineCount,
+    optionValue: round2(Number(row?.optionValue ?? 0) || 0),
+    baseLineCount: Number(row?.baseLineCount ?? 0) || 0,
+    baseValue: round2(Number(row?.baseValue ?? 0) || 0),
+  };
+}
+
+/**
+ * Resolves whether option lines belong on this order. Refuses to guess when the
+ * offer has options and the user was never asked: defaulting either way would
+ * silently change the order value relative to what the wizard displayed.
+ */
+function requireIncludeOptions(
+  info: OfferOptionInfo,
+  body: CreateDraftOfferRequestBody,
+): { ok: true; includeOptions: boolean } | { ok: false; error: string } {
+  if (!info.hasOptions) return { ok: true, includeOptions: false };
+  if (typeof body.includeOptions !== 'boolean') {
+    return {
+      ok: false,
+      error:
+        `This offer has ${info.optionLineCount} option line(s). Choose whether they go on the order in the Options step before continuing — reload the page if you do not see that step.`,
+    };
+  }
+  return { ok: true, includeOptions: body.includeOptions };
+}
+
+/** load + validate in one call, for the handlers that only need the answer. */
+async function resolveIncludeOptions(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<
+  | { ok: true; includeOptions: boolean; info: OfferOptionInfo }
+  | { ok: false; response: NextResponse }
+> {
+  const info = await loadOfferOptionLines(ctx);
+  const decision = requireIncludeOptions(info, body);
+  if (!decision.ok) {
+    return { ok: false, response: NextResponse.json({ ok: false, error: decision.error }, { status: 400 }) };
+  }
+  return { ok: true, includeOptions: decision.includeOptions, info };
+}
+
+/**
+ * Resolves the discount allocation for the steps that actually send data to
+ * SoftOne. Refuses to proceed when the offer has an additional discount and the
+ * user has not chosen a treatment — silently dropping it (the behaviour before
+ * this step existed) would understate the order by the discount amount.
+ */
+function requireDiscountAllocation(
+  info: OfferDiscountInfo,
+  body: CreateDraftOfferRequestBody,
+): { ok: true; allocation: DiscountAllocation | null } | { ok: false; error: string } {
+  if (!info.hasDiscount) return { ok: true, allocation: null };
+  const allocation = body.discountAllocation ?? null;
+  if (allocation !== 'lines' && allocation !== 'document') {
+    return {
+      ok: false,
+      error:
+        'This offer has an additional discount. Choose whether it goes into the product prices or onto the order as a document discount before creating the order.',
+    };
+  }
+  return { ok: true, allocation };
+}
 
 // ── End wizard step types ──────────────────────────────────────────────────────
 
@@ -409,6 +590,8 @@ IMPORTANT RULES:
 async function fetchOfferProducts(
   pool: Awaited<ReturnType<typeof getPool>>,
   offerId: number,
+  /** Option lines are left out unless the user asked for them in the Options step. */
+  includeOptions: boolean,
 ) {
   const productsRequest = pool.request();
   productsRequest.input('offerId', sql.Int, offerId);
@@ -449,6 +632,12 @@ async function fetchOfferProducts(
     WHERE od.OfferID = @offerId
       AND od.ProductID IS NOT NULL
       AND ISNULL(od.IsService, 0) = 0
+      ${optionFilterSql(includeOptions)}
+      -- Must match the order-line eligibility used by prepare-summary/execute.
+      -- Without it a Quantity=0 line still reached item creation, so Soft1 got a
+      -- brand-new MTRL for a product no order line was ever sent for. DISTINCT
+      -- keeps products that also appear on a real, positive-quantity line.
+      AND od.Quantity IS NOT NULL AND od.Quantity > 0
       AND (p.PartNumberCleared IS NOT NULL OR p.ModelNumberCleared IS NOT NULL)
   `);
   return productsResult.recordset ?? [];
@@ -563,6 +752,8 @@ async function loadCategoryNameMaps(pool: Awaited<ReturnType<typeof getPool>>) {
 async function resolveOrCreateProject(
   ctx: OfferContext,
   erpCustomerCode: string | null,
+  /** Must match the order's own line selection, or the project value won't match it. */
+  includeOptions: boolean,
 ): Promise<{ prjcId: number; prjcCode: string; isNew: boolean }> {
   let finalErpProjectId = ctx.erpProjectId;
   let finalErpProjectCode = ctx.erpProjectCode;
@@ -616,12 +807,14 @@ async function resolveOrCreateProject(
            WHERE od.OfferID = o.ID
              AND od.ProductID IS NOT NULL
              AND ISNULL(od.IsService, 0) = 0
+             ${optionFilterSql(includeOptions)}
              AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS NetTotal,
         (SELECT SUM(CAST(od.Quantity AS DECIMAL(18,4)) * CAST(od.NetCost AS DECIMAL(18,4)))
            FROM dbo.OfferDetails od
            WHERE od.OfferID = o.ID
              AND od.ProductID IS NOT NULL
              AND ISNULL(od.IsService, 0) = 0
+             ${optionFilterSql(includeOptions)}
              AND od.Quantity IS NOT NULL AND od.Quantity > 0) AS CostTotal,
         approver.NameCode AS ApprovalNameCode,
         sales.NameCode AS SalesNameCode
@@ -693,24 +886,30 @@ async function handleResolveCustomer(
   const customerSearch = body.customerSearch ?? null;
   const customerConfirmed = body.customerConfirmed ?? false;
 
+  // The wizard decides which optional steps to show from this first step's
+  // response, so every exit path carries the offer's additional-discount and
+  // option-line state (this step can take several round-trips before a customer
+  // is settled).
+  const offerDiscount = discountPayload(await loadOfferDiscount(ctx));
+  const offerOptions = await loadOfferOptionLines(ctx);
+  const respond = (payload: Record<string, unknown>) =>
+    NextResponse.json({ ok: true, step: 'resolve-customer', offerDiscount, offerOptions, ...payload });
+
   if (!erpCustomerId) {
     if (customerSelection && customerConfirmed) {
       erpCustomerId = customerSelection.TRDR;
       erpCustomerCode = customerSelection.CODE ?? null;
     } else if (customerSelection && !customerConfirmed) {
-      return NextResponse.json({
-        ok: true, step: 'resolve-customer',
-        needsConfirmation: customerSelection,
-      });
+      return respond({ needsConfirmation: customerSelection });
     } else if (customerSearch) {
       const matches = await findCustomerViaProc(erpPool, customerSearch);
 
       if (matches.length === 0) {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: `No customer found matching: ${customerSearch}` });
+        return respond({ needsSearch: true, message: `No customer found matching: ${customerSearch}` });
       } else if (matches.length === 1) {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
+        return respond({ needsConfirmation: matches[0] });
       } else {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
+        return respond({ needsSelection: matches });
       }
     } else if (ctx.customerName || ctx.customerTaxId) {
       let matches: Array<{ TRDR: number; CODE: string | null; NAME: string | null }> = [];
@@ -725,15 +924,15 @@ async function handleResolveCustomer(
 
       if (matches.length === 0) {
         const searched = ctx.customerName ?? `TaxID ${ctx.customerTaxId}`;
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: `No customer found matching: ${searched}` });
+        return respond({ needsSearch: true, message: `No customer found matching: ${searched}` });
       } else if (matches.length === 1) {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsConfirmation: matches[0] });
+        return respond({ needsConfirmation: matches[0] });
       } else {
-        return NextResponse.json({ ok: true, step: 'resolve-customer', needsSelection: matches });
+        return respond({ needsSelection: matches });
       }
     } else {
       // No customer info on the offer at all — let the user search manually.
-      return NextResponse.json({ ok: true, step: 'resolve-customer', needsSearch: true, message: 'No customer information on the offer. Search for the customer.' });
+      return respond({ needsSearch: true, message: 'No customer information on the offer. Search for the customer.' });
     }
 
     // Persist customer ERPID to FastQuote DB
@@ -768,8 +967,7 @@ async function handleResolveCustomer(
 
   logger.info('wizard resolve-customer done', { requestId, offerId, erpCustomerId, erpCustomerCode });
 
-  return NextResponse.json({
-    ok: true, step: 'resolve-customer',
+  return respond({
     resolved: { TRDR: erpCustomerId, CODE: erpCustomerCode, NAME: resolvedName },
   });
 }
@@ -779,7 +977,9 @@ async function handleCategorizeProducts(
   body: CreateDraftOfferRequestBody,
 ): Promise<NextResponse> {
   const { pool, erpPool, offerId, requestId } = ctx;
-  const products = await fetchOfferProducts(pool, offerId);
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
+  const products = await fetchOfferProducts(pool, offerId, options.includeOptions);
 
   if (products.length === 0) {
     return NextResponse.json({ ok: true, step: 'categorize-products', products: [] });
@@ -1071,9 +1271,12 @@ const BRAND_MATCH_THRESHOLD = 0.7;
 
 async function handleCheckBrands(
   ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
 ): Promise<NextResponse> {
   const { pool, erpPool, offerId, requestId } = ctx;
-  const products = await fetchOfferProducts(pool, offerId);
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
+  const products = await fetchOfferProducts(pool, offerId, options.includeOptions);
 
   const uniqueBrandNames = [...new Set(
     products.filter(p => p.BrandName && p.BrandID).map(p => p.BrandName!.trim()),
@@ -1235,7 +1438,9 @@ async function handleMatchProducts(
   body: CreateDraftOfferRequestBody,
 ): Promise<NextResponse> {
   const { pool, erpPool, offerId, requestId } = ctx;
-  const products = await fetchOfferProducts(pool, offerId);
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
+  const products = await fetchOfferProducts(pool, offerId, options.includeOptions);
   const userSelections = body.selections ?? [];
   const selectionMap = new Map(userSelections.map(s => [s.productId, { MTRL: s.MTRL, CODE: s.CODE }]));
 
@@ -1459,7 +1664,9 @@ async function handleManualSearchProduct(
       }
       if (descUpper.length >= 2) {
         req.input('lkDesc', sql.NVarChar(400), `%${descUpper}%`);
-        inputClauses.push(`UPPER(ISNULL(mt.NAME1, '')) LIKE @lkDesc`);
+        // Accent-insensitive: ERP item names are Greek and often accented, and
+        // the ERP collation is accent-sensitive like FastQuote's.
+        inputClauses.push(`${collateSearch(`UPPER(ISNULL(mt.NAME1, ''))`)} LIKE @lkDesc`);
       }
 
       req.input('topNlike', sql.Int, 200);
@@ -1493,12 +1700,10 @@ async function handleManualSearchProduct(
       matches = matches.map(m => ({ ...m, BRANDNAME: brandMap.get(m.MTRL) ?? null }));
     }
 
-    // Apply brand filter (case-insensitive substring match on the enriched brand)
+    // Apply brand filter (case- and accent-insensitive substring match on the
+    // enriched brand — ERP brand names are often written in accented Greek)
     if (rawBrand && matches.length > 0) {
-      const brandUpper = rawBrand.toUpperCase();
-      matches = matches.filter(m =>
-        (m.BRANDNAME ?? '').toUpperCase().includes(brandUpper),
-      );
+      matches = matches.filter(m => searchIncludes(m.BRANDNAME, rawBrand));
     }
 
     logger.info('wizard manual-search-product done', {
@@ -1582,6 +1787,8 @@ async function handleCompareProducts(
 ): Promise<NextResponse> {
   const { pool, erpPool, offerId, requestId } = ctx;
   const matchResults = body.matchResults;
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
 
   // Which products will become order lines, and which MTRL each matched product
   // maps to. autoMatched + userSelected carry a real MTRL; userConfirmedCreate
@@ -1628,6 +1835,7 @@ async function handleCompareProducts(
     LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
     WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL
       AND ISNULL(od.IsService, 0) = 0
+      ${optionFilterSql(options.includeOptions)}
   `);
 
   const eligibleLines = (linesRes.recordset ?? [])
@@ -1704,6 +1912,217 @@ async function handleCompareProducts(
   return NextResponse.json({ ok: true, step: 'compare-products', rows });
 }
 
+/**
+ * Asks whether the offer's option lines belong on the order. Deliberately the
+ * second step, before Brands/Products: excluded options must not have ERP items
+ * or manufacturers created for them, and that work starts at the Brands step.
+ */
+async function handleIncludeOptions(ctx: OfferContext): Promise<NextResponse> {
+  const { offerId, requestId } = ctx;
+  const info = await loadOfferOptionLines(ctx);
+
+  logger.info('wizard include-options done', {
+    requestId,
+    offerId,
+    hasOptions: info.hasOptions,
+    optionLineCount: info.optionLineCount,
+    optionValue: info.optionValue,
+    baseLineCount: info.baseLineCount,
+    baseValue: info.baseValue,
+  });
+
+  return NextResponse.json({ ok: true, step: 'include-options', offerOptions: info });
+}
+
+// ── Document-discount read-back ────────────────────────────────────────────────
+// FINDOC's amount columns differ between Soft1 installations and the docs only
+// name the WS fields, not the table columns — so instead of guessing one, ask
+// INFORMATION_SCHEMA which of the plausible candidates this install actually has
+// and read those. Column names therefore come from the database itself, never
+// from input. The log line doubles as schema documentation for the next person.
+const FINDOC_AMOUNT_COLUMN_CANDIDATES = [
+  'SUMAMNT', 'DISCVAL', 'DISCAMNT', 'DISCOUNT', 'NETAMNT', 'PAYAMNT', 'VATAMNT', 'EXPAMNT',
+];
+
+/** Columns whose value should reflect a document-level discount. */
+const FINDOC_DISCOUNT_COLUMNS = ['DISCVAL', 'DISCAMNT', 'DISCOUNT'];
+
+/** Cent-level tolerance — we compare against a value we rounded before sending. */
+const DISCOUNT_MATCH_TOLERANCE = 0.011;
+
+async function verifyDocumentDiscount(
+  ctx: OfferContext,
+  findocId: number,
+  expectedDiscount: number,
+  requestId: string,
+): Promise<DraftOrderDiscountVerification> {
+  const unchecked: DraftOrderDiscountVerification = {
+    checked: false, landed: null, foundValue: null, headerAmounts: {},
+  };
+
+  try {
+    const colsReq = ctx.erpPool.request();
+    const params = FINDOC_AMOUNT_COLUMN_CANDIDATES.map((name, i) => {
+      const p = `c${i}`;
+      colsReq.input(p, sql.NVarChar(128), name);
+      return `@${p}`;
+    });
+    const colsRes = await colsReq.query<{ COLUMN_NAME: string }>(`
+      SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'FINDOC'
+        AND COLUMN_NAME IN (${params.join(',')})
+    `);
+    // Belt-and-braces: these already came from the catalogue, but keep the
+    // interpolation provably identifier-only.
+    const columns = (colsRes.recordset ?? [])
+      .map(r => r.COLUMN_NAME)
+      .filter(name => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+
+    if (columns.length === 0) {
+      logger.error('wizard execute: cannot verify document discount, no known FINDOC amount columns', {
+        requestId, findocId: String(findocId),
+      });
+      return unchecked;
+    }
+
+    const rowReq = ctx.erpPool.request();
+    rowReq.input('findoc', sql.Int, findocId);
+    const rowRes = await rowReq.query<Record<string, number | null>>(`
+      SELECT ${columns.map(c => `[${c}]`).join(', ')}
+      FROM dbo.FINDOC
+      WHERE FINDOC = @findoc
+    `);
+    const row = rowRes.recordset?.[0];
+    if (!row) {
+      logger.error('wizard execute: cannot verify document discount, FINDOC row not found', {
+        requestId, findocId: String(findocId),
+      });
+      return unchecked;
+    }
+
+    const headerAmounts: Record<string, number | null> = {};
+    for (const c of columns) {
+      const raw = row[c];
+      headerAmounts[c] = raw == null || !Number.isFinite(Number(raw)) ? null : round2(Number(raw));
+    }
+
+    // Only the discount columns can confirm the discount. If this install has
+    // none of them we cannot tell either way — say so instead of guessing.
+    const discountColumns = columns.filter(c => FINDOC_DISCOUNT_COLUMNS.includes(c));
+    if (discountColumns.length === 0) {
+      logger.warn('wizard execute: document discount unverifiable, FINDOC has no discount column', {
+        requestId, findocId: String(findocId), expectedDiscount, headerAmounts,
+      });
+      return { checked: true, landed: null, foundValue: null, headerAmounts };
+    }
+
+    const match = discountColumns
+      .map(c => headerAmounts[c])
+      .find(v => v != null && Math.abs(v - expectedDiscount) <= DISCOUNT_MATCH_TOLERANCE);
+    const landed = match != null;
+    const foundValue = landed
+      ? match
+      : (discountColumns.map(c => headerAmounts[c]).find(v => v != null && v !== 0) ?? 0);
+
+    if (landed) {
+      logger.info('wizard execute: document discount verified on the created document', {
+        requestId, findocId: String(findocId), expectedDiscount, foundValue, headerAmounts,
+      });
+    } else {
+      logger.error('wizard execute: DOCUMENT DISCOUNT DID NOT LAND — SoftOne ignored discval', {
+        requestId, findocId: String(findocId), expectedDiscount, foundValue, headerAmounts,
+      });
+    }
+    return { checked: true, landed, foundValue, headerAmounts };
+  } catch (err) {
+    logger.error(
+      'wizard execute: document discount verification failed',
+      { requestId, findocId: String(findocId) },
+      err instanceof Error ? err : undefined,
+    );
+    return unchecked;
+  }
+}
+
+/** productIds the wizard resolved to a Soft1 item (matched, picked, or to-create). */
+function resolvedProductIdSet(matchResults: MatchResultsState | undefined): Set<number> {
+  const ids = new Set<number>();
+  if (!matchResults) return ids;
+  for (const m of matchResults.autoMatched) ids.add(m.productId);
+  for (const m of matchResults.userConfirmedCreate) ids.add(m.productId);
+  for (const m of matchResults.userSelected) ids.add(m.productId);
+  return ids;
+}
+
+/**
+ * Asks the user how the offer's additional discount should reach Soft1. Returns
+ * the discount state plus a costed preview of both options against the lines this
+ * pre-order will actually carry, so the choice is made against real numbers.
+ */
+async function handleDiscountAllocation(
+  ctx: OfferContext,
+  body: CreateDraftOfferRequestBody,
+): Promise<NextResponse> {
+  const { pool, offerId, requestId } = ctx;
+  const info = await loadOfferDiscount(ctx);
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
+
+  const linesReq = pool.request();
+  linesReq.input('offerId', sql.Int, offerId);
+  const linesRes = await linesReq.query<{
+    ProductID: number | null;
+    Quantity: number | null;
+    NetUnitPrice: number | null;
+  }>(`
+    SELECT od.ProductID, od.Quantity, od.NetUnitPrice
+    FROM dbo.OfferDetails od
+    INNER JOIN dbo.Products p ON od.ProductID = p.ID
+    WHERE od.OfferID = @offerId
+      AND od.ProductID IS NOT NULL
+      AND ISNULL(od.IsService, 0) = 0
+      ${optionFilterSql(options.includeOptions)}
+  `);
+
+  const resolvedIds = resolvedProductIdSet(body.matchResults);
+  const lines = (linesRes.recordset ?? [])
+    .filter(l => l.ProductID != null && resolvedIds.has(l.ProductID) && l.Quantity != null && l.Quantity > 0)
+    .map(l => ({ qty: Number(l.Quantity), price: Number(l.NetUnitPrice ?? 0) }));
+
+  const intoLines = planDiscount(info, 'lines', lines);
+  const intoDocument = planDiscount(info, 'document', lines);
+
+  logger.info('wizard discount-allocation done', {
+    requestId,
+    offerId,
+    hasDiscount: info.hasDiscount,
+    mode: info.mode,
+    value: info.value,
+    fractionPct: round2(info.fraction * 100),
+    lineCount: lines.length,
+    subtotal: intoDocument.subtotalBeforeDiscount,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    step: 'discount-allocation',
+    offerDiscount: discountPayload(info),
+    lineCount: lines.length,
+    subtotalBeforeDiscount: intoDocument.subtotalBeforeDiscount,
+    options: {
+      lines: {
+        discountAmount: intoLines.discountAmount,
+        subtotalAfterDiscount: intoLines.subtotalAfterDiscount,
+      },
+      document: {
+        discountAmount: intoDocument.discountAmount,
+        subtotalAfterDiscount: intoDocument.subtotalAfterDiscount,
+      },
+    },
+  });
+}
+
 async function handlePrepareSummary(
   ctx: OfferContext,
   body: CreateDraftOfferRequestBody,
@@ -1716,6 +2135,14 @@ async function handlePrepareSummary(
   if (!resolvedCustomer) {
     return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
   }
+
+  const discountInfo = await loadOfferDiscount(ctx);
+  const discountChoice = requireDiscountAllocation(discountInfo, body);
+  if (!discountChoice.ok) {
+    return NextResponse.json({ ok: false, error: discountChoice.error }, { status: 400 });
+  }
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
 
   // Determine project status
   let projectStatus: 'existing' | 'will-create' = 'will-create';
@@ -1784,6 +2211,7 @@ async function handlePrepareSummary(
     WHERE od.OfferID = @offerId
       AND od.ProductID IS NOT NULL
       AND ISNULL(od.IsService, 0) = 0
+      ${optionFilterSql(options.includeOptions)}
   `);
 
   // Per-line Σχόλια authored in the Compare step (MTRLINES.COMMENTS). When the
@@ -1798,12 +2226,7 @@ async function handlePrepareSummary(
   const allLines = (linesRes.recordset ?? []).sort((a, b) => (a.TreeOrdering ?? 0) - (b.TreeOrdering ?? 0));
 
   // Build order lines from all products (matched, to-create, user-selected)
-  const resolvedProductIds = new Set<number>();
-  if (matchResults) {
-    for (const m of matchResults.autoMatched) resolvedProductIds.add(m.productId);
-    for (const m of matchResults.userConfirmedCreate) resolvedProductIds.add(m.productId);
-    for (const m of matchResults.userSelected) resolvedProductIds.add(m.productId);
-  }
+  const resolvedProductIds = resolvedProductIdSet(matchResults);
 
   const eligibleLines = allLines.filter(
     line => line.ProductID != null && resolvedProductIds.has(line.ProductID!) && line.Quantity != null && line.Quantity > 0,
@@ -1835,22 +2258,48 @@ async function handlePrepareSummary(
     return (prefix + (desc ?? '')).slice(0, SOFT1_NAME_LIMIT) || 'Unknown';
   };
 
-  const orderLines = eligibleLines.map(line => ({
-    productId: line.ProductID,
-    productCode: line.ERPCode ?? '(new)',
-    productName: (line.ERPID != null && erpNamesByMtrl.get(line.ERPID))
-      || buildSoft1Name(line.ModelNumber, line.ProductDescription),
-    qty: Number(line.Quantity),
-    price: Number(line.NetUnitPrice),
-    lineTotal: Number(line.Quantity!) * Number(line.NetUnitPrice!),
-    position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
-    warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
-    comment: resolveLineComment(line.LineID, line.Comment),
-  }));
+  // The additional discount is baked into the unit prices only when the user
+  // chose that allocation — otherwise prices stay as quoted and the discount
+  // rides on the document header.
+  const bakeIntoPrices = discountChoice.allocation === 'lines';
+  const unitPrice = (raw: number): number =>
+    bakeIntoPrices ? discountedUnitPrice(raw, discountInfo.fraction) : raw;
 
-  const totalValue = orderLines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const orderLines = eligibleLines.map(line => {
+    const price = unitPrice(Number(line.NetUnitPrice));
+    return {
+      productId: line.ProductID,
+      productCode: line.ERPCode ?? '(new)',
+      productName: (line.ERPID != null && erpNamesByMtrl.get(line.ERPID))
+        || buildSoft1Name(line.ModelNumber, line.ProductDescription),
+      qty: Number(line.Quantity),
+      listPrice: Number(line.NetUnitPrice),
+      price,
+      // Rounded like the `lineval` setDocs will receive, so the summary totals
+      // match the document to the cent.
+      lineTotal: round2(Number(line.Quantity!) * price),
+      position: line.TreeOrdering != null ? Number(line.TreeOrdering) : null,
+      warrantyYears: line.Warranty != null ? Number(line.Warranty) : null,
+      comment: resolveLineComment(line.LineID, line.Comment),
+    };
+  });
 
-  logger.info('wizard prepare-summary done', { requestId, offerId, lineCount: orderLines.length, totalValue });
+  const totalValue = round2(orderLines.reduce((sum, l) => sum + l.lineTotal, 0));
+  const discountPlan = planDiscount(
+    discountInfo,
+    discountChoice.allocation,
+    orderLines.map(l => ({ qty: l.qty, price: l.listPrice })),
+  );
+
+  logger.info('wizard prepare-summary done', {
+    requestId,
+    offerId,
+    lineCount: orderLines.length,
+    totalValue,
+    discountAllocation: discountChoice.allocation,
+    discountAmount: discountPlan.discountAmount,
+    includeOptions: options.includeOptions,
+  });
 
   return NextResponse.json({
     ok: true, step: 'prepare-summary',
@@ -1858,6 +2307,15 @@ async function handlePrepareSummary(
     project: { status: projectStatus, code: projectCode, id: ctx.erpProjectId },
     orderLines,
     totals: { lineCount: orderLines.length, totalValue },
+    discount: {
+      ...discountPayload(discountInfo),
+      allocation: discountChoice.allocation,
+      subtotalBeforeDiscount: discountPlan.subtotalBeforeDiscount,
+      discountAmount: discountPlan.discountAmount,
+      subtotalAfterDiscount: discountPlan.subtotalAfterDiscount,
+      documentDiscount: discountPlan.documentDiscount,
+    },
+    options: { ...options.info, includeOptions: options.includeOptions },
     actions: {
       brandsToCreate: missingBrands.length,
       productsToCreate: matchResults?.userConfirmedCreate?.length ?? 0,
@@ -1894,6 +2352,16 @@ async function handleExecute(
     return NextResponse.json({ ok: false, error: 'Missing resolved customer' }, { status: 400 });
   }
 
+  // Resolve the discount treatment before anything is written to the ERP — an
+  // unanswered discount would otherwise be dropped from the order value.
+  const discountInfo = await loadOfferDiscount(ctx);
+  const discountChoice = requireDiscountAllocation(discountInfo, body);
+  if (!discountChoice.ok) {
+    return NextResponse.json({ ok: false, error: discountChoice.error }, { status: 400 });
+  }
+  const options = await resolveIncludeOptions(ctx, body);
+  if (!options.ok) return options.response;
+
   const erpCustomerId = resolvedCustomer.TRDR;
   const erpCustomerCode = resolvedCustomer.CODE;
   const results: {
@@ -1902,6 +2370,10 @@ async function handleExecute(
     productsLinked: Array<{ productId: number; mtrl: number; code: string }>;
     project: { id: number; code: string; isNew: boolean } | null;
     order: { findocId: number; finCode: string } | null;
+    // How the offer's additional discount reached Soft1. Null when the offer has none.
+    discount: DraftOrderDiscountSummary | null;
+    // Whether the offer's option lines were ordered. Null when the offer has none.
+    options: DraftOrderOptionsSummary | null;
     orderLines: Array<{
       position: number | null;
       code: string;
@@ -1916,8 +2388,9 @@ async function handleExecute(
       warrantyMonths: number | null;
       comment: string | null;
     }>;
-    // Lines we sent to setDocs that did NOT land in the created Soft1 document
-    // (SoftOne silently drops e.g. codes containing '&'). Same shape as orderLines.
+    // Lines we sent to setDocs that did NOT land in the created Soft1 document.
+    // Kept as a safety net: SoftOne can discard a line server-side and still
+    // report success, so the document is always reconciled. Same shape as orderLines.
     droppedLines: Array<{
       position: number | null;
       code: string;
@@ -1938,6 +2411,10 @@ async function handleExecute(
     productsLinked: [],
     project: null,
     order: null,
+    discount: null,
+    options: options.info.hasOptions
+      ? { ...options.info, includeOptions: options.includeOptions }
+      : null,
     orderLines: [],
     droppedLines: [],
   };
@@ -1972,7 +2449,7 @@ async function handleExecute(
   }
 
   // 2. Create new products + link matched/selected products
-  const products = await fetchOfferProducts(pool, offerId);
+  const products = await fetchOfferProducts(pool, offerId, options.includeOptions);
   const productMap = new Map(products.map(p => [p.ProductID, p]));
 
   if (matchResults) {
@@ -2060,7 +2537,7 @@ async function handleExecute(
 
   // 3. Create/validate project
   const projectCtx: OfferContext = { ...ctx, erpCustomerId };
-  const project = await resolveOrCreateProject(projectCtx, erpCustomerCode);
+  const project = await resolveOrCreateProject(projectCtx, erpCustomerCode, options.includeOptions);
   results.project = { id: project.prjcId, code: project.prjcCode, isNew: project.isNew };
   logger.info('wizard execute project', { requestId, offerId, prjcId: project.prjcId, prjcCode: project.prjcCode, isNew: project.isNew });
 
@@ -2100,6 +2577,7 @@ async function handleExecute(
       LEFT JOIN dbo.Brands b ON p.BrandID = b.ID
       WHERE od.OfferID = @offerId AND od.ProductID IS NOT NULL AND p.ERPID IS NOT NULL
         AND ISNULL(od.IsService, 0) = 0
+        ${optionFilterSql(options.includeOptions)}
     `);
 
     // Per-line Σχόλια authored in the Compare step → MTRLINES.COMMENTS. The
@@ -2115,11 +2593,23 @@ async function handleExecute(
     const eligibleLines = lines.filter(
       l => l.ERPID != null && l.ERPCode != null && l.Quantity != null && l.Quantity > 0,
     );
+
+    // Apply the offer-level additional discount exactly as the user chose in the
+    // Discount step: into the unit prices, or onto the document header below.
+    const bakeIntoPrices = discountChoice.allocation === 'lines';
+    const unitPrice = (raw: number): number =>
+      bakeIntoPrices ? discountedUnitPrice(raw, discountInfo.fraction) : raw;
+    const discountPlan = planDiscount(
+      discountInfo,
+      discountChoice.allocation,
+      eligibleLines.map(l => ({ qty: Number(l.Quantity), price: Number(l.NetUnitPrice ?? 0) })),
+    );
+
     const orderLines: OrderLineForCreation[] = eligibleLines.map(l => ({
       erpId: l.ERPID!,
       erpCode: l.ERPCode!,
       qty: Number(l.Quantity),
-      price: Number(l.NetUnitPrice),
+      price: unitPrice(Number(l.NetUnitPrice)),
       netCost: l.NetCost != null ? Number(l.NetCost) : null,
       warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
       position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
@@ -2145,20 +2635,47 @@ async function handleExecute(
       }
     }
 
-    results.orderLines = eligibleLines.map(l => ({
-      position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
-      code: l.ERPCode!,
-      brandName: l.BrandName,
-      partNumber: l.PartNumber,
-      description: erpNamesByMtrl.get(l.ERPID!) ?? l.Description,
-      qty: Number(l.Quantity),
-      price: Number(l.NetUnitPrice),
-      lineval: Number(l.Quantity) * Number(l.NetUnitPrice),
-      cost: l.NetCost != null ? Number(l.NetCost) : null,
-      costTotal: l.NetCost != null ? Number(l.NetCost) * Number(l.Quantity) : null,
-      warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
-      comment: resolveLineComment(l.LineID, l.Comment),
-    }));
+    // Report the prices we actually send, so the summary/email match the ERP.
+    results.orderLines = eligibleLines.map(l => {
+      const price = unitPrice(Number(l.NetUnitPrice));
+      return {
+        position: l.TreeOrdering != null ? Number(l.TreeOrdering) : null,
+        code: l.ERPCode!,
+        brandName: l.BrandName,
+        partNumber: l.PartNumber,
+        description: erpNamesByMtrl.get(l.ERPID!) ?? l.Description,
+        qty: Number(l.Quantity),
+        price,
+        lineval: round2(Number(l.Quantity) * price),
+        cost: l.NetCost != null ? Number(l.NetCost) : null,
+        costTotal: l.NetCost != null ? Number(l.NetCost) * Number(l.Quantity) : null,
+        warrantyMonths: l.Warranty != null ? Number(l.Warranty) * 12 : null,
+        comment: resolveLineComment(l.LineID, l.Comment),
+      };
+    });
+
+    if (discountInfo.hasDiscount) {
+      results.discount = {
+        ...discountPayload(discountInfo),
+        allocation: discountChoice.allocation,
+        subtotalBeforeDiscount: discountPlan.subtotalBeforeDiscount,
+        discountAmount: discountPlan.discountAmount,
+        subtotalAfterDiscount: discountPlan.subtotalAfterDiscount,
+        documentDiscount: discountPlan.documentDiscount,
+      };
+      logger.info('wizard execute applying offer additional discount', {
+        requestId,
+        offerId,
+        allocation: discountChoice.allocation,
+        mode: discountInfo.mode,
+        value: discountInfo.value,
+        fractionPct: round2(discountInfo.fraction * 100),
+        subtotalBeforeDiscount: discountPlan.subtotalBeforeDiscount,
+        discountAmount: discountPlan.discountAmount,
+        subtotalAfterDiscount: discountPlan.subtotalAfterDiscount,
+        documentDiscount: discountPlan.documentDiscount,
+      });
+    }
 
     const orderInfo = await createOrderWithLines({
       offerId,
@@ -2172,6 +2689,7 @@ async function handleExecute(
       integrationKey: 'FASTQUOTE_CREATE_FINDOC',
       series: 8999, // WS series code — ΠΡΟΠΑΡΑΓΓΕΛΙΑ ΠΕΛΑΤΗ (customer pre-order), per Telmaco WS §4.1.4
       createdByUser: 1011,
+      documentDiscount: discountPlan.documentDiscount,
       lines: orderLines,
     });
 
@@ -2219,6 +2737,28 @@ async function handleExecute(
       }
     } catch (reconErr) {
       logger.error('wizard execute: order line reconciliation failed', { requestId, offerId }, reconErr instanceof Error ? reconErr : undefined);
+    }
+
+    // 6. Verify the document discount actually landed. SoftOne confirmed `discval`
+    // works (and needs no `sumamnt`), so this is a regression guard rather than an
+    // open question — but the failure mode is bad enough to keep checking: if the
+    // field were ever ignored the order would quietly go out at full value, the
+    // very thing the Discount step exists to prevent. Read-only, never blocks, and
+    // reports doubt as doubt rather than claiming success.
+    if (discountPlan.documentDiscount != null && discountPlan.documentDiscount > 0) {
+      results.discount = {
+        ...(results.discount ?? {
+          ...discountPayload(discountInfo),
+          allocation: discountChoice.allocation,
+          subtotalBeforeDiscount: discountPlan.subtotalBeforeDiscount,
+          discountAmount: discountPlan.discountAmount,
+          subtotalAfterDiscount: discountPlan.subtotalAfterDiscount,
+          documentDiscount: discountPlan.documentDiscount,
+        }),
+        verification: await verifyDocumentDiscount(
+          ctx, orderInfo.findocId, discountPlan.documentDiscount, requestId,
+        ),
+      };
     }
   }
 
@@ -2318,6 +2858,8 @@ export async function POST(
       ContactFirstName: string | null;
       ContactLastName: string | null;
       CustomerRef: string | null;
+      ExtraNetDiscount: number | null;
+      ExtraNetDiscountMode: string | null;
     }>(`
       SELECT
         o.Description,
@@ -2331,7 +2873,9 @@ export async function POST(
         o.OrderSignedDate,
         ct.FirstName AS ContactFirstName,
         ct.LastName AS ContactLastName,
-        o.CustomerRef
+        o.CustomerRef,
+        o.ExtraNetDiscount,
+        o.ExtraNetDiscountMode
       FROM dbo.Offer o
       INNER JOIN dbo.Customers c ON o.CustomerID = c.ID
       LEFT JOIN dbo.SalesDivision sd ON o.SalesDivisionID = sd.ID
@@ -2355,6 +2899,13 @@ export async function POST(
       return joined || null;
     })();
     const customerRef = offerRow?.CustomerRef?.trim() || null;
+    // Offer-level additional discount. Mode mirrors the PDF/project-form reading:
+    // anything other than the literal 'abs' is a percentage.
+    const extraNetDiscount = offerRow?.ExtraNetDiscount == null
+      ? null
+      : (Number.isFinite(Number(offerRow.ExtraNetDiscount)) ? Number(offerRow.ExtraNetDiscount) : null);
+    const extraNetDiscountMode: 'pct' | 'abs' =
+      offerRow?.ExtraNetDiscountMode === 'abs' ? 'abs' : 'pct';
     const orderSignedDateRaw = offerRow?.OrderSignedDate ?? null;
     const orderSignedDate = (() => {
       if (!orderSignedDateRaw) return null;
@@ -2399,6 +2950,8 @@ export async function POST(
         erpProjectCode,
         orderSignedDate,
         userId: auth.userId,
+        extraNetDiscount,
+        extraNetDiscountMode,
       };
 
       switch (body.step as WizardStep) {
@@ -2408,8 +2961,10 @@ export async function POST(
           return await handleCategorizeProducts(ctx, body);
         case 'update-product-category':
           return await handleUpdateProductCategory(ctx, body);
+        case 'include-options':
+          return await handleIncludeOptions(ctx);
         case 'check-brands':
-          return await handleCheckBrands(ctx);
+          return await handleCheckBrands(ctx, body);
         case 'match-products':
           return await handleMatchProducts(ctx, body);
         case 'manual-search-product':
@@ -2418,6 +2973,8 @@ export async function POST(
           return await handleListBrands(ctx);
         case 'compare-products':
           return await handleCompareProducts(ctx, body);
+        case 'discount-allocation':
+          return await handleDiscountAllocation(ctx, body);
         case 'prepare-summary':
           return await handlePrepareSummary(ctx, body);
         case 'execute':

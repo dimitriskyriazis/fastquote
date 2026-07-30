@@ -24,6 +24,9 @@ import { logger } from './logger';
  *   items[].cost        = net unit cost (when available)
  *   items[].warranty    = warranty in months (when available)
  *   items[].position    = our itemno (OfferDetails.TreeOrdering)
+ *   discval     = document-level discount in EUR, sent only when the offer's
+ *                 additional discount is allocated to the document instead of
+ *                 being baked into the line prices (WS V11, 29/07/2026)
  */
 export async function createOrderViaWebService(
   params: CreateOrderWithLinesParams,
@@ -52,10 +55,21 @@ export async function createOrderViaWebService(
     return item;
   });
 
+  // Only send discval when there is a real document discount — an explicit "0"
+  // is a value SoftOne would still process, and we never want to touch the field
+  // on the (normal) no-discount path.
+  const documentDiscount =
+    params.documentDiscount != null &&
+    Number.isFinite(params.documentDiscount) &&
+    params.documentDiscount > 0
+      ? params.documentDiscount
+      : null;
+
   logger.info('SoftOne WS: calling setDocs', {
     offerId: String(params.offerId),
     custcode: params.customerCode,
     lineCount: String(items.length),
+    documentDiscount: documentDiscount != null ? String(documentDiscount) : null,
   });
 
   const result = await client.setDocs({
@@ -68,6 +82,7 @@ export async function createOrderViaWebService(
     status: '10',
     comments: params.description,
     comments1: `FastQuote Offer #${params.offerId}`,
+    ...(documentDiscount != null ? { discval: toErpDecimal(documentDiscount) } : {}),
     items,
   });
 

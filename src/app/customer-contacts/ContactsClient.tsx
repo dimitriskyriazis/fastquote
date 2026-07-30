@@ -18,6 +18,7 @@ import lookupStyles from "../components/LookupModal.module.css";
 import lookupButtonStyles from "../components/LookupAddButton.module.css";
 import LookupModal from "../components/LookupModal";
 import { showToastMessage } from "../../lib/toast";
+import { searchIncludes } from "../../lib/textSearch";
 import { useUndoStack } from "../hooks/useUndoStack";
 import { pushCellEditUndo, makePatternAUndoFn } from "../../lib/undoHelpers";
 import PageHeader from "../components/PageHeader";
@@ -329,13 +330,11 @@ export default function ContactsClient({
   }, [cancelChangeCustomerListClose]);
 
   const filteredChangeCustomerOptions = useMemo(() => {
-    const query = changeCustomerText.trim().toLowerCase();
+    const query = changeCustomerText.trim();
     if (!query) return customerOptions;
-    return customerOptions.filter((option) => {
-      const label = option.label.toLowerCase();
-      const value = option.value.toLowerCase();
-      return label.includes(query) || value.includes(query);
-    });
+    return customerOptions.filter(
+      (option) => searchIncludes(option.label, query) || searchIncludes(option.value, query),
+    );
   }, [customerOptions, changeCustomerText]);
 
   useEffect(() => () => cancelChangeCustomerListClose(), [cancelChangeCustomerListClose]);
@@ -484,13 +483,11 @@ export default function ContactsClient({
   );
 
   const filteredCustomerOptions = useMemo(() => {
-    const query = customerText.trim().toLowerCase();
+    const query = customerText.trim();
     if (!query) return customerOptions;
-    return customerOptions.filter((option) => {
-      const label = option.label.toLowerCase();
-      const value = option.value.toLowerCase();
-      return label.includes(query) || value.includes(query);
-    });
+    return customerOptions.filter(
+      (option) => searchIncludes(option.label, query) || searchIncludes(option.value, query),
+    );
   }, [customerOptions, customerText]);
 
   useEffect(() => () => cancelCustomerListClose(), [cancelCustomerListClose]);

@@ -13,6 +13,7 @@ import { showToastMessage } from '../../../lib/toast';
 import { useDuplicateCheck } from '../../lib/useDuplicateCheck';
 import DuplicateWarning from '../../components/DuplicateWarning';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
+import { searchIncludes } from '../../../lib/textSearch';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useAuditUser } from '../../components/AuditUserProvider';
 
@@ -530,13 +531,11 @@ export default function CustomerCreateClient({
   }, [showCountryList, countryOptions, values.country]);
 
   const filteredParentCustomers = useMemo(() => {
-    const search = parentCustomerText.trim().toLowerCase();
+    const search = parentCustomerText.trim();
     if (!search) return localParentCustomers;
-    return localParentCustomers.filter((option) => {
-      const label = option.label?.toLowerCase() ?? '';
-      const value = option.value?.toLowerCase() ?? '';
-      return label.includes(search) || value.includes(search);
-    });
+    return localParentCustomers.filter(
+      (option) => searchIncludes(option.label, search) || searchIncludes(option.value, search),
+    );
   }, [localParentCustomers, parentCustomerText]);
 
   const filteredCountries = useMemo(() => {

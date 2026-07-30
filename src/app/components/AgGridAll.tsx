@@ -114,6 +114,7 @@ import {
   exportSelectedRowsAsExcel,
   exportSelectedCellsAsExcel,
 } from '../../lib/gridExport';
+import type { ExportValueResolverFactory } from '../../lib/gridExport';
 import styles from './AgGridAll.module.css';
 import { PageHeaderContext } from './PageHeader';
 import { ACTION_MENU_PANEL_ATTRIBUTE, ACTION_MENU_TRIGGER_ATTRIBUTE } from './actionMenuMarkers';
@@ -690,6 +691,14 @@ type Props = {
    *  (deletes the entry on use), so repeated getRows for the same block
    *  fall through to the network on subsequent calls. */
   prefetchedBlocks?: Map<number, GridResponse> | null;
+  /** Override the value the CSV/Excel exports write for a given column. Exports
+   *  read row data directly (they run on server-fetched rows, not grid nodes), so
+   *  a column whose on-screen value comes from a cell renderer needs this hook to
+   *  export what the user actually sees — e.g. the offer-products "Item No".
+   *  Called once per export with the rows being written; see
+   *  ExportValueResolverFactory. Uses a ref internally, so the callback identity
+   *  does not need to be stable. */
+  getExportValueResolver?: ExportValueResolverFactory;
 };
 
 type RowData = Record<string, unknown>;
@@ -1639,6 +1648,7 @@ export default function AgGridAll({
   syncStateToUrl = true,
   prefetchedFirstPage = null,
   prefetchedBlocks = null,
+  getExportValueResolver,
 }: Props) {
   // Initialize editor focus management hooks
   useMutationCaret();
@@ -3463,6 +3473,9 @@ const requestPayloadRef = useRef(requestPayload);
 requestPayloadRef.current = requestPayload;
 const filterServerRowRef = useRef(filterServerRow);
 filterServerRowRef.current = filterServerRow;
+// Read through a ref so the context-menu closures always see the latest resolver.
+const getExportValueResolverRef = useRef(getExportValueResolver);
+getExportValueResolverRef.current = getExportValueResolver;
 const requestCacheRef = useRef(new Map<string, Promise<GridResponse>>());
 // Consume prefetchedFirstPage exactly once per distinct prop reference.  The
 // parent re-supplies a fresh GridResponse each time a new first block is
@@ -4014,9 +4027,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
               console.log('[Excel Export] Export mode:', mode);
 
               try {
+                const exportValueResolver = getExportValueResolverRef.current;
                 if (mode === 'selected-cells') {
                   console.log('[Excel Export] Exporting selected cells');
-                  await exportSelectedCellsAsExcel(api);
+                  await exportSelectedCellsAsExcel(api, undefined, exportValueResolver);
                 } else if (mode === 'selected-rows') {
                   if (hasServerSideSelectAll(api)) {
                     console.log('[Excel Export] SSRM selectAll active — fetching all filtered rows');
@@ -4025,11 +4039,11 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                       : undefined;
                     const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
                     const excludeIds = getServerSideDeselectedRowIds(api);
-                    await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter, excludeIds);
+                    await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter, excludeIds, exportValueResolver);
                     console.log('[Excel Export] Export completed');
                   } else {
                     console.log('[Excel Export] Exporting selected rows');
-                    await exportSelectedRowsAsExcel(api);
+                    await exportSelectedRowsAsExcel(api, undefined, exportValueResolver);
                   }
                 } else {
                   console.log('[Excel Export] Exporting all filtered rows');
@@ -4039,7 +4053,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                     : undefined;
                   const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
                   console.log('[Excel Export] Payload:', payload, 'QuickFilter:', quickFilter);
-                  await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter);
+                  await exportAllFilteredRowsAsExcel(api, endpoint, 'export.xlsx', payload, quickFilter, undefined, exportValueResolver);
                   console.log('[Excel Export] Export completed');
                 }
               } catch (err) {
@@ -4058,9 +4072,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
               console.log('[CSV Export] Export mode:', mode);
 
               try {
+                const exportValueResolver = getExportValueResolverRef.current;
                 if (mode === 'selected-cells') {
                   console.log('[CSV Export] Exporting selected cells');
-                  exportSelectedCellsAsCsv(api);
+                  exportSelectedCellsAsCsv(api, undefined, exportValueResolver);
                 } else if (mode === 'selected-rows') {
                   if (hasServerSideSelectAll(api)) {
                     console.log('[CSV Export] SSRM selectAll active — fetching all filtered rows');
@@ -4069,11 +4084,11 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                       : undefined;
                     const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
                     const excludeIds = getServerSideDeselectedRowIds(api);
-                    await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter, excludeIds);
+                    await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter, excludeIds, exportValueResolver);
                     console.log('[CSV Export] Export completed');
                   } else {
                     console.log('[CSV Export] Exporting selected rows');
-                    exportSelectedRowsAsCsv(api);
+                    exportSelectedRowsAsCsv(api, undefined, exportValueResolver);
                   }
                 } else {
                   console.log('[CSV Export] Exporting all filtered rows');
@@ -4083,7 +4098,7 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
                     : undefined;
                   const quickFilter = allowQuickSearch !== false ? quickSearchFilterRef.current : null;
                   console.log('[CSV Export] Payload:', payload, 'QuickFilter:', quickFilter);
-                  await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter);
+                  await exportAllFilteredRowsAsCsv(api, endpoint, 'export.csv', payload, quickFilter, undefined, exportValueResolver);
                   console.log('[CSV Export] Export completed');
                 }
               } catch (err) {

@@ -9,6 +9,7 @@ import lookupStyles from '../../components/LookupModal.module.css';
 import LookupModal from '../../components/LookupModal';
 import lookupButtonStyles from '../../components/LookupAddButton.module.css';
 import { matchesCountrySearch } from '../../../lib/countryAliases';
+import { searchIncludes } from '../../../lib/textSearch';
 import type {
   CustomerBasicRecord,
   CustomerDropdownOption,
@@ -693,10 +694,7 @@ export default function CustomerBasicDataClient({
       const filteredOptions = search
         ? def.datalistOptions.filter((option) => {
             if (def.id === 'country') return matchesCountrySearch(option.label, search);
-            const label = option.label.toLowerCase();
-            const val = option.value.toLowerCase();
-            const searchLower = search.toLowerCase();
-            return label.includes(searchLower) || val.includes(searchLower);
+            return searchIncludes(option.label, search) || searchIncludes(option.value, search);
           })
         : def.datalistOptions;
       const isOpen = openComboField === def.id;

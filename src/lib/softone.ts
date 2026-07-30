@@ -190,6 +190,13 @@ export type SetDocsParams = {
   shpdistrict?: string;
   shpcity?: string;
   sumamnt?: number;
+  /**
+   * Συνολική Έκπτωση Παραστατικού — document-level discount, added to the Telmaco
+   * setDocs WS on 29/07/2026 (Web_Services_Documentation_Telmaco V11 §4.1.4).
+   * Absolute amount, not a percentage. Emitted with the Greek decimal comma like
+   * every other numeric string in this payload.
+   */
+  discval?: string;
   items: SetDocsLineItem[];
 };
 

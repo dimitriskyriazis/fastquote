@@ -47,10 +47,6 @@ export const columnKeywords: Record<HeaderColumnKey, string[]> = {
     " code",
     "product code",
     "prod code",
-    "product id",
-    "product no",
-    "product number",
-    "prod id",
     "référence",
     "références",
     "réf ",
@@ -167,10 +163,6 @@ export const columnKeywords: Record<HeaderColumnKey, string[]> = {
     "netprice",
     "net ",
     "net_",
-    "buying price",
-    "buy price",
-    "purchase price",
-    "purchasing price",
     "κόστος",
     "κοστος",
     "τιμή κόστους",
@@ -356,13 +348,6 @@ export const isPlausibleHeaderCell = (normalizedText: string): boolean => {
   return wordCount <= MAX_HEADER_CELL_WORDS;
 };
 
-/**
- * Max share of a candidate header row's filled cells that may look numeric.
- * Header rows are labels ("Part Number", "List Price"); a row where a third or more of the
- * cells are numbers/prices is a data row, even if some of its text happens to hit a keyword.
- */
-export const MAX_HEADER_NUMERIC_RATIO = 0.3;
-
 export const headerContainsKeyword = (header: string, keyword: string) => {
   // Normalize keyword content but detect intentional word-boundary spaces.
   // Keywords like "part " use trailing space to avoid matching inside "partner".
@@ -412,9 +397,6 @@ const LIST_PRICE_NEGATIVE_HINTS = [
   "disc",
   "net",
   "cost",
-  "buying",
-  "purchase",
-  "purchasing",
   "offer",
   "promo",
   "special",
@@ -443,14 +425,6 @@ export const scoreColumnForKey = (column: ColumnOption, key: HeaderColumnKey) =>
   return score;
 };
 
-/**
- * A cell may only supply header keywords if it reads like a label: short enough to be one, and
- * not a bare value. Numeric cells are skipped because a price value (" €768.00 ") would otherwise
- * match the bare "€" listPrice keyword and let a data row pose as the header row.
- */
-const isHeaderLabelCell = (normalizedText: string): boolean =>
-  isPlausibleHeaderCell(normalizedText) && !isCellNumeric(normalizedText);
-
 const scoreHeaderRow = (row: unknown[]) => {
   const normalizedCells = row
     .map((cell) => normalizeHeaderText(cell))
@@ -461,8 +435,8 @@ const scoreHeaderRow = (row: unknown[]) => {
   let keywordHits = 0;
 
   normalizedCells.forEach((cell) => {
-    // Skip long sentences (metadata) and bare values (data) — neither is a column header
-    if (!isHeaderLabelCell(cell)) return;
+    // Skip long sentences — they are metadata, not column headers
+    if (!isPlausibleHeaderCell(cell)) return;
     (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
       const matches = columnKeywords[key].some((keyword) => headerContainsKeyword(cell, keyword));
       if (!matches) return;
@@ -478,7 +452,7 @@ const matchHeaderKeys = (row: unknown[]): Set<HeaderColumnKey> => {
   const matchedKeys = new Set<HeaderColumnKey>();
   row.forEach((cell) => {
     const normalized = normalizeHeaderText(cell);
-    if (!normalized || !isHeaderLabelCell(normalized)) return;
+    if (!normalized || !isPlausibleHeaderCell(normalized)) return;
     (Object.keys(columnKeywords) as HeaderColumnKey[]).forEach((key) => {
       if (columnKeywords[key].some((keyword) => headerContainsKeyword(normalized, keyword))) {
         matchedKeys.add(key);
@@ -495,11 +469,6 @@ const isLikelyHeaderRow = (row: unknown[]) => {
   // Require at least 3 filled cells — metadata rows with 2 cells (e.g. "Version:" + "MSRP ONLY PRICE LIST")
   // can accidentally match keywords. Real header rows have 3+ columns.
   if (normalizedCells.length < 3) return false;
-
-  // Reject number-heavy rows: a data row whose product name happens to contain a keyword
-  // ("i3CONNECT Lift 4 Wall/Common part") must not outrank the real header above it.
-  const numericCells = normalizedCells.filter((cell) => isCellNumeric(cell)).length;
-  if (numericCells / normalizedCells.length >= MAX_HEADER_NUMERIC_RATIO) return false;
 
   const matchedKeys = matchHeaderKeys(row);
   // Accept partNumber OR modelNumber as the identifier column —

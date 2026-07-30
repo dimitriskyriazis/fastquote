@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import LookupModal from '../../../components/LookupModal';
 import lookupStyles from '../../../components/LookupModal.module.css';
 import styles from './DraftOrderWizard.module.css';
+// Same rounding the server and the ERP payload use, so previewed totals match.
+import { round2 } from '@/lib/offerDiscount';
+import { searchIncludes } from '@/lib/textSearch';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,9 @@ type OrderLine = {
   productCode: string;
   productName: string;
   qty: number;
+  /** Unit price as quoted on the offer, before any additional discount. */
+  listPrice?: number;
+  /** Unit price actually sent to Soft1 (= listPrice unless the discount is baked in). */
   price: number;
   lineTotal: number;
   position: number | null;
@@ -74,11 +80,68 @@ type OrderLine = {
   comment: string | null;
 };
 
+// ── Offer-level additional discount ───────────────────────────────────────────
+// Offer.ExtraNetDiscount lives on the offer header only, so it has to be told
+// where to go on the Soft1 pre-order: into the unit prices, or onto the document
+// header as the total document discount (setDocs `discval`).
+type DiscountAllocation = 'lines' | 'document';
+
+type OfferDiscountState = {
+  hasDiscount: boolean;
+  /** Raw header value — a percentage when mode='pct', euros when mode='abs'. */
+  value: number;
+  mode: 'pct' | 'abs';
+  /** The discount as a percentage of net value, whatever the stored mode. */
+  fractionPct: number;
+};
+
+type DiscountPreview = {
+  lineCount: number;
+  subtotalBeforeDiscount: number;
+  options: Record<DiscountAllocation, { discountAmount: number; subtotalAfterDiscount: number }>;
+};
+
+// Read-back of the created document, confirming a document-level discount really
+// landed. SoftOne confirmed `discval` works, so this is a regression guard — an
+// ignored discount would ship the order at full value.
+type DiscountVerification = {
+  checked: boolean;
+  landed: boolean | null;
+  foundValue: number | null;
+};
+
+type DiscountSummary = OfferDiscountState & {
+  allocation: DiscountAllocation | null;
+  subtotalBeforeDiscount: number;
+  discountAmount: number;
+  subtotalAfterDiscount: number;
+  documentDiscount: number | null;
+  verification?: DiscountVerification | null;
+};
+
+
+// ── Option lines ──────────────────────────────────────────────────────────────
+// OfferDetails.IsOption rows are alternates / add-ons the offer's own totals
+// exclude, so ordering them would make the pre-order worth more than the offer.
+// Whether the customer bought them is the salesperson's call, asked up front so
+// that excluded options never get ERP items created for them.
+type OfferOptionsState = {
+  hasOptions: boolean;
+  optionLineCount: number;
+  optionValue: number;
+  baseLineCount: number;
+  baseValue: number;
+};
+
+type OptionsSummary = OfferOptionsState & { includeOptions: boolean };
+
 type SummaryData = {
   customer: CustomerMatch;
   project: { status: 'existing' | 'will-create'; code: string | null; id: number | null };
   orderLines: OrderLine[];
   totals: { lineCount: number; totalValue: number };
+  discount?: DiscountSummary | null;
+  options?: OptionsSummary | null;
   actions: { brandsToCreate: number; productsToCreate: number; productsToMatch: number; projectToCreate: boolean };
   missingBrands: string[];
 };
@@ -89,11 +152,15 @@ type ExecutionResult = {
   productsLinked: Array<{ productId: number; mtrl: number; code: string }>;
   project: { id: number; code: string; isNew: boolean } | null;
   order: { findocId: number; finCode: string } | null;
+  discount?: DiscountSummary | null;
+  options?: OptionsSummary | null;
 };
 
-type WizardStepId = 'resolve-customer' | 'check-brands' | 'match-products' | 'compare-products' | 'categorize-products' | 'prepare-summary' | 'execute';
+type WizardStepId = 'resolve-customer' | 'include-options' | 'check-brands' | 'match-products' | 'compare-products' | 'categorize-products' | 'discount-allocation' | 'prepare-summary' | 'execute';
 
-const STEPS: { id: WizardStepId; label: string }[] = [
+// The Options and Discount steps are spliced in only for offers that actually
+// have option lines / an additional discount — see `steps` below.
+const BASE_STEPS: { id: WizardStepId; label: string }[] = [
   { id: 'resolve-customer', label: 'Customer' },
   { id: 'check-brands', label: 'Brands' },
   { id: 'match-products', label: 'Products' },
@@ -102,6 +169,11 @@ const STEPS: { id: WizardStepId; label: string }[] = [
   { id: 'prepare-summary', label: 'Summary' },
   { id: 'execute', label: 'Execute' },
 ];
+
+// Options must be answered before Brands: excluded option lines must not have ERP
+// manufacturers or items created for them, and that work starts at the Brands step.
+const OPTIONS_STEP: { id: WizardStepId; label: string } = { id: 'include-options', label: 'Options' };
+const DISCOUNT_STEP: { id: WizardStepId; label: string } = { id: 'discount-allocation', label: 'Discount' };
 
 // One comparison row per order line: FastQuote offer values vs. the actual
 // SoftOne item-master (MTRL) values it was matched to. The Σχόλια the user
@@ -143,6 +215,13 @@ function productLabel(partNumber: string | null, _modelNumber: string | null, pr
 
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('el-GR', { style: 'currency', currency: 'EUR' }).format(value);
+}
+
+const percentFmt = new Intl.NumberFormat('el-GR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+/** "5%" or "1.500,00 €", depending on how the discount is stored on the offer. */
+function formatDiscountValue(d: OfferDiscountState): string {
+  return d.mode === 'abs' ? formatCurrency(d.value) : `${percentFmt.format(d.value)}%`;
 }
 
 const CREATE_NEW_SENTINEL = -1;
@@ -212,16 +291,58 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const [erpBrandsLoaded, setErpBrandsLoaded] = useState(false);
   const [brandComboOpen, setBrandComboOpen] = useState(false);
 
+  // Step: Options (only for offers that have option lines). Defaults to excluding
+  // them, which is what the offer's own totals do — but the user can flip it.
+  const [offerOptions, setOfferOptions] = useState<OfferOptionsState | null>(null);
+  const [includeOptions, setIncludeOptions] = useState(false);
+  const [optionsStepComplete, setOptionsStepComplete] = useState(false);
+
+  // Step: Discount allocation (only for offers with an additional discount).
+  // offerDiscount arrives with the first (Customer) step response, which is what
+  // decides whether this step exists at all.
+  const [offerDiscount, setOfferDiscount] = useState<OfferDiscountState | null>(null);
+  const [discountPreview, setDiscountPreview] = useState<DiscountPreview | null>(null);
+  const [discountAllocation, setDiscountAllocation] = useState<DiscountAllocation | null>(null);
+  const [discountStepComplete, setDiscountStepComplete] = useState(false);
+  const [showDiscountHint, setShowDiscountHint] = useState(false);
+
   // Step 4: Summary
   const [summary, setSummary] = useState<SummaryData | null>(null);
 
   // Step 6: Execution
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
 
-  const currentStep = STEPS[currentStepIndex];
+  // Sticky: once a response reports option lines / an additional discount, the
+  // matching step stays in the list. Dropping it again (someone edits the offer
+  // mid-wizard) would renumber the steps under the user's feet and could leave
+  // currentStepIndex pointing at a step that never auto-ran.
+  const [needsOptionsStep, setNeedsOptionsStep] = useState(false);
+  const [needsDiscountStep, setNeedsDiscountStep] = useState(false);
+
+  // Options goes right after Customer (before any ERP writes), Discount right
+  // before Summary (immediately before the totals it changes). Both are spliced
+  // in while the user is still on Customer, at indices they have not reached, so
+  // currentStepIndex stays valid.
+  const steps = useMemo(() => {
+    if (!needsOptionsStep && !needsDiscountStep) return BASE_STEPS;
+    const next = [...BASE_STEPS];
+    if (needsDiscountStep) {
+      next.splice(next.findIndex(s => s.id === 'prepare-summary'), 0, DISCOUNT_STEP);
+    }
+    if (needsOptionsStep) {
+      next.splice(next.findIndex(s => s.id === 'check-brands'), 0, OPTIONS_STEP);
+    }
+    return next;
+  }, [needsOptionsStep, needsDiscountStep]);
+
+  const currentStep = steps[currentStepIndex] ?? steps[steps.length - 1];
 
   // ── API call helper ──────────────────────────────────────────────────────
 
+  // includeOptions is injected into every step rather than passed per call site:
+  // any step that enumerates offer lines needs the same answer, and a step that
+  // silently used a different line set would produce an order that disagrees with
+  // the summary. Offers without option lines ignore it server-side.
   const callStep = useCallback(async (step: WizardStepId, extra: Record<string, unknown> = {}) => {
     setIsLoading(true);
     setError(null);
@@ -229,7 +350,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       const response = await fetch(`/api/offers/${encodeURIComponent(offerId)}/create-draft-order-soft1`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ step, ...extra }),
+        body: JSON.stringify({ step, includeOptions, ...extra }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok && !payload?.ok) {
@@ -243,7 +364,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     } finally {
       setIsLoading(false);
     }
-  }, [offerId]);
+  }, [offerId, includeOptions]);
 
   // ── Manual Soft1 search ──────────────────────────────────────────────────
 
@@ -366,6 +487,19 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setSelectedCustomer(null);
     setCustomerSearchMessage(typeof result.message === 'string' ? result.message : null);
 
+    // Every resolve-customer response carries the offer's additional-discount
+    // state; it decides whether the Discount step is part of this run.
+    if (result.offerDiscount) {
+      const d = result.offerDiscount as OfferDiscountState;
+      setOfferDiscount(d);
+      if (d.hasDiscount) setNeedsDiscountStep(true);
+    }
+    if (result.offerOptions) {
+      const o = result.offerOptions as OfferOptionsState;
+      setOfferOptions(o);
+      if (o.hasOptions) setNeedsOptionsStep(true);
+    }
+
     if (result.resolved) {
       setResolvedCustomer(result.resolved);
       setCustomerNeedsSelection([]);
@@ -420,6 +554,17 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setCategorizeComplete(true);
   }, [callStep, autoMatched, confirmedCreates, userSelections, skipped]);
 
+  const runIncludeOptions = useCallback(async () => {
+    const result = await callStep('include-options');
+    if (!result) return;
+    if (result.offerOptions) {
+      const o = result.offerOptions as OfferOptionsState;
+      setOfferOptions(o);
+      if (o.hasOptions) setNeedsOptionsStep(true);
+    }
+    setOptionsStepComplete(true);
+  }, [callStep]);
+
   const runCheckBrands = useCallback(async () => {
     const result = await callStep('check-brands');
     if (!result) return;
@@ -467,6 +612,30 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setCompareComplete(true);
   }, [callStep, autoMatched, confirmedCreates, userSelections, skipped]);
 
+  const runDiscountAllocation = useCallback(async () => {
+    const matchResults = {
+      autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
+      userConfirmedCreate: confirmedCreates.map(productId => ({ productId })),
+      userSelected: Array.from(userSelections.entries())
+        .filter(([, match]) => match.MTRL !== CREATE_NEW_SENTINEL)
+        .map(([productId, match]) => ({ productId, MTRL: match.MTRL, CODE: match.CODE })),
+      skipped: skipped.map(s => ({ productId: s.productId })),
+    };
+    const result = await callStep('discount-allocation', { matchResults });
+    if (!result) return;
+    if (result.offerDiscount) {
+      const d = result.offerDiscount as OfferDiscountState;
+      setOfferDiscount(d);
+      if (d.hasDiscount) setNeedsDiscountStep(true);
+    }
+    setDiscountPreview({
+      lineCount: Number(result.lineCount ?? 0),
+      subtotalBeforeDiscount: Number(result.subtotalBeforeDiscount ?? 0),
+      options: result.options,
+    });
+    setDiscountStepComplete(true);
+  }, [callStep, autoMatched, confirmedCreates, userSelections, skipped]);
+
   const runPrepareSummary = useCallback(async () => {
     const matchResults = {
       autoMatched: autoMatched.map(m => ({ productId: m.productId, MTRL: m.MTRL, CODE: m.CODE })),
@@ -483,10 +652,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       missingBrands,
       matchResults,
       lineComments: Array.from(lineComments.entries()).map(([lineId, comment]) => ({ lineId, comment })),
+      discountAllocation,
     });
     if (!result) return;
     setSummary(result);
-  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, lineComments]);
+  }, [callStep, resolvedCustomer, missingBrands, autoMatched, confirmedCreates, userSelections, skipped, lineComments, discountAllocation]);
 
   const runExecute = useCallback(async () => {
     const matchResults = {
@@ -541,10 +711,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       matchResults,
       categorizationSummary,
       lineComments: Array.from(lineComments.entries()).map(([lineId, comment]) => ({ lineId, comment })),
+      discountAllocation,
     });
     if (!result) return;
     setExecutionResult(result);
-  }, [callStep, resolvedCustomer, missingBrands, resolvedBrandMap, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts, lineComments]);
+  }, [callStep, resolvedCustomer, missingBrands, resolvedBrandMap, autoMatched, confirmedCreates, userSelections, skipped, categorizedProducts, lineComments, discountAllocation]);
 
   // ── Manual-search Brand normalization ────────────────────────────────────
   // When the Soft1 brand list finishes loading, normalize the Brand input to
@@ -568,6 +739,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     // Auto-run the step when we land on it (unless it already completed or needs user input)
     if (currentStep.id === 'resolve-customer' && !resolvedCustomer && !customerNeedsSelection.length && !customerNeedsConfirmation && !customerNeedsSearch) {
       runResolveCustomer();
+    } else if (currentStep.id === 'include-options' && !optionsStepComplete) {
+      runIncludeOptions();
     } else if (currentStep.id === 'check-brands' && !brandsCheckComplete) {
       runCheckBrands();
     } else if (currentStep.id === 'match-products' && !matchComplete) {
@@ -576,6 +749,8 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       runCompareProducts();
     } else if (currentStep.id === 'categorize-products' && !categorizeComplete) {
       runCategorizeProducts();
+    } else if (currentStep.id === 'discount-allocation' && !discountStepComplete) {
+      runDiscountAllocation();
     } else if (currentStep.id === 'prepare-summary' && !summary) {
       runPrepareSummary();
     } else if (currentStep.id === 'execute' && !executionResult) {
@@ -592,6 +767,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     switch (currentStep.id) {
       case 'resolve-customer':
         return resolvedCustomer !== null;
+      case 'include-options':
+        // Both answers are valid and one is preselected, so only gate on load.
+        return optionsStepComplete;
       case 'categorize-products': {
         if (!categorizeComplete) return false;
         const newProductIds = new Set<number>([
@@ -613,6 +791,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       case 'compare-products':
         // Comparison/Σχόλια editing is optional — only gate on the data being loaded.
         return compareComplete;
+      case 'discount-allocation':
+        // Where the discount goes is a deliberate choice, so there is no default
+        // to fall through on — unless the offer no longer has one to allocate.
+        if (!discountStepComplete) return false;
+        if (offerDiscount && !offerDiscount.hasDiscount) return true;
+        return discountAllocation !== null;
       case 'prepare-summary':
         return summary !== null;
       case 'execute':
@@ -689,13 +873,15 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     setError(null);
     // Re-trigger the current step
     if (currentStep.id === 'resolve-customer') runResolveCustomer();
+    else if (currentStep.id === 'include-options') runIncludeOptions();
     else if (currentStep.id === 'categorize-products') runCategorizeProducts();
     else if (currentStep.id === 'check-brands') runCheckBrands();
     else if (currentStep.id === 'match-products') runMatchProducts();
     else if (currentStep.id === 'compare-products') runCompareProducts();
+    else if (currentStep.id === 'discount-allocation') runDiscountAllocation();
     else if (currentStep.id === 'prepare-summary') runPrepareSummary();
     else if (currentStep.id === 'execute') runExecute();
-  }, [currentStep, runResolveCustomer, runCategorizeProducts, runCheckBrands, runMatchProducts, runCompareProducts, runPrepareSummary, runExecute]);
+  }, [currentStep, runResolveCustomer, runIncludeOptions, runCategorizeProducts, runCheckBrands, runMatchProducts, runCompareProducts, runDiscountAllocation, runPrepareSummary, runExecute]);
 
   // ── Confirm label ────────────────────────────────────────────────────────
 
@@ -719,7 +905,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
 
   const stepBar = (
     <div className={styles.stepBar}>
-      {STEPS.map((step, idx) => {
+      {steps.map((step, idx) => {
         let cls = styles.stepItem;
         if (idx < currentStepIndex) cls += ` ${styles.stepItemDone}`;
         else if (idx === currentStepIndex) cls += ` ${styles.stepItemActive}`;
@@ -1455,9 +1641,233 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     );
   };
 
+  const renderOptionsStep = () => {
+    if (isLoading) return renderLoading('Checking the offer for option lines...');
+    if (!optionsStepComplete || !offerOptions) return null;
+
+    // The offer's options were removed after this run started.
+    if (!offerOptions.hasOptions) {
+      return (
+        <div className={`${styles.card} ${styles.cardGray}`}>
+          This offer has no option lines, so there is nothing to decide here.
+        </div>
+      );
+    }
+
+    const { optionLineCount, optionValue, baseLineCount, baseValue } = offerOptions;
+    const choices: Array<{ include: boolean; title: string; detail: string; lines: number; value: number }> = [
+      {
+        include: false,
+        title: 'Leave options out (recommended)',
+        detail: "Matches the offer's own total, which excludes option lines. Nothing is created in Soft1 for them.",
+        lines: baseLineCount,
+        value: baseValue,
+      },
+      {
+        include: true,
+        title: 'Order the options too',
+        detail: 'Option lines become order lines like any other, and their products get created/linked in Soft1.',
+        lines: baseLineCount + optionLineCount,
+        value: round2(baseValue + optionValue),
+      },
+    ];
+
+    return (
+      <>
+        <p className={styles.sectionTitle}>Option lines on this offer</p>
+        <div className={`${styles.card} ${styles.cardAmber}`}>
+          This offer has <strong>{optionLineCount}</strong> option line
+          {optionLineCount === 1 ? '' : 's'} worth <strong>{formatCurrency(optionValue)}</strong>.
+          The offer&apos;s own total leaves them out, so ordering them would make the pre-order worth
+          more than the offer. Only order them if the customer actually bought them.
+          <div className={styles.discountNote}>
+            This choice also decides whether their products get items and brands created in Soft1,
+            which is why it is asked before anything is written to the ERP.
+          </div>
+        </div>
+
+        <div className={styles.discountChoices}>
+          {choices.map(choice => {
+            const selected = includeOptions === choice.include;
+            return (
+              <label
+                key={String(choice.include)}
+                className={`${styles.discountChoice} ${selected ? styles.discountChoiceSelected : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="include-options"
+                  className={styles.discountRadio}
+                  checked={selected}
+                  onChange={() => {
+                    setIncludeOptions(choice.include);
+                    // Everything downstream was resolved against the other line
+                    // set — brands, matches, comparison, categories and totals.
+                    setBrandsCheckComplete(false);
+                    setMatchComplete(false);
+                    setCompareComplete(false);
+                    setCategorizeComplete(false);
+                    setDiscountStepComplete(false);
+                    setSummary(null);
+                  }}
+                />
+                <div className={styles.discountChoiceBody}>
+                  <div className={styles.discountChoiceTitle}>{choice.title}</div>
+                  <div className={styles.discountChoiceDetail}>{choice.detail}</div>
+                  <table className={styles.discountTable}>
+                    <tbody>
+                      <tr>
+                        <td>Offer lines on the order</td>
+                        <td className={styles.tableRight}>{choice.lines}</td>
+                      </tr>
+                      <tr className={styles.discountTableTotal}>
+                        <td>Line value</td>
+                        <td className={styles.tableRight}>{formatCurrency(choice.value)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className={styles.discountNote}>
+          Counts every priced product line on the offer. How many actually reach Soft1 still depends
+          on the matching in the next steps.
+        </div>
+      </>
+    );
+  };
+
+  const renderDiscountStep = () => {
+    if (isLoading) return renderLoading('Calculating the additional discount...');
+    if (!discountStepComplete || !offerDiscount || !discountPreview) return null;
+
+    // The discount was cleared on the offer after this run started — nothing to
+    // allocate, so there is nothing to ask.
+    if (!offerDiscount.hasDiscount) {
+      return (
+        <div className={`${styles.card} ${styles.cardGray}`}>
+          This offer no longer has an additional discount, so there is nothing to allocate.
+          The order will be created with the quoted prices.
+        </div>
+      );
+    }
+
+    const { subtotalBeforeDiscount, options, lineCount } = discountPreview;
+    const valueLabel = formatDiscountValue(offerDiscount);
+    const asPercent = `${percentFmt.format(offerDiscount.fractionPct)}%`;
+
+    const choices: Array<{
+      id: DiscountAllocation;
+      title: string;
+      detail: string;
+      amount: number;
+      after: number;
+    }> = [
+      {
+        id: 'lines',
+        title: 'Into the product prices',
+        detail: `Every unit price drops by ${asPercent}. Soft1 shows discounted prices on the lines and no discount on the order header.`,
+        amount: options.lines.discountAmount,
+        after: options.lines.subtotalAfterDiscount,
+      },
+      {
+        id: 'document',
+        title: 'As a document discount (Συνολική Έκπτωση Παραστατικού)',
+        detail: 'Unit prices stay exactly as quoted and the whole amount goes on the order header as the total document discount.',
+        amount: options.document.discountAmount,
+        after: options.document.subtotalAfterDiscount,
+      },
+    ];
+
+    return (
+      <>
+        <p className={styles.sectionTitle}>Additional discount on this offer</p>
+        <div className={`${styles.card} ${styles.cardAmber}`}>
+          This offer has an additional discount of <strong>{valueLabel}</strong>
+          {offerDiscount.mode === 'abs' && <> (<strong>{asPercent}</strong> of the offer net value)</>}
+          {' '}on top of the line discounts. It is stored on the offer header, so it has to be told
+          where to go on the Soft1 pre-order. Choose one:
+          {offerDiscount.mode === 'abs' && (
+            <div className={styles.discountNote}>
+              The amount is spread proportionally across the offer, so this pre-order carries only the
+              share that belongs to its {lineCount} product line(s) — services are ordered separately.
+            </div>
+          )}
+        </div>
+
+        <div className={styles.discountChoices}>
+          {choices.map(choice => {
+            const selected = discountAllocation === choice.id;
+            return (
+              <label
+                key={choice.id}
+                className={`${styles.discountChoice} ${selected ? styles.discountChoiceSelected : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="discount-allocation"
+                  className={styles.discountRadio}
+                  checked={selected}
+                  onChange={() => {
+                    setDiscountAllocation(choice.id);
+                    setShowDiscountHint(false);
+                    // Any earlier summary was priced under the other choice.
+                    setSummary(null);
+                  }}
+                />
+                <div className={styles.discountChoiceBody}>
+                  <div className={styles.discountChoiceTitle}>{choice.title}</div>
+                  <div className={styles.discountChoiceDetail}>{choice.detail}</div>
+                  <table className={styles.discountTable}>
+                    <tbody>
+                      <tr>
+                        <td>Line value before discount</td>
+                        <td className={styles.tableRight}>{formatCurrency(subtotalBeforeDiscount)}</td>
+                      </tr>
+                      <tr>
+                        <td>Discount</td>
+                        <td className={styles.tableRight}>-{formatCurrency(choice.amount)}</td>
+                      </tr>
+                      <tr className={styles.discountTableTotal}>
+                        <td>Order value in Soft1</td>
+                        <td className={styles.tableRight}>{formatCurrency(choice.after)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        {options.lines.subtotalAfterDiscount !== options.document.subtotalAfterDiscount && (
+          <div className={styles.discountNote}>
+            The two totals differ by{' '}
+            {formatCurrency(Math.abs(options.lines.subtotalAfterDiscount - options.document.subtotalAfterDiscount))}{' '}
+            because a unit price only carries 2 decimals, so the discount cannot always be split
+            across the lines to the exact cent.
+          </div>
+        )}
+
+        {discountAllocation === null && (
+          <div className={styles.validationHint}>Pick one of the two options to continue.</div>
+        )}
+      </>
+    );
+  };
+
   const renderSummaryStep = () => {
     if (isLoading) return renderLoading('Preparing order summary...');
     if (!summary) return null;
+
+    // The server echoes back how it priced these lines, so the summary always
+    // describes what will actually be sent rather than the local radio state.
+    const summaryDiscount = summary.discount ?? null;
+    const discountBakedIn = summaryDiscount?.hasDiscount === true && summaryDiscount.allocation === 'lines';
+    const summaryOptions = summary.options?.hasOptions ? summary.options : null;
 
     const categorizedFromSoft1 = categorizedProducts.filter(p => p.wasErpSynced);
     const categorizedByAi = categorizedProducts.filter(p => p.wasAiCategorized && !p.wasErpSynced);
@@ -1556,6 +1966,52 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           </>
         )}
 
+        {summaryOptions && (
+          <>
+            <p className={styles.sectionTitle}>Option lines</p>
+            <div className={`${styles.card} ${summaryOptions.includeOptions ? styles.cardAmber : styles.cardGray}`}>
+              {summaryOptions.optionLineCount} option line
+              {summaryOptions.optionLineCount === 1 ? '' : 's'} worth{' '}
+              {formatCurrency(summaryOptions.optionValue)}{' '}
+              {summaryOptions.includeOptions
+                ? 'are included in this order.'
+                : 'are left out of this order.'}
+            </div>
+          </>
+        )}
+
+        {summaryDiscount?.hasDiscount && (
+          <>
+            <p className={styles.sectionTitle}>Additional discount</p>
+            <div className={`${styles.card} ${styles.cardAmber}`}>
+              <div>
+                <strong>{formatDiscountValue(summaryDiscount)}</strong>
+                {summaryDiscount.mode === 'abs' && <> ({percentFmt.format(summaryDiscount.fractionPct)}% of net)</>}
+                {' — '}
+                {discountBakedIn
+                  ? 'taken off every unit price below; no discount on the order header.'
+                  : 'sent on the order header as the total document discount; unit prices below are as quoted.'}
+              </div>
+              <table className={styles.discountTable}>
+                <tbody>
+                  <tr>
+                    <td>Line value before discount</td>
+                    <td className={styles.tableRight}>{formatCurrency(summaryDiscount.subtotalBeforeDiscount)}</td>
+                  </tr>
+                  <tr>
+                    <td>Discount</td>
+                    <td className={styles.tableRight}>-{formatCurrency(summaryDiscount.discountAmount)}</td>
+                  </tr>
+                  <tr className={styles.discountTableTotal}>
+                    <td>Order value in Soft1</td>
+                    <td className={styles.tableRight}>{formatCurrency(summaryDiscount.subtotalAfterDiscount)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
         <p className={styles.sectionTitle}>Order Lines ({summary.totals.lineCount})</p>
         <table className={styles.table}>
           <thead>
@@ -1564,6 +2020,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <th>Position</th>
               <th>Product</th>
               <th className={styles.tableRight}>Qty</th>
+              {discountBakedIn && <th className={styles.tableRight}>Quoted</th>}
               <th className={styles.tableRight}>Price</th>
               <th className={styles.tableRight}>Total</th>
               <th className={styles.tableRight}>Warranty</th>
@@ -1577,6 +2034,11 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 <td>{line.position ?? ''}</td>
                 <td>{line.productCode !== '(new)' ? `${line.productCode} - ` : ''}{line.productName}</td>
                 <td className={styles.tableRight}>{line.qty}</td>
+                {discountBakedIn && (
+                  <td className={`${styles.tableRight} ${styles.quotedPrice}`}>
+                    {line.listPrice != null ? formatCurrency(line.listPrice) : ''}
+                  </td>
+                )}
                 <td className={styles.tableRight}>{formatCurrency(line.price)}</td>
                 <td className={styles.tableRight}>{formatCurrency(line.lineTotal)}</td>
                 <td className={styles.tableRight}>{line.warrantyYears != null ? `${line.warrantyYears}y (${line.warrantyYears * 12}m)` : ''}</td>
@@ -1588,6 +2050,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <td></td>
               <td><strong>Total</strong></td>
               <td className={styles.tableRight}><strong>{summary.orderLines.reduce((s, l) => s + l.qty, 0)}</strong></td>
+              {discountBakedIn && <td></td>}
               <td></td>
               <td className={styles.tableRight}><strong>{formatCurrency(summary.totals.totalValue)}</strong></td>
               <td></td>
@@ -1639,6 +2102,55 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             {executionResult.project.isNew ? 'Created' : 'Using existing'} project: {executionResult.project.code}
           </div>
         )}
+        {executionResult.options?.hasOptions && (
+          <div className={`${styles.progressItem} ${styles.progressItemDone}`}>
+            <div className={styles.progressIcon}>&#10003;</div>
+            {executionResult.options.optionLineCount} option line
+            {executionResult.options.optionLineCount === 1 ? '' : 's'} (
+            {formatCurrency(executionResult.options.optionValue)}){' '}
+            {executionResult.options.includeOptions ? 'included in the order' : 'left out of the order'}
+          </div>
+        )}
+        {executionResult.discount?.hasDiscount && (
+          <div className={`${styles.progressItem} ${styles.progressItemDone}`}>
+            <div className={styles.progressIcon}>&#10003;</div>
+            Additional discount {formatDiscountValue(executionResult.discount)} (
+            {formatCurrency(executionResult.discount.discountAmount)}){' '}
+            {executionResult.discount.allocation === 'lines'
+              ? 'applied to the product prices'
+              : 'sent as the document discount'}
+            {' '}&mdash; order value {formatCurrency(executionResult.discount.subtotalAfterDiscount)}
+          </div>
+        )}
+        {(() => {
+          // A document discount SoftOne ignored leaves the order at full value —
+          // surfaced here as a failure, not buried in the success box.
+          const v = executionResult.discount?.verification;
+          if (!executionResult.discount || executionResult.discount.allocation !== 'document' || !v) return null;
+          if (v.landed === true) return null;
+          const couldNotCheck = !v.checked || v.landed === null;
+          return (
+            <div className={`${styles.progressItem} ${styles.progressItemFailed}`}>
+              <div className={styles.progressIcon}>!</div>
+              {couldNotCheck ? (
+                <>
+                  Could not confirm the {formatCurrency(executionResult.discount.discountAmount)} document
+                  discount reached the order &mdash; check it in Soft1.
+                </>
+              ) : (
+                <>
+                  <strong>
+                    The {formatCurrency(executionResult.discount.discountAmount)} document discount did
+                    NOT reach the order.
+                  </strong>{' '}
+                  Soft1 saved it at the full{' '}
+                  {formatCurrency(executionResult.discount.subtotalBeforeDiscount)}. Add the discount in
+                  Soft1 by hand, or re-issue with the discount applied to the product prices instead.
+                </>
+              )}
+            </div>
+          );
+        })()}
         {executionResult.order && (
           <div className={styles.successBox}>
             <div className={styles.successTitle}>Order created successfully!</div>
@@ -1654,10 +2166,12 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
   const renderStepContent = () => {
     switch (currentStep.id) {
       case 'resolve-customer': return renderCustomerStep();
+      case 'include-options': return renderOptionsStep();
       case 'categorize-products': return renderCategorizeStep();
       case 'check-brands': return renderBrandsStep();
       case 'match-products': return renderMatchProductsStep();
       case 'compare-products': return renderCompareStep();
+      case 'discount-allocation': return renderDiscountStep();
       case 'prepare-summary': return renderSummaryStep();
       case 'execute': return renderExecuteStep();
       default: return null;
@@ -1694,6 +2208,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
       if (currentStep.id === 'categorize-products' && categorizeComplete && !isLoading && !error) {
         setShowCategorizeHint(true);
       }
+      if (currentStep.id === 'discount-allocation' && discountStepComplete && !isLoading && !error) {
+        setShowDiscountHint(true);
+      }
       return;
     }
     // When a step errored, the footer button is "Retry" — always retry, even if
@@ -1721,9 +2238,10 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
     }
     setShowMatchHint(false);
     setShowCategorizeHint(false);
+    setShowDiscountHint(false);
     handleConfirm();
   }, [
-    confirmDisabled, handleConfirm, currentStep.id, matchComplete, categorizeComplete, isLoading, error,
+    confirmDisabled, handleConfirm, currentStep.id, matchComplete, categorizeComplete, discountStepComplete, isLoading, error,
     resolvedCustomer, customerNeedsSelection, selectedCustomer,
     customerNeedsConfirmation,
     runResolveCustomer,
@@ -1760,6 +2278,9 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             if (incomplete.length > 0) {
               return `${incomplete.length} product${incomplete.length > 1 ? 's are' : ' is'} missing SubCategory or Type, fill in all fields before continuing`;
             }
+          }
+          if (showDiscountHint && discountAllocation === null) {
+            return 'Choose where the additional discount goes before continuing';
           }
           return undefined;
         })()}
@@ -1800,7 +2321,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
                 if (e.key === 'Enter') { e.preventDefault(); triggerSearch(); }
               };
               const filteredBrands = brandTrim
-                ? erpBrandList.filter(b => b.name.toLowerCase().includes(brandTrim.toLowerCase())).slice(0, 100)
+                ? erpBrandList.filter(b => searchIncludes(b.name, brandTrim)).slice(0, 100)
                 : erpBrandList.slice(0, 100);
               const ctxDesc = manualSearchProduct.description?.trim();
               return (

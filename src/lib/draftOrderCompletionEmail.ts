@@ -3,6 +3,57 @@ import { getPool, sql } from './sql';
 import { sendEmail } from './email';
 import { logger } from './logger';
 
+/**
+ * How the offer-level additional discount (Offer.ExtraNetDiscount) was projected
+ * onto the Soft1 pre-order: 'lines' = baked into the unit prices, 'document' =
+ * sent as the document discount (setDocs `discval`).
+ */
+/**
+ * Result of reading the created document back to confirm a document-level discount
+ * actually landed. SoftOne confirmed `discval` works, so this is a regression guard
+ * — but a silently ignored discount ships the order at full value, so every order
+ * checks rather than trusting that the request succeeded.
+ */
+export type DraftOrderDiscountVerification = {
+  /** Whether the read-back ran. False = we could not check (never blocks the order). */
+  checked: boolean;
+  /** true = discount is on the document, false = it is not, null = cannot tell. */
+  landed: boolean | null;
+  /** Discount value found on the created document, when readable. */
+  foundValue: number | null;
+  /** FINDOC amount columns this install exposes, for diagnosis. */
+  headerAmounts?: Record<string, number | null>;
+};
+
+export type DraftOrderDiscountSummary = {
+  hasDiscount: boolean;
+  /** Raw header value — a percentage when mode='pct', euros when mode='abs'. */
+  value: number;
+  mode: 'pct' | 'abs';
+  /** The discount as a percentage of net value, whatever the stored mode. */
+  fractionPct: number;
+  allocation: 'lines' | 'document' | null;
+  subtotalBeforeDiscount: number;
+  discountAmount: number;
+  subtotalAfterDiscount: number;
+  /** Amount sent as the document discount, null when baked into unit prices. */
+  documentDiscount: number | null;
+  /** Present only when a document discount was sent and read back. */
+  verification?: DraftOrderDiscountVerification | null;
+};
+
+/**
+ * What happened to the offer's option lines (OfferDetails.IsOption). The offer's
+ * own totals exclude them, so whether they were ordered is a decision worth
+ * recording — the reader cannot tell from the line list alone.
+ */
+export type DraftOrderOptionsSummary = {
+  hasOptions: boolean;
+  includeOptions: boolean;
+  optionLineCount: number;
+  optionValue: number;
+};
+
 export type DraftOrderCompletionResults = {
   brandsCreated: string[];
   productsCreated: Array<{ productId: number; mtrl: number; code: string }>;
@@ -40,6 +91,10 @@ export type DraftOrderCompletionResults = {
     warrantyMonths: number | null;
     comment: string | null;
   }>;
+  // Present only when the offer carried an additional discount.
+  discount?: DraftOrderDiscountSummary | null;
+  // Present only when the offer carried option lines.
+  options?: DraftOrderOptionsSummary | null;
   // Lines sent to setDocs that SoftOne did not register in the created document.
   droppedLines?: Array<{
     position: number | null;
@@ -140,6 +195,19 @@ function renderEmail(
   const droppedTotal = droppedLines.reduce((sum, l) => sum + l.lineval, 0);
   const hasDropped = droppedLines.length > 0;
 
+  // Derived up here because the subject line reports both failure modes: a
+  // document discount SoftOne ignored is as serious as a dropped line — the order
+  // silently goes out at full value.
+  const discount = results.discount ?? null;
+  const showDiscount = !!discount?.hasDiscount;
+  const discountNotLanded = discount?.allocation === 'document'
+    && discount.verification?.checked === true
+    && discount.verification.landed === false;
+  const discountUnverified = discount?.allocation === 'document'
+    && (discount.verification == null
+      || discount.verification.checked === false
+      || discount.verification.landed === null);
+
   const actions: string[] = [];
   if (results.brandsCreated.length > 0) {
     const n = results.brandsCreated.length;
@@ -176,7 +244,13 @@ function renderEmail(
     actions.push(`Δημιουργία προπαραγγελίας: ${results.order.finCode}`);
   }
 
-  const subject = `${hasDropped ? '⚠ ' : ''}FastQuote - Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}${hasDropped ? ` - ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή ΔΕΝ καταχωρήθηκε', 'γραμμές ΔΕΝ καταχωρήθηκαν')}` : ''}`;
+  const subjectAlerts = [
+    hasDropped
+      ? `${droppedLines.length} ${pl(droppedLines.length, 'γραμμή ΔΕΝ καταχωρήθηκε', 'γραμμές ΔΕΝ καταχωρήθηκαν')}`
+      : null,
+    discountNotLanded ? 'Η ΕΚΠΤΩΣΗ ΔΕΝ ΚΑΤΑΧΩΡΗΘΗΚΕ' : null,
+  ].filter((a): a is string => a != null);
+  const subject = `${subjectAlerts.length > 0 ? '⚠ ' : ''}FastQuote - Δημιουργήθηκε προπαραγγελία Soft1 (${orderCode}) για προσφορά #${offerId}${subjectAlerts.length > 0 ? ` - ${subjectAlerts.join(', ')}` : ''}`;
 
   const actionsHtml = actions.length > 0
     ? `<ul>${actions.map(a => `<li>${escapeHtml(a)}</li>`).join('')}</ul>`
@@ -211,6 +285,87 @@ function renderEmail(
     (sum, l) => sum + (l.costTotal != null ? l.costTotal : 0),
     0,
   );
+
+  // ── Offer-level additional discount ──────────────────────────────────────
+  // Spelled out because the two allocations look identical in the line totals
+  // otherwise: with 'lines' the prices above are already net of the discount,
+  // with 'document' they are not and the discount sits on the header instead.
+  // (`discount` / `showDiscount` / the verification flags are derived above, so
+  // the subject line can report a discount that never landed.)
+  const discountValueLabel = discount
+    ? (discount.mode === 'abs' ? formatMoney(discount.value) : `${moneyFmt.format(discount.value)} %`)
+    : '';
+  const bakedIntoPrices = discount?.allocation === 'lines';
+  const discountAllocationLabel = bakedIntoPrices
+    ? 'Ενσωματώθηκε στις τιμές των ειδών — οι τιμές του πίνακα είναι μετά την έκπτωση.'
+    : 'Καταχωρήθηκε ως συνολική έκπτωση παραστατικού (discval) — οι τιμές του πίνακα είναι οι τιμές της προσφοράς.';
+  // ── Option lines ─────────────────────────────────────────────────────────
+  const optionsInfo = results.options ?? null;
+  const showOptions = !!optionsInfo?.hasOptions;
+  const optionsHtml = showOptions && optionsInfo
+    ? `
+      <p style="margin-top: 16px;">
+        <strong>Γραμμές επιλογών (options):</strong>
+        ${optionsInfo.includeOptions
+          ? `συμπεριλήφθηκαν στην προπαραγγελία — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`
+          : `ΔΕΝ συμπεριλήφθηκαν στην προπαραγγελία — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`}
+      </p>
+    `
+    : '';
+
+  // A document discount that SoftOne ignored leaves the order at full value —
+  // the exact failure the Discount step exists to prevent, so it gets the same
+  // loud treatment as silently dropped lines rather than a footnote.
+  const discountAlertHtml = discountNotLanded && discount
+    ? `
+      <div style="border: 2px solid #dc2626; background: #fef2f2; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px; color: #b91c1c; font-weight: 700;">⚠ Η συνολική έκπτωση ΔΕΝ καταχωρήθηκε στο παραστατικό</p>
+        <p style="margin: 0; color: #7f1d1d;">
+          Στάλθηκε έκπτωση ${formatMoney(discount.discountAmount)} στην προπαραγγελία ${escapeHtml(orderCode)},
+          αλλά το παραστατικό στο Soft1 δεν την έχει${discount.verification?.foundValue != null
+            ? ` (βρέθηκε ${formatMoney(discount.verification.foundValue)})`
+            : ''}.
+          Η προπαραγγελία είναι στην πλήρη αξία ${formatMoney(discount.subtotalBeforeDiscount)} —
+          καταχωρήστε την έκπτωση χειροκίνητα ή ξανα-εκδώστε την προπαραγγελία με την έκπτωση στις τιμές των ειδών.
+        </p>
+      </div>
+    `
+    : discountUnverified && discount
+      ? `
+      <div style="border: 1px solid #fbbf24; background: #fffbeb; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
+        <p style="margin: 0; color: #92400e;">
+          <strong>Προσοχή:</strong> δεν κατέστη δυνατός ο έλεγχος ότι η συνολική έκπτωση
+          ${formatMoney(discount.discountAmount)} καταχωρήθηκε στο παραστατικό ${escapeHtml(orderCode)}.
+          Επιβεβαιώστε την έκπτωση στο Soft1.
+        </p>
+      </div>
+    `
+      : '';
+
+  const discountHtml = showDiscount && discount
+    ? `
+      <div style="border: 1px solid #fde68a; background: #fffbeb; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
+        <p style="margin: 0 0 8px; font-weight: 700; color: #92400e;">Επιπλέον έκπτωση προσφοράς: ${escapeHtml(discountValueLabel)}</p>
+        <p style="margin: 0 0 8px; color: #78350f;">${escapeHtml(discountAllocationLabel)}</p>
+        <table style="border-collapse: collapse; font-size: 0.9rem;">
+          <tbody>
+            <tr>
+              <td style="padding: 3px 12px 3px 0; color: #78350f;">Αξία γραμμών πριν την έκπτωση:</td>
+              <td style="padding: 3px 0; text-align: right; font-weight: 600;">${formatMoney(discount.subtotalBeforeDiscount)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 3px 12px 3px 0; color: #78350f;">Έκπτωση:</td>
+              <td style="padding: 3px 0; text-align: right; font-weight: 600;">-${formatMoney(discount.discountAmount)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 3px 12px 3px 0; color: #78350f;">Τελική αξία παραστατικού:</td>
+              <td style="padding: 3px 0; text-align: right; font-weight: 700;">${formatMoney(discount.subtotalAfterDiscount)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    `
+    : '';
 
   const orderLinesHtml = orderLines.length > 0
     ? `
@@ -263,14 +418,22 @@ function renderEmail(
           </tr>
         </tfoot>
       </table>
+      ${optionsHtml}
+      ${discountHtml}
+      ${discountAlertHtml}
     `
-    : '';
+    : `${optionsHtml}${discountHtml}${discountAlertHtml}`;
 
-  const droppedHtml = hasDropped
-    ? `
+  // Lines that are not in the created document and have to be keyed in by hand.
+  type MissingLine = NonNullable<DraftOrderCompletionResults['droppedLines']>[number];
+  const renderMissingLinesHtml = (
+    lines: MissingLine[],
+    heading: string,
+    explanation: string,
+  ): string => lines.length === 0 ? '' : `
       <div style="border: 2px solid #dc2626; background: #fef2f2; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
-        <p style="margin: 0 0 8px; color: #b91c1c; font-weight: 700;">⚠ Προσοχή: ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1</p>
-        <p style="margin: 0 0 10px; color: #7f1d1d;">Οι παρακάτω γραμμές στάλθηκαν αλλά δεν εμφανίζονται στην προπαραγγελία ${escapeHtml(orderCode)}, πιθανή αιτία: ο κωδικός είδους περιέχει «&». Πρέπει να καταχωρηθούν χειροκίνητα.</p>
+        <p style="margin: 0 0 8px; color: #b91c1c; font-weight: 700;">⚠ ${escapeHtml(heading)}</p>
+        <p style="margin: 0 0 10px; color: #7f1d1d;">${explanation}</p>
         <table style="border-collapse: collapse; font-size: 0.9rem; width: 100%; max-width: 900px;">
           <thead>
             <tr style="background: #fee2e2;">
@@ -285,7 +448,7 @@ function renderEmail(
             </tr>
           </thead>
           <tbody>
-            ${droppedLines
+            ${lines
               .map((l, idx) => {
                 const pos = l.position != null ? l.position : idx + 1;
                 return `<tr>
@@ -304,16 +467,27 @@ function renderEmail(
           <tfoot>
             <tr style="background: #fee2e2; font-weight: 600;">
               <td colspan="7" style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">Σύνολο αξίας που λείπει:</td>
-              <td style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">${formatMoney(droppedTotal)}</td>
+              <td style="border: 1px solid #fca5a5; padding: 6px 8px; text-align: right;">${formatMoney(lines.reduce((s, l) => s + l.lineval, 0))}</td>
             </tr>
           </tfoot>
         </table>
       </div>
-    `
-    : '';
+    `;
 
-  const introHtml = hasDropped
-    ? `<p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε, <strong style="color: #b91c1c;">αλλά ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')}</strong> (δείτε παρακάτω).</p>`
+  const droppedHtml = renderMissingLinesHtml(
+    droppedLines,
+    `Προσοχή: ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1`,
+    `Οι παρακάτω γραμμές στάλθηκαν αλλά δεν εμφανίζονται στην προπαραγγελία ${escapeHtml(orderCode)}. Πρέπει να καταχωρηθούν χειροκίνητα.`,
+  );
+
+  const introProblems = [
+    hasDropped
+      ? `${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')}`
+      : null,
+    discountNotLanded ? 'η συνολική έκπτωση δεν καταχωρήθηκε' : null,
+  ].filter((p): p is string => p != null);
+  const introHtml = introProblems.length > 0
+    ? `<p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε, <strong style="color: #b91c1c;">αλλά ${escapeHtml(introProblems.join(' και '))}</strong> (δείτε παρακάτω).</p>`
     : `<p>Η προπαραγγελία στο Soft1 για την προσφορά <strong>#${offerId}</strong>${offerDescription ? ` (${escapeHtml(offerDescription)})` : ''} δημιουργήθηκε με επιτυχία.</p>`;
 
   const html = `
@@ -339,13 +513,26 @@ function renderEmail(
   const textLines = [
     greeting,
     '',
-    hasDropped
-      ? `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε, ΑΛΛΑ ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} (δείτε παρακάτω).`
+    introProblems.length > 0
+      ? `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε, ΑΛΛΑ ${introProblems.join(' και ')} (δείτε παρακάτω).`
       : `Η προπαραγγελία στο Soft1 για την προσφορά #${offerId}${offerDescription ? ` (${offerDescription})` : ''} δημιουργήθηκε με επιτυχία.`,
     '',
+    ...(discountNotLanded && discount
+      ? [
+          `⚠ ΠΡΟΣΟΧΗ - Η συνολική έκπτωση ${formatMoney(discount.discountAmount)} ΔΕΝ καταχωρήθηκε στο παραστατικό${discount.verification?.foundValue != null ? ` (βρέθηκε ${formatMoney(discount.verification.foundValue)})` : ''}.`,
+          `  Η προπαραγγελία είναι στην πλήρη αξία ${formatMoney(discount.subtotalBeforeDiscount)}. Καταχωρήστε την έκπτωση χειροκίνητα.`,
+          '',
+        ]
+      : []),
+    ...(discountUnverified && discount
+      ? [
+          `Προσοχή: δεν κατέστη δυνατός ο έλεγχος ότι η συνολική έκπτωση ${formatMoney(discount.discountAmount)} καταχωρήθηκε. Επιβεβαιώστε στο Soft1.`,
+          '',
+        ]
+      : []),
     ...(hasDropped
       ? [
-          `⚠ ΠΡΟΣΟΧΗ - ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1 (πιθανή αιτία: ο κωδικός περιέχει «&»). Καταχωρήστε τες χειροκίνητα:`,
+          `⚠ ΠΡΟΣΟΧΗ - ${droppedLines.length} ${pl(droppedLines.length, 'γραμμή δεν καταχωρήθηκε', 'γραμμές δεν καταχωρήθηκαν')} στο Soft1 (στάλθηκαν αλλά δεν εμφανίζονται στο παραστατικό). Καταχωρήστε τες χειροκίνητα:`,
           ...droppedLines.map((l, idx) => {
             const pos = l.position != null ? l.position : idx + 1;
             return `  ${pos}. ${l.code} - ${l.brandName ?? '-'} | ${l.partNumber ?? '-'} | ${l.description ?? '-'} | qty ${formatQty(l.qty)} | price ${formatMoney(l.price)} | lineval ${formatMoney(l.lineval)}`;
@@ -384,6 +571,24 @@ function renderEmail(
           }),
           `Σύνολο αξίας γραμμών: ${formatMoney(orderLinesTotal)}`,
           `Σύνολο κόστους: ${formatMoney(orderLinesCostTotal)}`,
+        ]
+      : []),
+    ...(showOptions && optionsInfo
+      ? [
+          '',
+          `Γραμμές επιλογών (options): ${optionsInfo.includeOptions ? 'συμπεριλήφθηκαν' : 'ΔΕΝ συμπεριλήφθηκαν'}`
+            + ` — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')},`
+            + ` αξία ${formatMoney(optionsInfo.optionValue)}`,
+        ]
+      : []),
+    ...(showDiscount && discount
+      ? [
+          '',
+          `Επιπλέον έκπτωση προσφοράς: ${discountValueLabel}`,
+          discountAllocationLabel,
+          `  Αξία γραμμών πριν την έκπτωση: ${formatMoney(discount.subtotalBeforeDiscount)}`,
+          `  Έκπτωση: -${formatMoney(discount.discountAmount)}`,
+          `  Τελική αξία παραστατικού: ${formatMoney(discount.subtotalAfterDiscount)}`,
         ]
       : []),
     '',
