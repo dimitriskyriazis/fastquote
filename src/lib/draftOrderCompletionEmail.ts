@@ -13,6 +13,11 @@ import { logger } from './logger';
  * actually landed. SoftOne confirmed `discval` works, so this is a regression guard
  * — but a silently ignored discount ships the order at full value, so every order
  * checks rather than trusting that the request succeeded.
+ *
+ * Only `landed === false` is reported to the user. The read-back looks for the
+ * discount in FINDOC's DISCVAL/DISCAMNT/DISCOUNT columns, and this install keeps it
+ * in its Εκπτ.1 fields instead, so `landed` is null (inconclusive) on every order —
+ * reporting that would be a false alarm on every single one.
  */
 export type DraftOrderDiscountVerification = {
   /** Whether the read-back ran. False = we could not check (never blocks the order). */
@@ -203,10 +208,13 @@ function renderEmail(
   const discountNotLanded = discount?.allocation === 'document'
     && discount.verification?.checked === true
     && discount.verification.landed === false;
-  const discountUnverified = discount?.allocation === 'document'
-    && (discount.verification == null
-      || discount.verification.checked === false
-      || discount.verification.landed === null);
+  // An inconclusive read-back is deliberately silent. This Soft1 install keeps the
+  // document discount in its Εκπτ.1 fields, which are not among the FINDOC columns
+  // the read-back knows about, so it comes back "unverified" on every order even
+  // though the discount lands correctly (confirmed on ΠΡΟΠΑΡΑ075 / offer #8621:
+  // Εκπτ.1 4,00 %, Αξία έκπτ.1 1.498,73 €, Καθαρή 35.969,59 €). Warning on every
+  // order for a non-problem trains people to ignore the warnings that matter, so
+  // only a discount positively read back as missing is reported.
 
   const actions: string[] = [];
   if (results.brandsCreated.length > 0) {
@@ -330,17 +338,7 @@ function renderEmail(
         </p>
       </div>
     `
-    : discountUnverified && discount
-      ? `
-      <div style="border: 1px solid #fbbf24; background: #fffbeb; border-radius: 6px; padding: 12px 16px; margin: 16px 0;">
-        <p style="margin: 0; color: #92400e;">
-          <strong>Προσοχή:</strong> δεν κατέστη δυνατός ο έλεγχος ότι η συνολική έκπτωση
-          ${formatMoney(discount.discountAmount)} καταχωρήθηκε στο παραστατικό ${escapeHtml(orderCode)}.
-          Επιβεβαιώστε την έκπτωση στο Soft1.
-        </p>
-      </div>
-    `
-      : '';
+    : '';
 
   const discountHtml = showDiscount && discount
     ? `
@@ -521,12 +519,6 @@ function renderEmail(
       ? [
           `⚠ ΠΡΟΣΟΧΗ - Η συνολική έκπτωση ${formatMoney(discount.discountAmount)} ΔΕΝ καταχωρήθηκε στο παραστατικό${discount.verification?.foundValue != null ? ` (βρέθηκε ${formatMoney(discount.verification.foundValue)})` : ''}.`,
           `  Η προπαραγγελία είναι στην πλήρη αξία ${formatMoney(discount.subtotalBeforeDiscount)}. Καταχωρήστε την έκπτωση χειροκίνητα.`,
-          '',
-        ]
-      : []),
-    ...(discountUnverified && discount
-      ? [
-          `Προσοχή: δεν κατέστη δυνατός ο έλεγχος ότι η συνολική έκπτωση ${formatMoney(discount.discountAmount)} καταχωρήθηκε. Επιβεβαιώστε στο Soft1.`,
           '',
         ]
       : []),

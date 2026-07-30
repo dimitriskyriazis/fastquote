@@ -2125,27 +2125,24 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           // surfaced here as a failure, not buried in the success box.
           const v = executionResult.discount?.verification;
           if (!executionResult.discount || executionResult.discount.allocation !== 'document' || !v) return null;
-          if (v.landed === true) return null;
-          const couldNotCheck = !v.checked || v.landed === null;
+          // Only a discount positively read back as missing is reported. An
+          // inconclusive read-back is silent: this Soft1 install stores the
+          // document discount in its Εκπτ.1 fields, which the read-back does not
+          // know about, so it is inconclusive on every order even though the
+          // discount lands (confirmed on ΠΡΟΠΑΡΑ075 / offer #8621).
+          if (!v.checked || v.landed !== false) return null;
           return (
             <div className={`${styles.progressItem} ${styles.progressItemFailed}`}>
               <div className={styles.progressIcon}>!</div>
-              {couldNotCheck ? (
-                <>
-                  Could not confirm the {formatCurrency(executionResult.discount.discountAmount)} document
-                  discount reached the order &mdash; check it in Soft1.
-                </>
-              ) : (
-                <>
-                  <strong>
-                    The {formatCurrency(executionResult.discount.discountAmount)} document discount did
-                    NOT reach the order.
-                  </strong>{' '}
-                  Soft1 saved it at the full{' '}
-                  {formatCurrency(executionResult.discount.subtotalBeforeDiscount)}. Add the discount in
-                  Soft1 by hand, or re-issue with the discount applied to the product prices instead.
-                </>
-              )}
+              <>
+                <strong>
+                  The {formatCurrency(executionResult.discount.discountAmount)} document discount did
+                  NOT reach the order.
+                </strong>{' '}
+                Soft1 saved it at the full{' '}
+                {formatCurrency(executionResult.discount.subtotalBeforeDiscount)}. Add the discount in
+                Soft1 by hand, or re-issue with the discount applied to the product prices instead.
+              </>
             </div>
           );
         })()}
