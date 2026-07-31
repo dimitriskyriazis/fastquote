@@ -754,6 +754,16 @@ async function resolveOrCreateProject(
   erpCustomerCode: string | null,
   /** Must match the order's own line selection, or the project value won't match it. */
   includeOptions: boolean,
+  /**
+   * The offer's additional discount as a 0..1 fraction of net value (0 = none).
+   * Applied to the project's net value for the same reason the order carries it:
+   * the project is the deal, and the deal is worth the discounted amount. Applies
+   * to BOTH allocations — 'lines' discounts the unit prices we send and 'document'
+   * discounts the header, but either way the project's own value is computed here
+   * from the offer's undiscounted OfferDetails.NetUnitPrice and would otherwise
+   * overstate the deal by the discount.
+   */
+  discountFraction: number,
 ): Promise<{ prjcId: number; prjcCode: string; isNew: boolean }> {
   let finalErpProjectId = ctx.erpProjectId;
   let finalErpProjectCode = ctx.erpProjectCode;
@@ -823,10 +833,26 @@ async function resolveOrCreateProject(
       LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
       WHERE o.ID = @offerId
     `);
-    const netTotal = totalsRes.recordset?.[0]?.NetTotal != null ? Number(totalsRes.recordset[0].NetTotal) : null;
+    const netTotalBeforeDiscount = totalsRes.recordset?.[0]?.NetTotal != null ? Number(totalsRes.recordset[0].NetTotal) : null;
+    // Only the sales value moves. The cost estimate is what we pay our suppliers,
+    // which a discount given to the customer does not change — discounting it too
+    // would hide the margin the discount actually costs us.
     const costTotal = totalsRes.recordset?.[0]?.CostTotal != null ? Number(totalsRes.recordset[0].CostTotal) : null;
+    const netTotal = netTotalBeforeDiscount != null && discountFraction > 0
+      ? round2(netTotalBeforeDiscount * (1 - discountFraction))
+      : netTotalBeforeDiscount;
     const salesman = totalsRes.recordset?.[0]?.ApprovalNameCode ?? null;
     const salesRep = totalsRes.recordset?.[0]?.SalesNameCode ?? null;
+
+    if (discountFraction > 0) {
+      logger.info('wizard execute: project value net of the offer additional discount', {
+        requestId: ctx.requestId,
+        offerId: String(ctx.offerId),
+        netTotalBeforeDiscount: String(netTotalBeforeDiscount),
+        discountFractionPct: String(round2(discountFraction * 100)),
+        netTotal: String(netTotal),
+      });
+    }
 
     const createdProject = await createProjectFromIntegration({
       integrationKey: 'FASTQUOTE_CREATE_PRJC',
@@ -2537,7 +2563,9 @@ async function handleExecute(
 
   // 3. Create/validate project
   const projectCtx: OfferContext = { ...ctx, erpCustomerId };
-  const project = await resolveOrCreateProject(projectCtx, erpCustomerCode, options.includeOptions);
+  const project = await resolveOrCreateProject(
+    projectCtx, erpCustomerCode, options.includeOptions, discountInfo.fraction,
+  );
   results.project = { id: project.prjcId, code: project.prjcCode, isNew: project.isNew };
   logger.info('wizard execute project', { requestId, offerId, prjcId: project.prjcId, prjcCode: project.prjcCode, isNew: project.isNew });
 
