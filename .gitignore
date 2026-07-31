@@ -69,9 +69,6 @@ docs/
 # script for telquote import
 telquote-import/
 
-# iis files
-iis/
-
 #sql query files
 sql/
 
