@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOfferProductTemplateExportRows,
+  ceilMoney,
   computeDisplayOrderingMap,
   computeNetPriceRescale,
   findDuplicateTreeOrderings,
+  floorTo,
   formatOfferItemNoDisplay,
   getCurrentStartingItemNo,
   planStartingItemNoShift,
   planTreeOrderingEdit,
+  PRICE_DECIMALS,
+  roundMoney,
   type NetRescaleEntry,
 } from './offerProductsUtils';
 import type { OfferExportRow } from './offerProductsPanelTypes';
@@ -852,12 +856,42 @@ describe('computeNetPriceRescale', () => {
   const mkEntries = (items: Array<[oldNet: number, quantity: number]>): NetRescaleEntry[] =>
     items.map(([oldNet, quantity], i) => ({ OfferDetailID: i + 1, oldNet, quantity, newNet: oldNet }));
 
-  // Total in integer cents from the entries' newNet — the same arithmetic the
-  // totals bar ends up doing, so "adds up" means this matches the target.
-  const sumCents = (entries: NetRescaleEntry[]) =>
-    entries.reduce((s, e) => s + Math.round(e.newNet * 100) * e.quantity, 0);
+  // The offer total the server will actually report: SUM of each line's stored
+  // TotalNet, which is net × qty rounded to the DECIMAL(18,4) column scale.
+  const sumStoredTotal = (entries: NetRescaleEntry[]) =>
+    roundMoney(entries.reduce((s, e) => s + roundMoney(e.newNet * e.quantity, PRICE_DECIMALS), 0), PRICE_DECIMALS);
+
+  // Same total in integer cents. Note it rounds the SUM, not each price: the
+  // closing passes deliberately park the last fraction of a cent inside the
+  // prices, where the 2-decimal displays never show it but the stored 4-decimal
+  // line totals still add up.
+  const sumCents = (entries: NetRescaleEntry[]) => Math.round(sumStoredTotal(entries) * 100);
+
+  // What the user actually reads in the grid: the price rounded to 2 decimals.
+  const asDisplayed = (price: number) => roundMoney(price, 2);
+
+  // Identical prices move in lockstep, so the offer total only ever shifts in
+  // multiples of gcd(line quantities) cents. That step is the hard floor on how
+  // precisely any target can be hit, and the fuzz cases below bound themselves by
+  // it rather than pretending a coarse offer can land on an arbitrary figure.
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const quantityGridCents = (items: Array<[number, number]>) => {
+    const byPrice = new Map<number, number>();
+    for (const [price, qty] of items) byPrice.set(price, (byPrice.get(price) ?? 0) + qty);
+    return [...byPrice.values()].reduce((g, q) => gcd(g, q));
+  };
 
   const isBandRounded = (price: number) => Math.abs(roundPriceByMagnitude(price) - price) < 1e-9;
+
+  // The magnitude band step for a price, in cents — mirrors roundPriceByMagnitude.
+  const bandStepCents = (price: number) => {
+    const abs = Math.abs(price);
+    if (abs < 10) return 1;
+    if (abs < 100) return 10;
+    if (abs < 1000) return 100;
+    if (abs < 100000) return 1000;
+    return 10000;
+  };
 
   // Deterministic PRNG so the fuzz cases are reproducible.
   const mulberry32 = (seed: number) => () => {
@@ -928,6 +962,197 @@ describe('computeNetPriceRescale', () => {
     });
   });
 
+  // Whole cents cannot compose every gap. Identical products move in lockstep, so
+  // the offer total only shifts in multiples of the line quantities: an offer whose
+  // quantities all share a factor can be left an odd cent away from a target and no
+  // combination of cent moves will land on it. The closing passes stop at the cent
+  // regardless — a price is always a figure the grid can show, so the visible
+  // column always adds up — and cross the target rather than fall short of it.
+  describe('whole-cent residual closing', () => {
+    it('never puts a sub-cent price on a row', () => {
+      const cases: Array<Array<[number, number]>> = [
+        [[10, 2], [20, 2]], [[10, 4], [20, 4]], [[3.17, 5], [42.6, 3], [510, 2]],
+        [[123.45, 3], [67.89, 2], [9.99, 7], [4500, 1]],
+      ];
+      for (const items of cases) {
+        for (const target of [61.01, 123.45, 999.99, 12345.67]) {
+          const entries = mkEntries(items);
+          computeNetPriceRescale(entries, target, { magnitudeRounding: true, exactTotal: true });
+          for (const e of entries) {
+            expect(asDisplayed(e.newNet), `price ${e.newNet} carries sub-cent decimals`).toBe(e.newNet);
+          }
+        }
+      }
+    });
+
+    it('closes gaps no single group can, by stepping one group up and another down', () => {
+      // Quantities 4 and 6 share a factor of 2, so neither group on its own can
+      // move the total by two cents — only 4-up-against-6-down can.
+      for (let k = 0; k < 40; k++) {
+        const entries = mkEntries([[10, 4], [20, 6]]);
+        const target = roundMoney(200 + k * 0.02, 2);
+        computeNetPriceRescale(entries, target, { magnitudeRounding: true, exactTotal: true });
+        expect(sumStoredTotal(entries), `target ${target}`).toBe(target);
+      }
+    });
+
+    it('gets within a cent when the quantities cannot compose the target', () => {
+      // Every quantity even, so an odd number of cents is simply unreachable.
+      const entries = mkEntries([[10, 2], [20, 2]]);
+      computeNetPriceRescale(entries, 61.01, { magnitudeRounding: true, exactTotal: true });
+      expect(Math.abs(sumStoredTotal(entries) - 61.01)).toBeLessThanOrEqual(0.01);
+    });
+
+    it('keeps lockstep while closing', () => {
+      const entries = mkEntries([[10, 2], [10, 4], [20, 2]]);
+      computeNetPriceRescale(entries, 187.53, { magnitudeRounding: true, exactTotal: true });
+      const tens = new Set(entries.filter((e) => e.oldNet === 10).map((e) => e.newNet));
+      expect(tens.size).toBe(1);
+      expect(Math.abs(sumStoredTotal(entries) - 187.53)).toBeLessThanOrEqual(0.02);
+    });
+
+    it('crosses rather than falls short when atLeastTarget is set', () => {
+      for (let cents = 6000; cents <= 6200; cents++) {
+        const target = cents / 100;
+        const entries = mkEntries([[10, 2], [20, 4], [7.5, 6]]);
+        computeNetPriceRescale(entries, target, {
+          magnitudeRounding: true, exactTotal: true, atLeastTarget: true,
+        });
+        const achieved = sumStoredTotal(entries);
+        expect(achieved, `target ${target} → ${achieved}`).toBeGreaterThanOrEqual(target - 1e-9);
+        expect(achieved - target, `target ${target} overshot by ${achieved - target}`).toBeLessThanOrEqual(0.06);
+      }
+    });
+  });
+
+  // The user-facing contract for the Total Margin / Total Markup totals-row
+  // edits: the percentage the totals bar reads back must be the one that was
+  // typed. Cost is untouched by a rescale, so any net total in
+  // [cost/(1 − m), cost/(1 − m − 0.01)) displays as exactly m — the accept window.
+  // Handing the whole window to the rescale lets it stop while the prices are
+  // still round figures instead of shaving a cent off one to hit a single point.
+  describe('margin / markup targets round-trip exactly', () => {
+    const marginOf = (net: number, cost: number) => (1 - cost / net) * 100;
+    const markupOf = (net: number, cost: number) => net / cost;
+    const marginWindow = (cost: number, m: number) =>
+      ({ min: cost / (1 - m / 100), max: cost / (1 - (m + 0.01) / 100) });
+
+    // Real numbers from offer "401 Γ.Σ.Ν.Α. TEST": thirteen product and service
+    // lines plus a 400,00 printable comment (counted in the offer total, never
+    // rescaled) against a 7.636,35 cost and a typed 57 %.
+    //
+    // Two complaints came out of this offer and they pull against each other. A
+    // net-exact target made prices like 4.749,99 / 633,99 / 162,99 — the closing
+    // pass paying for the total by knocking a cent off round figures. Paying out
+    // of sub-cent slack instead kept the prices round but left the visible column
+    // no longer adding up to the visible total. The window resolves it: every net
+    // in it displays as 57 %, and the band-rounded prices already land inside.
+    it('stops inside the margin window with every price still a round figure', () => {
+      const cost = 7636.35;
+      const comment = 400;
+      const nets = [636, 4750, 3050, 162, 1780, 1320, 1310, 162, 1320, 1320, 162, 651, 736];
+      const entries = mkEntries(nets.map((net) => [net, 1] as [number, number]));
+      const window = marginWindow(cost, 57);
+      computeNetPriceRescale(entries, ceilMoney(window.min, 2) - comment, {
+        magnitudeRounding: true,
+        exactTotal: true,
+        atLeastTarget: true,
+        acceptWindow: { min: window.min - comment, max: window.max - comment },
+      });
+
+      // Not one price moved, and none of them left its round figure.
+      expect(entries.map((e) => e.newNet)).toEqual(nets);
+      // The visible column adds up to the visible total…
+      const offerNet = roundMoney(sumStoredTotal(entries) + comment, PRICE_DECIMALS);
+      expect(offerNet).toBe(17759);
+      expect(asDisplayed(offerNet)).toBe(offerNet);
+      // …and the totals bar reads back the typed 57 %.
+      expect(floorTo(marginOf(offerNet, cost), 2)).toBe(57);
+    });
+
+    // The cent-rounded net target that produced the reported 56,99: half a cent of
+    // net is a ten-millionth of a percentage point here, and a ten-millionth under
+    // the boundary floors a whole hundredth down. The window's low edge is ceiled
+    // to the cent for exactly this reason.
+    it('never lands on the wrong side of the margin boundary', () => {
+      const cost = 7636.35;
+      expect(floorTo(marginOf(roundMoney(cost / (1 - 57 / 100), 2), cost), 2)).toBe(56.99);
+      expect(floorTo(marginOf(ceilMoney(cost / (1 - 57 / 100), 2), cost), 2)).toBe(57);
+    });
+
+    it('a typed markup reads back unchanged after the rescale', () => {
+      const entries = mkEntries([[500, 2], [125.5, 4]]);
+      const cost = 900;
+      const typedMarkup = 1.37;
+      computeNetPriceRescale(entries, ceilMoney(cost * typedMarkup, 2), {
+        magnitudeRounding: true,
+        exactTotal: true,
+        atLeastTarget: true,
+        acceptWindow: { min: cost * typedMarkup, max: cost * (typedMarkup + 0.01) },
+      });
+      expect(floorTo(markupOf(sumStoredTotal(entries), cost), 2)).toBe(typedMarkup);
+    });
+
+    it('fuzz: every typed margin survives the round-trip, floored display included', () => {
+      const rand = mulberry32(20260803);
+      for (let run = 0; run < 250; run++) {
+        const rowCount = 1 + Math.floor(rand() * 8);
+        const items: Array<[number, number]> = [];
+        for (let i = 0; i < rowCount; i++) {
+          const magnitude = 10 ** Math.floor(rand() * 4);
+          const price = Math.round(magnitude * (0.5 + rand() * 9.5) * 100) / 100;
+          // Deliberately no quantity-1 row: shared factors are exactly the case
+          // whole cents cannot close.
+          const qty = 2 * (1 + Math.floor(rand() * 6));
+          items.push([price, qty]);
+        }
+        const entries = mkEntries(items);
+        const basis = items.reduce((s, [p, q]) => s + p * q, 0);
+        // Cost below the basis so the implied margin is positive and sane, and the
+        // offer big enough that a hundredth of a percent is worth over a cent —
+        // below that no cent-priced offer can express a 2-decimal margin at all.
+        const cost = roundMoney(Math.max(basis * (0.3 + rand() * 0.4), 200), PRICE_DECIMALS);
+        const typedMargin = Math.round((5 + rand() * 60) * 100) / 100;
+        const window = marginWindow(cost, typedMargin);
+        computeNetPriceRescale(entries, ceilMoney(window.min, 2), {
+          magnitudeRounding: true, exactTotal: true, atLeastTarget: true, acceptWindow: window,
+        });
+        const achieved = sumStoredTotal(entries);
+        // The window is only reachable if it is at least as wide as the step the
+        // line quantities move the total in. A hundredth of a percent is worth
+        // net x 0.0001 / (1 - margin), so a coarse, small offer can have no total
+        // at all that displays as the typed figure; those land on the nearest
+        // reachable point instead, which is the best any lockstep pricing can do.
+        const gridCents = quantityGridCents(items);
+        if ((window.max - window.min) * 100 >= gridCents) {
+          expect(
+            floorTo(marginOf(achieved, cost), 2),
+            `run ${run}: cost ${cost} margin ${typedMargin} → net ${achieved}`,
+          ).toBe(typedMargin);
+        } else {
+          expect(Math.abs(achieved - window.min), `run ${run}: drifted off a coarse offer`)
+            .toBeLessThanOrEqual(gridCents / 100);
+        }
+        for (const e of entries) {
+          expect(asDisplayed(e.newNet), `run ${run}: price ${e.newNet} is sub-cent`).toBe(e.newNet);
+        }
+      }
+    });
+  });
+  describe('ceilMoney', () => {
+    it('rounds up onto the 4-decimal price grid', () => {
+      expect(ceilMoney(1295.33678756)).toBe(1295.3368);
+      expect(ceilMoney(0.00001)).toBe(0.0001);
+    });
+
+    it('leaves a value already on the grid alone', () => {
+      expect(ceilMoney(1295.3368)).toBe(1295.3368);
+      expect(ceilMoney(10)).toBe(10);
+      // 0.1 * 3 is 0.30000000000000004 — float dust must not cost a whole step.
+      expect(ceilMoney(0.1 * 3)).toBe(0.3);
+    });
+  });
+
   // Services are quoted in days, so a per-unit '-Day' line can carry 0.5 or
   // 0.25. That used to be rounded away by `Math.round(entry.quantity)`, which
   // silently rescaled against the wrong basis.
@@ -983,21 +1208,36 @@ describe('computeNetPriceRescale', () => {
           const qty = 1 + Math.floor(rand() * 12);
           items.push([price, qty]);
         }
-        // Guarantee a qty-1 row so the cent finisher can always close the gap.
-        items.push([Math.round((1 + rand() * 99) * 100) / 100, 1]);
         const baseTotal = items.reduce((s, [p, q]) => s + p * q, 0);
         const target = Math.round(baseTotal * (0.5 + rand()) * 100) / 100;
         const targetCents = Math.round(target * 100);
 
-        // cents mode: exact
+        // cents mode: exact, or a single cent out when the line quantities share a
+        // factor that cannot compose the last cent (no quantity-1 row is planted
+        // here, so that case does come up). Prices never go below the cent, which
+        // is what keeps the visible column agreeing with the visible total.
         const centsEntries = mkEntries(items);
         computeNetPriceRescale(centsEntries, target, {});
-        expect(sumCents(centsEntries), `run ${run}: cents mode missed target`).toBe(targetCents);
+        const gridCents = quantityGridCents(items);
+        expect(Math.abs(sumCents(centsEntries) - targetCents), `run ${run}: cents mode missed target`)
+          .toBeLessThanOrEqual(gridCents);
+        for (const e of centsEntries) {
+          expect(asDisplayed(e.newNet), `run ${run}: price ${e.newNet} is sub-cent`).toBe(e.newNet);
+        }
 
-        // magnitude + exact: exact AND lockstep
+        // magnitude + exact: exact, lockstep, AND every price still reads round.
+        // No quantity-1 row is planted here (it used to be, so the cent finisher
+        // could always close): with lockstep the total only moves in multiples of
+        // gcd(quantities), so an all-even offer can be a fraction of a cent short
+        // of a 4-decimal target. Exact to the cent — the precision everything is
+        // displayed, exported and printed at — always holds.
         const exactEntries = mkEntries(items);
         computeNetPriceRescale(exactEntries, target, { magnitudeRounding: true, exactTotal: true });
-        expect(sumCents(exactEntries), `run ${run}: magnitude+exact missed target`).toBe(targetCents);
+        expect(Math.abs(sumCents(exactEntries) - targetCents), `run ${run}: magnitude+exact missed target`)
+          .toBeLessThanOrEqual(gridCents);
+        for (const e of exactEntries) {
+          expect(asDisplayed(e.newNet), `run ${run}: price ${e.newNet} is sub-cent`).toBe(e.newNet);
+        }
         const byOldNet = new Map<number, Set<number>>();
         for (const e of exactEntries) {
           const set = byOldNet.get(e.oldNet) ?? new Set<number>();
@@ -1008,14 +1248,18 @@ describe('computeNetPriceRescale', () => {
           expect(prices.size, `run ${run}: group ${oldNet} broke lockstep`).toBe(1);
         }
 
-        // magnitude only: every price band-rounded, total within 0.5% of target
+        // magnitude only (no exact total): every price stays on its band, and the
+        // total lands within the finest move any group can make — the band step of
+        // the cheapest group times its quantity. That is the whole reason the
+        // exact modes above exist.
         const magEntries = mkEntries(items);
         const achieved = computeNetPriceRescale(magEntries, target, { magnitudeRounding: true });
         for (const e of magEntries) {
           expect(isBandRounded(e.newNet), `run ${run}: price ${e.newNet} not band-rounded`).toBe(true);
         }
-        expect(Math.abs(achieved - targetCents), `run ${run}: magnitude drifted >0.5%`)
-          .toBeLessThanOrEqual(Math.max(1, Math.round(targetCents * 0.005)));
+        const finestCoinCents = Math.min(...magEntries.map((e) => bandStepCents(e.newNet) * e.quantity));
+        expect(Math.abs(achieved - targetCents), `run ${run}: magnitude drifted beyond its finest step`)
+          .toBeLessThanOrEqual(Math.max(finestCoinCents, Math.round(targetCents * 0.005)));
       }
     });
   });

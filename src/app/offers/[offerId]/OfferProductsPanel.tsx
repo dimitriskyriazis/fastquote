@@ -158,7 +158,10 @@ import {
   recalcProductTotals,
   refreshCategoryAggregates,
   roundMoney,
+  ceilMoney,
   floorTo,
+  PRICE_DECIMALS,
+  hasAssignedProductId,
   computeNetPriceRescale,
   PRICING_FIELD_LABELS,
   PRICING_EDITABLE_FIELDS,
@@ -9248,13 +9251,26 @@ const requestedColumnDefsMap = useMemo(
   // `magnitudeRounding`: snap each rescaled price with roundPriceByMagnitude
   // instead of cents, then close the residual in band steps, so row prices
   // stay "nice" while the total lands as close to the target as the bands
-  // allow. `exactTotal` (the Total Net edit) additionally runs the cent-level
-  // residual pass afterwards, so the total hits the target exactly — a few
-  // groups may carry cent adjustments to balance the books. `marginTarget` is
-  // the typed total margin %, used only to report the achieved margin.
+  // allow. `exactTotal` (the Total Net / Total Margin / Total Markup edits)
+  // additionally runs the residual cascade afterwards — cents first, then
+  // tenths and hundredths of a cent only where cents cannot compose the gap —
+  // so the offer total hits `targetTotal` exactly. `marginTarget` /
+  // `markupTarget` carry the typed percentage/factor: they switch the copy and
+  // the achieved-value report, and they ask the rescale to overshoot rather
+  // than undershoot when the quantities rule out an exact landing.
   const applyTotalNetPriceScale = useCallback(async (
     targetTotal: number,
-    opts?: { magnitudeRounding?: boolean; exactTotal?: boolean; marginTarget?: number; markupTarget?: number; skipConfirm?: boolean },
+    opts?: {
+      magnitudeRounding?: boolean;
+      exactTotal?: boolean;
+      marginTarget?: number;
+      markupTarget?: number;
+      skipConfirm?: boolean;
+      // Offer-total range that displays as the typed percentage; the rescale
+      // stops anywhere inside it rather than forcing the exact midpoint, which
+      // keeps the row prices on their round figures.
+      acceptWindow?: { min: number; max: number };
+    },
   ) => {
     if (totalNetApplying) return;
     const useMagnitude = opts?.magnitudeRounding === true;
@@ -9278,11 +9294,13 @@ const requestedColumnDefsMap = useMemo(
     if (!opts?.skipConfirm) {
       const confirmed = await showConfirmDialog({
         title: 'Adjust all Net Unit Prices?',
-        message: useMagnitude && !requireExact
-          ? `This will proportionally rescale the Net Unit Price of every product row toward ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding each price to a convenient amount, so the achieved total can deviate slightly from the target. This change affects all priced product rows and cannot be undone in a single step.`
-          : useMagnitude
-            ? `This will proportionally rescale the Net Unit Price of every product row so the offer total matches exactly ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
-            : `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
+        message: opts?.marginTarget != null
+          ? `This will proportionally rescale the Net Unit Price of every product row so the offer total margin is exactly ${opts.marginTarget} % - a total net of ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
+          : useMagnitude && !requireExact
+            ? `This will proportionally rescale the Net Unit Price of every product row toward ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding each price to a convenient amount, so the achieved total can deviate slightly from the target. This change affects all priced product rows and cannot be undone in a single step.`
+            : useMagnitude
+              ? `This will proportionally rescale the Net Unit Price of every product row so the offer total matches exactly ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}), rounding prices to convenient amounts where possible. This change affects all priced product rows and cannot be undone in a single step.`
+              : `This will proportionally rescale the Net Unit Price of every product row so the offer total matches ${formatEuroTotal(targetTotal)} (currently ${formatEuroTotal(currentTotal)}). This change affects all priced product rows and cannot be undone in a single step.`,
         confirmLabel: 'Rescale prices',
         cancelLabel: 'Keep as-is',
         tone: 'danger',
@@ -9314,6 +9332,7 @@ const requestedColumnDefsMap = useMemo(
       type Entry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
       const entries: Entry[] = [];
       let recomputedTotal = 0;
+      let skippedUnlinkedPriced = 0;
       for (const row of rows) {
         const rowIsService = isOfferProductService(row);
         if (!rowIsService && !isOfferProductProduct(row)) continue;
@@ -9325,8 +9344,24 @@ const requestedColumnDefsMap = useMemo(
         const net = coerceNumber((row as { NetUnitPrice?: unknown }).NetUnitPrice);
         const qty = coerceNumber((row as { Quantity?: unknown }).Quantity);
         if (net == null || qty == null) continue;
+        // Only rows the totals bar actually counts may be rescaled. The server
+        // sums a line into the offer total on `ProductID IS NOT NULL OR
+        // IsComment = 1` (TOTALS_ROW_PREDICATE), while a requested or legacy
+        // archive line with a part number reads as a 'product' here without ever
+        // having been linked to one — rescaling those would move prices that the
+        // typed total is not made of, leaving the achieved total short of it by
+        // however much they shifted. NetUnitPrice is not editable on such rows,
+        // so a priced one is rare enough to just report.
+        if (!hasAssignedProductId(row)) {
+          skippedUnlinkedPriced += 1;
+          continue;
+        }
         entries.push({ OfferDetailID: id, oldNet: net, quantity: qty, newNet: net });
-        recomputedTotal += net * qty;
+        // Mirror exactly what the server stores for this line — TotalNet is
+        // roundTo(net × qty) into a DECIMAL(18,4) — so the "everything we are
+        // NOT rescaling" figure below comes out clean instead of carrying the
+        // float dust of an unrounded product.
+        recomputedTotal += roundMoney(net * qty, PRICE_DECIMALS);
       }
 
       if (entries.length === 0 || Math.abs(recomputedTotal) < 1e-9) {
@@ -9338,11 +9373,34 @@ const requestedColumnDefsMap = useMemo(
         showToastMessage('Unable to compute a valid target for product rows.', 'error');
         return;
       }
+      // The typed figure is the OFFER total, and the offer total includes rows
+      // this rescale cannot touch: comment cost lines are summed into the totals
+      // bar by the server (TOTALS_ROW_PREDICATE covers IsComment rows) but are
+      // never products or services, so they never reach `entries`. Hold that
+      // slice fixed and aim the rescale at the remainder — target it at the raw
+      // total instead and the achieved offer total lands a whole cost line above
+      // the number the user asked for.
+      const fixedNet = roundMoney(currentTotal - recomputedTotal, PRICE_DECIMALS);
+      const scalableTarget = roundMoney(targetTotal - fixedNet, PRICE_DECIMALS);
+      if (!Number.isFinite(scalableTarget) || scalableTarget <= 0) {
+        showToastMessage(
+          `Cannot reach ${formatEuroTotal(targetTotal)} - the rows that cannot be rescaled already total ${formatEuroTotal(fixedNet)}.`,
+          'error',
+        );
+        return;
+      }
       // Pure rescale core — shared with the unit tests in
       // offerProductsUtils.test.ts. Mutates each entry's newNet.
-      computeNetPriceRescale(entries, targetTotal, {
+      computeNetPriceRescale(entries, scalableTarget, {
         magnitudeRounding: useMagnitude,
         exactTotal: opts?.exactTotal,
+        // A percentage target must never come out floored one hundredth below
+        // what was typed, so overshoot if the quantities rule out exactness.
+        atLeastTarget: opts?.marginTarget != null || opts?.markupTarget != null,
+        // Shifted into the same "rows we are rescaling" frame as the target.
+        acceptWindow: opts?.acceptWindow
+          ? { min: opts.acceptWindow.min - fixedNet, max: opts.acceptWindow.max - fixedNet }
+          : undefined,
       });
 
       const chunkSize = 200;
@@ -9384,10 +9442,12 @@ const requestedColumnDefsMap = useMemo(
         },
       });
 
-      // In magnitude mode the achieved total can differ from the target by the
-      // unclosed residual — report what was actually achieved, not the target.
-      const achievedEntriesTotal = entries.reduce((s, e) => s + e.newNet * e.quantity, 0);
-      const achievedOfferNet = currentTotal + (achievedEntriesTotal - recomputedTotal);
+      // Reconstruct the offer total the server will now report: each line's
+      // stored TotalNet (rounded to the column's scale, as above) plus the slice
+      // this rescale held fixed. In magnitude-only mode this can differ from the
+      // target by the unclosed residual — report what was actually achieved.
+      const achievedEntriesTotal = entries.reduce((s, e) => s + roundMoney(e.newNet * e.quantity, PRICE_DECIMALS), 0);
+      const achievedOfferNet = roundMoney(fixedNet + achievedEntriesTotal, PRICE_DECIMALS);
       const totalCostForMargin = totals?.totalCost;
       const achievedMargin = useMagnitude && totalCostForMargin != null && Math.abs(achievedOfferNet) > 1e-9
         ? (1 - totalCostForMargin / achievedOfferNet) * 100
@@ -9395,14 +9455,21 @@ const requestedColumnDefsMap = useMemo(
       const achievedMarkup = useMagnitude && totalCostForMargin != null && Math.abs(totalCostForMargin) > 1e-9
         ? achievedOfferNet / totalCostForMargin
         : null;
+      // Half a cent: below that the miss is invisible at the 2-decimal precision
+      // every total is displayed with, so claiming the target is honest. Above
+      // it, name both figures rather than the one the user asked for.
+      const missedExactTotal = Math.abs(achievedOfferNet - targetTotal) >= 0.005;
       const successMessage = opts?.markupTarget != null
         ? `Total Markup set to ${achievedMarkup != null ? `${floorTo(achievedMarkup, 2)}` : '-'} (target ${opts.markupTarget}) - ${entries.length} items updated`
         : opts?.marginTarget != null
           ? `Total Margin set to ${achievedMargin != null ? `${floorTo(achievedMargin, 2)}%` : '-'} (target ${opts.marginTarget}%) - ${entries.length} items updated`
-          : !requireExact
+          : !requireExact || missedExactTotal
             ? `Total Net Price set to ${formatEuroTotal(achievedOfferNet)} (target ${formatEuroTotal(targetTotal)}) - ${entries.length} items updated`
             : `Total Net Price set to ${formatEuroTotal(targetTotal)} (${entries.length} items updated)`;
-      showToastMessage(successMessage, 'success', 5500, {
+      const skippedNote = skippedUnlinkedPriced > 0
+        ? `; ${skippedUnlinkedPriced} priced row${skippedUnlinkedPriced === 1 ? '' : 's'} left alone (not linked to a product, so not part of the total)`
+        : '';
+      showToastMessage(`${successMessage}${skippedNote}`, 'success', 5500, {
         label: 'Undo',
         onClick: () => performUndo(),
       });
@@ -9428,7 +9495,10 @@ const requestedColumnDefsMap = useMemo(
       return;
     }
     totalNetSubmitPendingRef.current = true;
-    void applyTotalNetPriceScale(parsed, { magnitudeRounding: true, exactTotal: true }).finally(() => {
+    // Snap to the cent the totals bar shows: a typed total is a money figure, and
+    // a target that isn't a whole cent could only be hit by giving some row a
+    // sub-cent price, which would leave the visible column not adding up.
+    void applyTotalNetPriceScale(roundMoney(parsed, 2), { magnitudeRounding: true, exactTotal: true }).finally(() => {
       totalNetSubmitPendingRef.current = false;
     });
   }, [applyTotalNetPriceScale, totalNetInputValue]);
@@ -9474,8 +9544,19 @@ const requestedColumnDefsMap = useMemo(
       showToastMessage('Unable to compute a valid target net price.', 'error');
       return;
     }
+    // Every net total from here up to the next hundredth of a percent displays as
+    // the typed margin, because the totals bar floors what it shows. Handing the
+    // rescale the whole range lets it stop while the row prices are still round
+    // figures, instead of shaving a cent off one to hit a single exact net.
+    const marginWindow = { min: targetTotalNet, max: currentCost / (1 - (parsed + 0.01) / 100) };
     totalMarginSubmitPendingRef.current = true;
-    void applyTotalNetPriceScale(roundMoney(targetTotalNet, 2), { magnitudeRounding: true, marginTarget: parsed }).finally(() => {
+    // The target inside that window is its low edge rounded up to the cent: a
+    // whole-cent figure so the totals stay addable, and never below the typed
+    // margin (the cost is untouched by a rescale, so margin = 1 - cost/net rises
+    // with the net; a target a hair low would read 22.79 for a typed 22.8).
+    void applyTotalNetPriceScale(ceilMoney(targetTotalNet, 2), {
+      magnitudeRounding: true, exactTotal: true, marginTarget: parsed, acceptWindow: marginWindow,
+    }).finally(() => {
       totalMarginSubmitPendingRef.current = false;
       setTotalMarginEditing(false);
       setTotalMarginInputValue('');
@@ -9636,7 +9717,16 @@ const requestedColumnDefsMap = useMemo(
             showToastMessage('Unable to compute a valid target net price.', 'error');
             return;
           }
-          await applyTotalNetPriceScale(roundMoney(targetTotalNet, 2), { magnitudeRounding: true, markupTarget: parsed, skipConfirm: true });
+          // Same reasoning as the Total Margin edit: markup = achievedNet / cost,
+          // so every net from here to the next hundredth displays as the typed
+          // markup, and the target is the low edge rounded up to the cent.
+          await applyTotalNetPriceScale(ceilMoney(targetTotalNet, 2), {
+            magnitudeRounding: true,
+            exactTotal: true,
+            markupTarget: parsed,
+            skipConfirm: true,
+            acceptWindow: { min: targetTotalNet, max: currentCost * (parsed + 0.01) },
+          });
         } else {
           await applyMarkupToAllRows(parsed, roundTo(marginValue, 4));
         }

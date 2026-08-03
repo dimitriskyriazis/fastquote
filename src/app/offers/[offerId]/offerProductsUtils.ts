@@ -1939,12 +1939,93 @@ export const floorTo = (value: number, places = 2) => {
 
 /* ── Totals-row rescale (Total Net Price / Total Margin edits) ───────── */
 
-// With whole quantities the residual is an exact integer number of cents and
-// `!== 0` is safe. Per-unit service lines can be fractional, which makes it a
-// float — compare against an epsilon so float dust doesn't read as an open gap
+// With whole quantities the residual is an exact integer number of price units
+// and `!== 0` is safe. Per-unit service lines can be fractional, which makes it
+// a float — compare against an epsilon so float dust doesn't read as an open gap
 // and send the closing passes chasing a difference that isn't there.
 const RESCALE_RESIDUAL_EPSILON = 1e-9;
 const isResidualClosed = (diffUnits: number) => Math.abs(diffUnits) < RESCALE_RESIDUAL_EPSILON;
+
+/**
+ * Decimal places a net unit price can actually carry. OfferDetails.NetUnitPrice
+ * and TotalNet are DECIMAL(18,4) (see getDecimalType() in the products route),
+ * so 10^-4 is the finest step that survives the round-trip through SQL — and
+ * the same scale roundMoney()/roundTo() default to. All the rescale arithmetic
+ * below runs in integer multiples of that step ("price units") so the residual
+ * bookkeeping is exact integer maths instead of float-fuzzy.
+ */
+export const PRICE_DECIMALS = 4;
+const PRICE_UNIT_FACTOR = 10 ** PRICE_DECIMALS;
+const CENTS_PER_PRICE_UNIT = PRICE_UNIT_FACTOR / 100;
+
+/**
+ * The ladder of roundings the residual-closing passes walk, and they walk it ONE
+ * RUNG AT A TIME: hundreds, tens, units, tenths, cents, and only then below the
+ * cent. A price that has to move to balance the total gives up as little of its
+ * rounding as the job needs — a 4.750 € line becomes 4.749,50 before it ever
+ * becomes 4.749,47, and it never jumps straight from a round figure to an
+ * arbitrary one.
+ *
+ * The coarse rungs cost nothing when they are not needed: the magnitude pass has
+ * already brought the gap below the smallest move any group can make, so a rung
+ * bigger than that divides to zero steps and is skipped. The ladder therefore
+ * starts itself at the right rung for the offer in hand.
+ *
+ * It STOPS at the cent, and deliberately. A price is only ever a figure the grid
+ * can show, so the visible column always adds up to the visible total — no line
+ * carrying a hidden fraction that makes unit price × quantity disagree with what
+ * is printed next to it. Lockstep pricing moves the total in multiples of the
+ * line quantities, so an offer whose quantities all share a factor can be left an
+ * odd cent short of a target; landing a cent out and saying so beats a grid whose
+ * own numbers do not agree.
+ */
+const RESIDUAL_CLOSING_DECIMALS = [-2, -1, 0, 1, 2] as const;
+
+/** One cent, in price units — the finest step any closing pass may spend. */
+const FINEST_CLOSING_STEP_UNITS = PRICE_UNIT_FACTOR / 100;
+
+/**
+ * How many up/down group swaps one granularity may spend closing a gap. Each
+ * pass is an O(groups²) scan, and in practice one or two land it — the cap keeps
+ * a pathological offer from turning a keystroke into a long pause.
+ */
+/**
+ * Iteration cap for the cent-level finisher. Each iteration strictly reduces what
+ * is left to travel, so this is only a backstop against a pathological offer
+ * turning a keystroke into a long pause; a handful of steps is the norm.
+ */
+const MAX_CLIMB_STEPS = 64;
+
+/**
+ * A range of offer totals that are all equally acceptable, because they all
+ * DISPLAY as the figure the user asked for. A typed Total Margin has one: the
+ * totals bar shows the margin floored to 2 decimals, so every net from
+ * cost/(1 − m) up to cost/(1 − m − 0.01) reads as exactly m. Landing anywhere in
+ * there means the rescale can stop while every price is still on its magnitude
+ * band — no price knocked a cent off a round figure to balance the books, and the
+ * visible column still adds up to the visible total.
+ *
+ * `max` is exclusive, matching the floor the display does.
+ */
+export type NetRescaleAcceptWindow = { min: number; max: number };
+
+/**
+ * Round UP onto the storable price grid. Used for the net total derived from a
+ * typed Total Margin / Total Markup: the totals bar FLOORS the percentage it
+ * shows (see floorTo), so a target net that lands a hair low would read 22.79
+ * for a typed 22.8. Rounding the target up instead keeps the achieved
+ * percentage at, or a whisker above, what was typed.
+ *
+ * A value already on the grid is left alone rather than pushed a whole step up —
+ * the tolerance absorbs the float dust in `value * factor`.
+ */
+export const ceilMoney = (value: number, places = PRICE_DECIMALS) => {
+  const factor = 10 ** places;
+  const scaled = value * factor;
+  const nearest = Math.round(scaled);
+  if (Math.abs(scaled - nearest) < 1e-6) return nearest / factor;
+  return Math.ceil(scaled) / factor;
+};
 
 export type NetRescaleEntry = { OfferDetailID: number; oldNet: number; quantity: number; newNet: number };
 
@@ -1952,9 +2033,19 @@ export type NetRescaleOptions = {
   // Snap each rescaled price with roundPriceByMagnitude (instead of cents)
   // and close the residual in band steps, so prices stay "nice".
   magnitudeRounding?: boolean;
-  // Additionally close the leftover with cent steps so the achieved total
-  // equals the target exactly. Implied when magnitudeRounding is off.
+  // Additionally close the leftover with cent-and-finer steps so the achieved
+  // total equals the target exactly. Implied when magnitudeRounding is off.
   exactTotal?: boolean;
+  // When the quantities make an exact landing impossible, overshoot rather than
+  // undershoot. Set for Total Margin / Total Markup targets, where the totals
+  // bar floors the displayed percentage and one step short reads as a whole
+  // 0.01 less than the user typed. Only meaningful alongside an exact total.
+  atLeastTarget?: boolean;
+  // Stop as soon as the total is anywhere in this range instead of driving it
+  // onto `targetTotal` exactly — see NetRescaleAcceptWindow. Given for the
+  // percentage edits, whose displayed value is the same across the whole range,
+  // so the prices can stay on their magnitude bands.
+  acceptWindow?: NetRescaleAcceptWindow;
 };
 
 /**
@@ -1965,7 +2056,9 @@ export type NetRescaleOptions = {
  *
  * Residual closing: magnitude mode nudges groups by whole band steps (coarse
  * groups close the bulk, cheap rows are the small change); cents mode — and
- * magnitude mode with `exactTotal` — finishes with 1-cent steps.
+ * magnitude mode with `exactTotal` — then walks RESIDUAL_CLOSING_DECIMALS,
+ * spending whole cents first and only reaching for tenths and hundredths of a
+ * cent when the quantities make cents alone unable to compose the gap.
  */
 export const computeNetPriceRescale = (
   entries: NetRescaleEntry[],
@@ -2001,32 +2094,72 @@ export const computeNetPriceRescale = (
   }
   const groups = [...groupMap.values()];
 
-  const toUnits = (x: number) => Math.round(x * 100);
-  const fromUnits = (u: number) => u / 100;
+  const toUnits = (x: number) => Math.round(x * PRICE_UNIT_FACTOR);
+  const fromUnits = (u: number) => u / PRICE_UNIT_FACTOR;
   const setGroupNet = (group: PriceGroup, unitValue: number) => {
     group.newNet = fromUnits(unitValue);
     for (const e of group.entries) e.newNet = group.newNet;
   };
   const targetUnits = toUnits(targetTotal);
   const achievedUnits = () => groups.reduce((s, g) => s + toUnits(g.newNet) * g.totalQty, 0);
+  const movableGroups = () => groups.filter((g) => g.totalQty > 0);
   let diffUnits = targetUnits - achievedUnits();
 
-  if (!isResidualClosed(diffUnits) && useMagnitude) {
-    // The rounding band step for a group's current price, in cents.
+  // A percentage edit is satisfied by any total in its accept window, and the
+  // band-rounded prices very often land inside one already. Stopping there is
+  // strictly better than driving onto the exact target: the total reads as the
+  // typed percentage either way, and every price keeps the round figure the
+  // magnitude pass produced, so the visible column adds up to the visible total.
+  const withinAcceptWindow = () => {
+    const window = opts?.acceptWindow;
+    if (!window) return false;
+    const achieved = achievedUnits() / PRICE_UNIT_FACTOR;
+    return achieved >= window.min - 1e-9 && achieved < window.max;
+  };
+  // Every pass below asks this, not just the gap, so the moment a window is
+  // entered the work stops — no rung of the ladder is spent, and in particular
+  // nothing ever reaches below the cent, once the answer is already good enough.
+  const residualSettled = () => isResidualClosed(diffUnits) || withinAcceptWindow();
+
+  /**
+   * How far the total still has to travel, which is what every "does this step
+   * help?" test below measures. Without a window that is simply the distance to
+   * the target. With one it is the distance to the NEAREST EDGE of the window, and
+   * zero inside it — so a step is never taken that trades a position just outside
+   * the window for one further outside on the other side, which is how a 22,61 %
+   * target used to sail past its window and read back 22,62.
+   */
+  const distanceToGoal = (achieved: number) => {
+    const window = opts?.acceptWindow;
+    if (!window) return Math.abs(targetUnits - achieved);
+    const min = window.min * PRICE_UNIT_FACTOR;
+    const max = window.max * PRICE_UNIT_FACTOR;
+    if (achieved < min) return min - achieved;
+    if (achieved >= max) return achieved - max;
+    return 0;
+  };
+  // `delta` is the change a candidate step would make to the achieved total.
+  const stepHelps = (delta: number) => {
+    const achieved = achievedUnits();
+    return distanceToGoal(achieved + delta) < distanceToGoal(achieved);
+  };
+
+  if (!residualSettled() && useMagnitude) {
+    // The rounding band step for a group's current price, in price units.
     const stepUnits = (g: PriceGroup): number => {
       const abs = Math.abs(g.newNet);
-      if (abs < 10) return 1;        // 0.01
-      if (abs < 100) return 10;      // 0.10
-      if (abs < 1000) return 100;    // 1
-      if (abs < 100000) return 1000; // 10
-      return 10000;                  // 100
+      if (abs < 10) return toUnits(0.01);
+      if (abs < 100) return toUnits(0.1);
+      if (abs < 1000) return toUnits(1);
+      if (abs < 100000) return toUnits(10);
+      return toUnits(100);
     };
     // Pass 1: biggest movers first (band step × quantity), whole steps
     // toward the target — coarse groups close the bulk of the gap.
-    const byCoinDesc = groups.filter((g) => g.totalQty > 0)
+    const byCoinDesc = movableGroups()
       .sort((a, b) => stepUnits(b) * b.totalQty - stepUnits(a) * a.totalQty);
     for (const g of byCoinDesc) {
-      if (isResidualClosed(diffUnits)) break;
+      if (residualSettled()) break;
       const coin = stepUnits(g) * g.totalQty;
       const steps = diffUnits > 0 ? Math.floor(diffUnits / coin) : Math.ceil(diffUnits / coin);
       if (steps === 0) continue;
@@ -2040,52 +2173,125 @@ export const computeNetPriceRescale = (
     }
     // Pass 2: polish with the finest movers — cheap rows are the small
     // change. Take one step wherever it shrinks the remaining gap.
-    if (!isResidualClosed(diffUnits)) {
-      const byCoinAsc = groups.filter((g) => g.totalQty > 0)
+    if (!residualSettled()) {
+      const byCoinAsc = movableGroups()
         .sort((a, b) => stepUnits(a) * a.totalQty - stepUnits(b) * b.totalQty);
       for (const g of byCoinAsc) {
-        if (isResidualClosed(diffUnits)) break;
+        if (residualSettled()) break;
         const dir = diffUnits > 0 ? 1 : -1;
         const delta = dir * stepUnits(g) * g.totalQty;
-        if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
+        if (stepHelps(delta)) {
           setGroupNet(g, toUnits(g.newNet) + dir * stepUnits(g));
           diffUnits -= delta;
         }
       }
     }
   }
-  // Cent-level passes: the only rounding for cents mode; for magnitude mode
-  // with `exactTotal`, the finisher that closes the band-step leftover so the
-  // total hits the target to the cent.
-  if (!isResidualClosed(diffUnits) && requireExact) {
-    // Pass 1: largest-quantity groups first, take whole steps.
-    const byQtyDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.totalQty - a.totalQty);
-    for (const g of byQtyDesc) {
-      if (isResidualClosed(diffUnits)) break;
-      const steps = diffUnits > 0 ? Math.floor(diffUnits / g.totalQty) : Math.ceil(diffUnits / g.totalQty);
+
+  // Bulk mover for one rung of the ladder: largest-quantity groups first, each
+  // taking as many whole steps toward the target as it can without passing it.
+  const takeWholeSteps = (step: number) => {
+    for (const g of movableGroups().sort((a, b) => b.totalQty - a.totalQty)) {
+      if (residualSettled()) break;
+      const coin = step * g.totalQty;
+      const steps = diffUnits > 0 ? Math.floor(diffUnits / coin) : Math.ceil(diffUnits / coin);
       if (steps === 0) continue;
-      setGroupNet(g, toUnits(g.newNet) + steps);
-      diffUnits -= steps * g.totalQty;
+      setGroupNet(g, toUnits(g.newNet) + steps * step);
+      diffUnits = targetUnits - achievedUnits();
     }
-    // Pass 2: prefer the most expensive group for the residual. Skip groups
-    // whose totalQty would overshoot (equal-price rule means a totalQty=2
-    // group moves the total by 2 cents per step, so it can't close a 1-cent
-    // gap — the guard below auto-skips to the next most expensive group).
-    if (!isResidualClosed(diffUnits)) {
-      const byPriceDesc = groups.filter((g) => g.totalQty > 0).sort((a, b) => b.newNet - a.newNet);
-      for (const g of byPriceDesc) {
-        if (isResidualClosed(diffUnits)) break;
-        const dir = diffUnits > 0 ? 1 : -1;
-        const delta = dir * g.totalQty;
-        if (Math.abs(diffUnits - delta) < Math.abs(diffUnits)) {
-          setGroupNet(g, toUnits(g.newNet) + dir);
-          diffUnits -= delta;
+  };
+
+  /**
+   * The finisher: repeatedly take the single cent-level move that most reduces
+   * what is left to travel, and stop when nothing reduces it any further. Each
+   * iteration strictly decreases that distance, so it always terminates.
+   *
+   * The moves it can choose from are one group up or down, and — crucially — one
+   * group up paired against another down. Lockstep pricing means a group only
+   * ever shifts the total in whole multiples of its own quantity, so when every
+   * quantity shares a factor no single group can close a smaller gap; a pair
+   * shifts it by the DIFFERENCE of their quantities (6 up against 4 down = two
+   * cents), which reaches what neither can alone.
+   */
+  const climbTowardGoal = () => {
+    const step = FINEST_CLOSING_STEP_UNITS;
+    const canMove = (g: PriceGroup, dir: number) => toUnits(g.newNet) + dir * step > 0;
+    for (let iteration = 0; iteration < MAX_CLIMB_STEPS && !residualSettled(); iteration++) {
+      const movable = movableGroups();
+      const achieved = achievedUnits();
+      const here = distanceToGoal(achieved);
+      let best: { a: PriceGroup; aDir: number; b: PriceGroup | null; distance: number } | null = null;
+      const consider = (a: PriceGroup, aDir: number, b: PriceGroup | null, delta: number) => {
+        const distance = distanceToGoal(achieved + delta);
+        if (distance >= here) return;
+        if (best == null || distance < best.distance) best = { a, aDir, b, distance };
+      };
+      for (const a of movable) {
+        for (const aDir of [1, -1]) {
+          if (!canMove(a, aDir)) continue;
+          consider(a, aDir, null, aDir * step * a.totalQty);
+          for (const b of movable) {
+            if (a === b || !canMove(b, -aDir)) continue;
+            consider(a, aDir, b, aDir * step * (a.totalQty - b.totalQty));
+          }
         }
+      }
+      // Re-read through the declared type: TypeScript narrows a variable only
+      // assigned inside a closure down to null on its own.
+      const chosen = best as { a: PriceGroup; aDir: number; b: PriceGroup | null } | null;
+      if (chosen == null) break;
+      setGroupNet(chosen.a, toUnits(chosen.a.newNet) + chosen.aDir * step);
+      if (chosen.b != null) setGroupNet(chosen.b, toUnits(chosen.b.newNet) - chosen.aDir * step);
+      diffUnits = targetUnits - achievedUnits();
+    }
+  };
+
+  // Close what the band steps could not: walk the ladder down one rung at a time
+  // for the bulk of the gap, then let the cent-level climb finish it off.
+  if (!residualSettled() && requireExact) {
+    for (const decimals of RESIDUAL_CLOSING_DECIMALS) {
+      if (residualSettled()) break;
+      takeWholeSteps(10 ** (PRICE_DECIMALS - decimals));
+    }
+    climbTowardGoal();
+    // Quantities sharing a common factor can leave a gap that no combination of
+    // whole-cent lockstep moves lands on (every line quantity 12, a few cents to
+    // go), and the climb then stops at the nearest reachable point — which may be
+    // just short. Without a window to aim at, a percentage target must not come
+    // out floored BELOW what was typed (one cent short can read as 22.79 for a
+    // typed 22.8), so cross the target instead, by the smallest move that gets
+    // there. With a window the climb has already landed as close as the
+    // quantities allow, and crossing could only push it out the other side.
+    if (
+      opts?.atLeastTarget === true && opts.acceptWindow == null
+      && !residualSettled() && diffUnits > RESCALE_RESIDUAL_EPSILON
+    ) {
+      const step = FINEST_CLOSING_STEP_UNITS;
+      const movable = movableGroups();
+      let best: { up: PriceGroup; down: PriceGroup | null; delta: number } | null = null;
+      const consider = (up: PriceGroup, down: PriceGroup | null, delta: number) => {
+        if (delta < diffUnits) return; // still short of the target — no use here
+        if (best == null || delta < best.delta) best = { up, down, delta };
+      };
+      for (const up of movable) {
+        consider(up, null, step * up.totalQty);
+        for (const down of movable) {
+          if (up === down) continue;
+          if (toUnits(down.newNet) - step <= 0) continue;
+          const delta = step * (up.totalQty - down.totalQty);
+          if (delta > 0) consider(up, down, delta);
+        }
+      }
+      const chosen = best as { up: PriceGroup; down: PriceGroup | null } | null;
+      if (chosen != null) {
+        setGroupNet(chosen.up, toUnits(chosen.up.newNet) + step);
+        if (chosen.down != null) setGroupNet(chosen.down, toUnits(chosen.down.newNet) - step);
+        diffUnits = targetUnits - achievedUnits();
       }
     }
   }
 
-  return achievedUnits();
+  return Math.round(achievedUnits() / CENTS_PER_PRICE_UNIT);
 };
 
 export const OFFER_PRODUCTS_EXPORT_FIELDS = [
