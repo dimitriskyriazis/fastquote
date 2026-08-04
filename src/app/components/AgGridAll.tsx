@@ -1661,6 +1661,22 @@ export default function AgGridAll({
   const { handleEditingStart, handleEditingStop, requestRefresh } = useEditorFocusHandlers();
   const persistColumnStateNowRef = useRef<(() => void) | null>(null);
 
+  // Bumped every time someone asks for a NON-purge server-side refresh.
+  //
+  // A purge:false refresh only *marks* the loaded nodes (AG Grid's
+  // LazyCache.markNodesForRefresh) and queues a load check — and
+  // LazyBlockLoadingService.getBlockToLoad skips any node whose index is
+  // already in its in-flight `loadingNodes` set. So if a block fetch was
+  // already outstanding when the refresh landed, AG Grid issues NO new
+  // request for it. That older response then lands in onLoadSuccess, whose
+  // only staleness guard is `!live` (false only after a purge): it writes the
+  // pre-mutation rows, resets numberOfRows, and clears nodesToRefresh — the
+  // refresh is silently consumed and the block keeps stale content until a
+  // full page reload. Comparing this epoch across the await lets the
+  // datasource re-issue instead of handing AG Grid a response that predates
+  // the mutation. purge:true needs no epoch — AG Grid drops those itself.
+  const dataEpochRef = useRef(0);
+
   // REFS - Grid References & State Tracking
   const wrapGridApiRefreshers = useCallback((api: GridApi<RowData> | null) => {
     if (!api || typeof requestRefresh !== 'function') return;
@@ -1673,6 +1689,14 @@ export default function AgGridAll({
       const boundOriginal = (original as (...args: unknown[]) => unknown).bind(api);
       (api as unknown as Record<string, unknown>)[method] = (...args: unknown[]) => {
         if (method === 'refreshServerSide') {
+          // Every refresh in the app funnels through here (see comment above
+          // captureScrollBeforeRefresh), so this is the one place that sees
+          // refreshToken bumps, realtime rows-refresh events and page-level
+          // calls alike.
+          const purgeRequested = Boolean((args[0] as { purge?: boolean } | undefined)?.purge);
+          if (!purgeRequested) {
+            dataEpochRef.current += 1;
+          }
           try {
             persistColumnStateNowRef.current?.();
           } catch {
@@ -3597,6 +3621,9 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
   // SERVER-SIDE DATASOURCE - Implementation
   const datasource: IServerSideDatasource<RowData> = useMemo(() => ({
     getRows: async (params: IServerSideGetRowsParams<RowData>) => {
+      // Captured before the fetch is dispatched; compared after the await to
+      // detect a refresh that was requested while this request was in flight.
+      let epochAtDispatch = dataEpochRef.current;
       const isBlockZero = (params.request.startRow ?? 0) === 0;
       if (isBlockZero) setBlockZeroLoading(true);
       try {
@@ -3673,8 +3700,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
               }
             }
           }
-          if (!responsePromise) {
-            responsePromise = (async () => {
+          const dispatchFetch = () => {
+            const pending = (async () => {
               const perfStart = performance.now();
               const res = await fetch(endpoint, {
               method: 'POST',
@@ -3708,13 +3735,37 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
             }
             return data;
           })();
-          requestCacheRef.current.set(cacheKey, responsePromise);
-          responsePromise.finally(() => {
-            requestCacheRef.current.delete(cacheKey);
-          });
-        }
+            requestCacheRef.current.set(cacheKey, pending);
+            pending.finally(() => {
+              // Only evict our own entry — a retry (or a later getRows for the
+              // same block) may already have replaced it, and blindly deleting
+              // would drop a still-in-flight promise out of the dedupe map.
+              if (requestCacheRef.current.get(cacheKey) === pending) {
+                requestCacheRef.current.delete(cacheKey);
+              }
+            });
+            return pending;
+          };
+          if (!responsePromise) {
+            responsePromise = dispatchFetch();
+          }
 
-        const data = await responsePromise;
+        let data = await responsePromise;
+        // The response predates a non-purge refresh that has since been
+        // requested, so it carries pre-mutation rows and a pre-mutation
+        // rowCount. Handing it to params.success would clear AG Grid's
+        // pending refresh marks with stale data and no replacement request
+        // would ever be issued (see dataEpochRef). Re-issue instead. Bounded,
+        // so a burst of refreshes degrades to today's behaviour rather than
+        // looping; the block stays in AG Grid's loadingNodes throughout, which
+        // is correct — the request genuinely is still outstanding.
+        let staleRetries = 0;
+        while (dataEpochRef.current !== epochAtDispatch && staleRetries < 2) {
+          staleRetries += 1;
+          epochAtDispatch = dataEpochRef.current;
+          requestCacheRef.current.delete(cacheKey);
+          data = await dispatchFetch();
+        }
         const rawRows = Array.isArray(data.rows) ? data.rows : [];
         const normalizedRows: RowData[] = rawRows.map((row) => {
           const normalizedOrdering = normalizeTreeOrderingValue((row as { TreeOrdering?: unknown }).TreeOrdering ?? null);
@@ -5375,15 +5426,31 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       if (params.type === 'popupCellEditor') return;
 
       // All other popups with an eventSource (select dropdowns, column menus, etc.):
-      // re-anchor both axes so the popup sits flush below the editing cell.
+      // re-anchor both axes so the popup sits flush against the editing cell.
       if (params.eventSource) {
         const editingCellEl = popup.ownerDocument?.querySelector('.ag-cell.ag-cell-editing');
         const sourceRect = (editingCellEl ?? params.eventSource).getBoundingClientRect();
         if (Math.abs(sourceRect.left - popupRect.left) > 1) {
           popup.style.left = `${sourceRect.left}px`;
         }
-        if (Math.abs(sourceRect.bottom - popupRect.top) > 1) {
-          popup.style.top = `${sourceRect.bottom}px`;
+        // Below the cell when it fits, above it when it doesn't. AG Grid already
+        // makes this flip decision (positionPopupByComponent + keepWithinBounds),
+        // but this callback used to pin top to sourceRect.bottom unconditionally
+        // and pushed the popup back down off-screen for cells near the bottom of
+        // the window. Re-decide here instead of clobbering, measuring against the
+        // real viewport — popupRect/sourceRect/innerHeight are all post-scale
+        // visual px, and the write is the absolute viewport target the global
+        // corrector expects.
+        const spaceBelow = window.innerHeight - MARGIN - sourceRect.bottom;
+        const spaceAbove = sourceRect.top - MARGIN;
+        const openAbove = popupRect.height > spaceBelow && spaceAbove > spaceBelow;
+        const preferredTop = openAbove ? sourceRect.top - popupRect.height : sourceRect.bottom;
+        const nextTop = Math.min(
+          Math.max(MARGIN, preferredTop),
+          Math.max(MARGIN, window.innerHeight - MARGIN - popupRect.height),
+        );
+        if (Math.abs(nextTop - popupRect.top) > 1) {
+          popup.style.top = `${nextTop}px`;
         }
       }
     });

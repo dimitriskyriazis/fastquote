@@ -368,6 +368,23 @@
   background-color: #ead9b8 !important;
 }
 
+/* Negative margin / zero-qty warning takes precedence over option purple, same
+   as the price-list colours above. The option row colour is painted per CELL
+   (line 314/318, 0,4,0) and out-specifies the resting warning rule in
+   ag-grid-overrides.css (0,3,0), so the red used to show on hover but not at
+   rest — hover has its own 0,8,0 rule further up, resting state had nothing.
+   Right-click (.ag-row--context-menu-active) lost the red the same way; row
+   selection did not, because the warning rules in ag-grid-overrides.css only
+   exclude comment/service/category rows, not options. */
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option .ag-cell.offer-products-grid__cell--negative-margin) {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+:global(.offer-products-grid) .gridShell :global(.ag-row.offer-row--option:is(.ag-row-selected, .ag-row-range-selected, .ag-row--context-menu-active) .ag-cell.offer-products-grid__cell--negative-margin) {
+  background-color: #b91c1c !important; /* Darker red for selected, matches product rows */
+  color: #ffffff !important;
+}
+
 /* Hover states for offer-products-grid rows (only when not selected) - using :hover pseudo-class.
    Hover paints the entire row including range-selected cells, so the range
    selection is visually continuous with the rest of the hovered row (no

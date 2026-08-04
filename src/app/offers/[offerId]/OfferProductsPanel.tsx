@@ -5179,7 +5179,8 @@ const requestedColumnDefsMap = useMemo(
       lastUndoLabel: lastLabel,
       pushUndo,
       setInsertLineVisible: (visible: boolean, atEnd?: boolean) => setInsertLineVisibleRef.current?.(visible, atEnd),
-      pinInsertLineBelowRowId: (offerDetailId: number) => pinInsertLineBelowRowIdRef.current?.(offerDetailId),
+      pinInsertLineBelowRowId: (offerDetailId: number, notifyParent?: boolean) =>
+        pinInsertLineBelowRowIdRef.current?.(offerDetailId, notifyParent),
       hasPendingInsertLinePin: () => pendingPinBelowIdRef.current != null,
       deselectAllRows: () => {
         const api = gridApiRef.current;
