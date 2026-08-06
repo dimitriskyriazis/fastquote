@@ -31,6 +31,7 @@ export type OfferPdfData = {
     name: string | null;
     brandName: string | null;
     address: string | null;
+    country: string | null;
     phone: string | null;
     email: string | null;
     taxId: string | null;
@@ -383,6 +384,11 @@ function scalar(v: string | number | null | undefined): string {
   return str(v);
 }
 
+// The address row prints as "Address, Country"; either part may be missing.
+function customerAddressLine(customer: OfferPdfData['customer']): string {
+  return [str(customer.address), str(customer.country)].filter(Boolean).join(', ');
+}
+
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -606,7 +612,7 @@ function buildCompactHeader(
   const leftInfo = [
     ...(includeCustomer ? [{ label: L.to, value: meta.customerName || '-' }] : []),
     { label: L.attn, value: meta.attn },
-    { label: L.address, value: str(data.customer.address) },
+    { label: L.address, value: customerAddressLine(data.customer) },
     { label: L.phone, value: str(data.customer.phone) },
     { label: L.taxId, value: str(data.customer.taxId) },
   ].filter((r) => r.value);
@@ -725,7 +731,7 @@ function buildCoverPage(data: OfferPdfData, L: Labels, lang: PdfLang, orientatio
   // De-duplicate cover: do NOT include L.to here since the client identity is already centered.
   const leftInfo = [
     { label: L.attn, value: meta.attn },
-    { label: L.address, value: str(data.customer.address) },
+    { label: L.address, value: customerAddressLine(data.customer) },
     { label: L.phone, value: str(data.customer.phone) },
     { label: L.taxId, value: str(data.customer.taxId) },
   ].filter((r) => r.value);

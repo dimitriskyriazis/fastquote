@@ -50,6 +50,7 @@ type OfferHeaderRow = {
   CustomerName: string | null;
   CustomerBrandName: string | null;
   CustomerAddress: string | null;
+  CustomerCountry: string | null;
   CustomerPhone: string | null;
   CustomerEmail: string | null;
   CustomerTaxID: string | null;
@@ -164,6 +165,7 @@ export async function GET(
           c.Name AS CustomerName,
           c.BrandName AS CustomerBrandName,
           c.Address AS CustomerAddress,
+          country.Name AS CustomerCountry,
           c.Phone AS CustomerPhone,
           c.Email AS CustomerEmail,
           c.TaxID AS CustomerTaxID,
@@ -186,6 +188,7 @@ export async function GET(
           cur.Name AS CurrencyName
         FROM dbo.[Offer] o
         LEFT JOIN dbo.Customers c ON o.CustomerID = c.ID
+        LEFT JOIN dbo.Countries country ON c.CountryID = country.ID
         LEFT JOIN dbo.Contacts cnt ON o.ContactID = cnt.ID
         LEFT JOIN dbo.AspNetUsers sales ON o.SalesPersonId = sales.Id
         LEFT JOIN dbo.AspNetUsers approver ON o.ApprovalUserId = approver.Id
@@ -373,6 +376,7 @@ export async function GET(
         name: header.CustomerName,
         brandName: header.CustomerBrandName,
         address: header.CustomerAddress,
+        country: header.CustomerCountry,
         phone: header.CustomerPhone,
         email: header.CustomerEmail,
         taxId: header.CustomerTaxID,
