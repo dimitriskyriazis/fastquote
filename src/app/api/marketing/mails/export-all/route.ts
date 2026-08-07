@@ -16,12 +16,13 @@ type ContactRow = {
   LastName: string | null;
   FirstName: string | null;
   Email: string | null;
+  SecondEmail: string | null;
   Fax: string | null;
 };
 
 function buildExcelBuffer(rows: ContactRow[], sheetName: string): ArrayBuffer {
   const wsData: unknown[][] = [
-    ["Customer", "Title", "Last Name", "First Name", "Email", "Fax"],
+    ["Customer", "Title", "Last Name", "First Name", "Email", "Second Email", "Fax"],
   ];
   for (const row of rows) {
     wsData.push([
@@ -30,13 +31,14 @@ function buildExcelBuffer(rows: ContactRow[], sheetName: string): ArrayBuffer {
       row.LastName ?? "",
       row.FirstName ?? "",
       row.Email ?? "",
+      row.SecondEmail ?? "",
       row.Fax ?? "",
     ]);
   }
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   ws["!cols"] = [
-    { wch: 30 }, { wch: 10 }, { wch: 20 }, { wch: 20 }, { wch: 35 }, { wch: 20 },
+    { wch: 30 }, { wch: 10 }, { wch: 20 }, { wch: 20 }, { wch: 35 }, { wch: 35 }, { wch: 20 },
   ];
   XLSX.utils.book_append_sheet(wb, ws, sheetName);
   return XLSX.write(wb, { bookType: "xlsx", type: "array" });
@@ -55,18 +57,26 @@ export async function POST(req: NextRequest) {
         t.Name AS Title,
         c.LastName,
         c.FirstName,
-        c.Email,
+        -- Suppression is per-address: blank out only the one that opted out / bounced.
+        CASE WHEN es1.ID IS NULL THEN c.Email ELSE NULL END AS Email,
+        CASE WHEN es2.ID IS NULL THEN c.SecondEmail ELSE NULL END AS SecondEmail,
         c.Fax
       FROM dbo.Contacts c
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID
       LEFT JOIN dbo.Customers cust ON cust.ID = c.CustomerID
-      WHERE c.Email IS NOT NULL AND c.Email <> ''
-        -- Exclude contacts that have opted out / have a bad address: they must never be mailed.
+      -- These join ONLY the suppressed statuses, so a matched row means "never mail this address".
+      LEFT JOIN dbo.EmailStatuses es1
+        ON es1.ID = c.EmailStatusID
+       AND es1.Name IN ('Email Unsubscribed', 'Wrong Email')
+      LEFT JOIN dbo.EmailStatuses es2
+        ON es2.ID = c.SecondEmailStatusID
+       AND es2.Name IN ('Email Unsubscribed', 'Wrong Email')
+      -- Disabled contacts are inactive records: they must never be mailed.
+      WHERE ISNULL(c.Enabled, 0) = 1
+        -- This export is address-only, so a contact needs at least one mailable address left.
         AND (
-          c.EmailStatusID IS NULL
-          OR c.EmailStatusID NOT IN (
-               SELECT ID FROM dbo.EmailStatuses WHERE Name IN ('Email Unsubscribed', 'Wrong Email')
-             )
+          (NULLIF(LTRIM(RTRIM(c.Email)), '') IS NOT NULL AND es1.ID IS NULL)
+          OR (NULLIF(LTRIM(RTRIM(c.SecondEmail)), '') IS NOT NULL AND es2.ID IS NULL)
         )
       ORDER BY c.LastName, c.FirstName
     `);
