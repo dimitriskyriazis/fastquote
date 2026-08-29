@@ -139,6 +139,12 @@ export async function POST(req: NextRequest) {
        AND es2.Name IN ('Email Unsubscribed', 'Wrong Email')
       -- Disabled contacts are inactive records: they must never be mailed.
       WHERE ISNULL(c.Enabled, 0) = 1
+        -- ...and neither may a live contact of a RETIRED customer. Disabling a
+        -- customer used to leave its contacts fully mailable, because this join
+        -- was only ever here to print the name: 42 addresses were still going
+        -- out under disabled customers. A contact with no customer at all is a
+        -- different case and is left in, exactly as before.
+        AND (cust.ID IS NULL OR cust.Enabled = 1)
         -- Drop the contact only when every address is suppressed. A bad primary no longer
         -- loses someone who still has a good second address. Contacts with no email at all
         -- stay in, as before -- this sheet doubles as the fax list.

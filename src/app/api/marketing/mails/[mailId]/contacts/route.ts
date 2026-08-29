@@ -32,12 +32,23 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Note: "mc.Note",
   Sent: "mc.Sent",
   FaxSent: "mc.FaxSent",
+  // Surfaced so the grid can show/filter them and, more importantly, so the
+  // Excel/CSV export can leave these rows out — the mail-list export routes
+  // refuse to mail them, and a right-click export of this grid must not be a
+  // way around that. Not filtered in SQL on purpose: this is the screen you use
+  // to remove such a contact from the list, so it has to stay visible here.
+  CustomerEnabled: "cust.Enabled",
+  ContactEnabled: "c.Enabled",
 };
 
-const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
-  colId,
-  expression,
-}));
+// The two flags above are kept out of the quick search: it wraps each
+// expression in a LIKE over text, so a bit column would let the search box
+// match every row on a stray "1". Sent/FaxSent stay in, as they always were.
+const QUICK_FILTER_EXCLUDED = new Set(["CustomerEnabled", "ContactEnabled"]);
+
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS)
+  .filter(([colId]) => !QUICK_FILTER_EXCLUDED.has(colId))
+  .map(([colId, expression]) => ({ colId, expression }));
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"], extraWhere: string) {
   const parts: string[] = extraWhere ? [extraWhere] : [];
@@ -132,7 +143,9 @@ export async function POST(
         mc.Importance,
         mc.Note,
         mc.Sent,
-        mc.FaxSent
+        mc.FaxSent,
+        cust.Enabled AS CustomerEnabled,
+        c.Enabled AS ContactEnabled
       FROM dbo.MailContacts mc
       INNER JOIN dbo.Contacts c ON c.ID = mc.ContactID
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID

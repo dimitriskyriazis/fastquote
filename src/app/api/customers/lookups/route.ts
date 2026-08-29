@@ -10,7 +10,8 @@ type LookupKey =
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries';
+  | 'countries'
+  | 'paymentTerms';
 
 type CustomerLookupsPayload = {
   customerGroups?: DropdownOption[];
@@ -18,6 +19,7 @@ type CustomerLookupsPayload = {
   pricingPolicies?: DropdownOption[];
   importanceOptions?: DropdownOption[];
   countries?: DropdownOption[];
+  paymentTerms?: DropdownOption[];
 };
 
 const LOOKUP_KEYS: LookupKey[] = [
@@ -26,6 +28,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'pricingPolicies',
   'importanceOptions',
   'countries',
+  'paymentTerms',
 ];
 
 const IMPORTANCE_VALUES = ['', 'High', 'Med', 'Low'];
@@ -95,6 +98,20 @@ async function fetchCountries() {
   return mapLookupRows(result.recordset);
 }
 
+// Ordered by ID, not by Name: the seeded ids encode the intended business order
+// (30/60/75/90/120 DAYS, then deposits, then CONTRACT/CASH/LC/OTHER), whereas
+// ORDER BY Name lists '120 DAYS' before '30 DAYS'.
+async function fetchPaymentTerms() {
+  const pool = await getPool();
+  const result = await pool.request().query<LookupRow>(`
+    SELECT ID, Name
+    FROM dbo.PaymentTerms
+    WHERE Enabled = 1
+    ORDER BY ID
+  `);
+  return mapLookupRows(result.recordset);
+}
+
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/customers/lookups');
   try {
@@ -124,6 +141,10 @@ export async function GET(req: NextRequest) {
         }
         if (key === 'countries') {
           payload.countries = await fetchCountries();
+          return;
+        }
+        if (key === 'paymentTerms') {
+          payload.paymentTerms = await fetchPaymentTerms();
         }
       }),
     );

@@ -9,6 +9,7 @@ import { openMailFolder } from '../../../../../lib/openMailFolder';
 import { formatBooleanValue } from '../../../../lib/formatBooleanValue';
 import LookupModal from '../../../../components/LookupModal';
 import modalStyles from '../../../../components/LookupModal.module.css';
+import { createMailListExportRowFilter } from '../../../mailListExportFilter';
 import styles from './MailContactsClient.module.css';
 
 const AgGridAll = dynamic(() => import('../../../../components/AgGridAll'), {
@@ -152,7 +153,29 @@ export default function MailContactsClient({ mailId, description }: Props) {
       field: "FaxSent", headerName: "Fax Sent", filter: "agSetColumnFilter",
       valueFormatter: (params) => formatBooleanValue(params.value),
     },
+    // A member whose customer has been retired stays visible here — this is the
+    // screen you remove it from — but it is left out of the Excel/CSV export,
+    // exactly as the mail-list export routes leave it out. The column makes that
+    // difference visible and filterable instead of mysterious.
+    {
+      field: "CustomerEnabled", headerName: "Customer Enabled", filter: "agSetColumnFilter",
+      valueFormatter: (params) => formatBooleanValue(params.value),
+      filterParams: {
+        values: ["true", "false"],
+        valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+      },
+    },
+    {
+      field: "ContactEnabled", headerName: "Contact Enabled", filter: "agSetColumnFilter",
+      valueFormatter: (params) => formatBooleanValue(params.value),
+      filterParams: {
+        values: ["true", "false"],
+        valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
+      },
+    },
   ], []);
+
+  const getExportRowFilter = useMemo(() => createMailListExportRowFilter(), []);
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
     const field = event.colDef.field;
@@ -226,6 +249,7 @@ export default function MailContactsClient({ mailId, description }: Props) {
             columnDefs={columnDefs}
             columnStateNamespace={`mail-contacts-${mailId}`}
             onCellValueChanged={handleCellEdit}
+            getExportRowFilter={getExportRowFilter}
             refreshToken={refreshToken}
             rowSelection="multiple"
             rowMultiSelectWithClick

@@ -71,7 +71,14 @@ const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, exp
   colId,
   expression,
 }));
-const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Brands.Name, dbo.Products.ModelNumber, dbo.Products.ID";
+// Ordering on the clustered key only. The previous default sorted by
+// dbo.Brands.Name first, whose leading key lives in a JOINED table, so no index
+// could serve it: every row had to be filtered and then sorted before the first
+// page came back (measured 218ms unfiltered / 9.4s behind a quick search, versus
+// 0ms / 4.7s here). It was also never what the user saw — ProductsClient's
+// ensureProductSort() asks for ProductID desc at grid-ready, so this default
+// only ever governed the first request and any caller that sends no sortModel.
+const DEFAULT_PRODUCT_ORDER = "ORDER BY dbo.Products.ID DESC";
 
 const collectProductIds = (values: unknown): number[] => {
   if (!Array.isArray(values)) return [];

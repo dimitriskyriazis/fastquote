@@ -22,6 +22,8 @@ import { useUndoStack } from '../../hooks/useUndoStack';
 import { useAutoSaveTimer } from '../../hooks/useAutoSaveTimer';
 import { pushCellEditUndo } from '../../../lib/undoHelpers';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
+import { useAuditUser } from '../../components/AuditUserProvider';
+import { coerceRoles, roleHasPermission } from '../../../lib/roles';
 
 type Props = {
   customerId: string;
@@ -31,19 +33,22 @@ type Props = {
   pricingPolicies: CustomerDropdownOption[];
   importanceOptions: CustomerDropdownOption[];
   countries: CustomerDropdownOption[];
+  paymentTerms: CustomerDropdownOption[];
 };
 type LookupKey =
   | 'customerGroups'
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries';
+  | 'countries'
+  | 'paymentTerms';
 type CustomerLookupsPayload = {
   customerGroups?: CustomerDropdownOption[];
   parentCustomers?: CustomerDropdownOption[];
   pricingPolicies?: CustomerDropdownOption[];
   importanceOptions?: CustomerDropdownOption[];
   countries?: CustomerDropdownOption[];
+  paymentTerms?: CustomerDropdownOption[];
 };
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
@@ -66,6 +71,10 @@ type FieldDefinition = {
   hint?: string;
   comboBox?: boolean;
   required?: boolean;
+  // Rendered read-only unless the user holds 'manageCustomerPaymentTerms'.
+  // UX only — the server rejects the field independently (see
+  // ADMIN_ONLY_FIELDS in api/customers/[customerId]/basicdata/route.ts).
+  adminOnly?: boolean;
 };
 
 const SECTION_METADATA: Record<SectionKey, { title: string }> = {
@@ -87,6 +96,7 @@ const buildFieldDefinitions = (
   pricingPolicies: CustomerDropdownOption[],
   importanceOptions: CustomerDropdownOption[],
   countries: CustomerDropdownOption[],
+  paymentTerms: CustomerDropdownOption[],
 ): FieldDefinition[] => [
   {
     id: 'name',
@@ -130,6 +140,17 @@ const buildFieldDefinitions = (
     recordKey: 'Importance',
     updateField: 'Importance',
     options: importanceOptions,
+  },
+  {
+    id: 'paymentTerm',
+    label: 'Payment Terms',
+    section: 'general',
+    recordKey: 'PaymentTermID',
+    updateField: 'PaymentTermID',
+    valueType: 'number',
+    options: paymentTerms,
+    adminOnly: true,
+    hint: 'Agreed payment terms. Offers for this customer inherit this. Administrators only.',
   },
   {
     id: 'pricingPolicy',
@@ -190,6 +211,18 @@ const buildFieldDefinitions = (
     updateField: 'ERPID',
     valueType: 'number',
     inputType: 'number',
+    hint: 'ex. 35860',
+  },
+
+  // ERP Code = the alphanumeric Soft1 dbo.TRDR.CODE, the companion namespace to
+  // the numeric TRDR held in ERPID.
+  {
+    id: 'erpCode',
+    label: 'ERP Code',
+    section: 'business',
+    recordKey: 'ERPCode',
+    updateField: 'ERPCode',
+    hint: 'ex. ΔΙ.3748',
   },
   {
     id: 'address',
@@ -301,12 +334,19 @@ export default function CustomerBasicDataClient({
   pricingPolicies,
   importanceOptions,
   countries,
+  paymentTerms,
 }: Props) {
+  const { roles } = useAuditUser();
+  const canEditPaymentTerms = roleHasPermission(
+    coerceRoles([...roles]),
+    'manageCustomerPaymentTerms',
+  );
   const [localCustomerGroups, setLocalCustomerGroups] = useState(customerGroups);
   const [localParentCustomers, setLocalParentCustomers] = useState(parentCustomers);
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localImportanceOptions, setLocalImportanceOptions] = useState(importanceOptions);
   const [countryOptions, setCountryOptions] = useState(countries);
+  const [localPaymentTerms, setLocalPaymentTerms] = useState(paymentTerms);
   const lookupRefreshInFlightRef = useRef(new Set<LookupKey>());
   const [openComboField, setOpenComboField] = useState<string | null>(null);
   const [comboErrors, setComboErrors] = useState<Record<string, string | null>>({});
@@ -359,6 +399,10 @@ export default function CustomerBasicDataClient({
     setCountryOptions(countries);
   }, [countries]);
 
+  useEffect(() => {
+    setLocalPaymentTerms(paymentTerms);
+  }, [paymentTerms]);
+
   const refreshLookups = useCallback(async (keys: LookupKey[]) => {
     const uniqueKeys = Array.from(new Set(keys));
     const pendingKeys = uniqueKeys.filter((key) => !lookupRefreshInFlightRef.current.has(key));
@@ -407,8 +451,19 @@ export default function CustomerBasicDataClient({
         localPricingPolicies,
         localImportanceOptions,
         countryOptions,
+        localPaymentTerms,
+      ).map((def) =>
+        def.adminOnly && !canEditPaymentTerms ? { ...def, readOnly: true } : def,
       ),
-    [countryOptions, localCustomerGroups, localImportanceOptions, localParentCustomers, localPricingPolicies],
+    [
+      canEditPaymentTerms,
+      countryOptions,
+      localCustomerGroups,
+      localImportanceOptions,
+      localParentCustomers,
+      localPaymentTerms,
+      localPricingPolicies,
+    ],
   );
 
   const editableFields = useMemo(
@@ -416,13 +471,20 @@ export default function CustomerBasicDataClient({
     [fieldDefinitions],
   );
 
+  // Seeded from EVERY updatable field, not from `editableFields`. `readOnly` can
+  // flip after mount (useAuditUser().roles is [] until /api/users resolves), and
+  // `useState` only ever reads this on the first render — so filtering here would
+  // leave an admin-only field permanently absent from `values`. It would then
+  // render as '' and the first blur would PATCH null over the stored value.
+  // Same reasoning as BrandDetailsClient, which seeds from ALL_FIELD_DEFINITIONS.
   const initialValues = useMemo(() => {
     const valuesMap: Record<string, string> = {};
-    editableFields.forEach((def) => {
+    fieldDefinitions.forEach((def) => {
+      if (!def.updateField) return;
       valuesMap[def.id] = formatInitialValue(record, def);
     });
     return valuesMap;
-  }, [editableFields, record]);
+  }, [fieldDefinitions, record]);
 
   const [values, setValues] = useState(initialValues);
   const [pendingFields, setPendingFields] = useState<Record<string, boolean>>({});
@@ -655,6 +717,18 @@ export default function CustomerBasicDataClient({
 
     if (!isEditable) {
       const readonlyValue = resolveFieldValue(record, def);
+      // A read-only SELECT field holds an id, so show the matching option's
+      // label — otherwise a non-admin sees the raw PaymentTermID ('13') instead
+      // of the term name ('OTHER'). Mirrors OfferBasicDataClient's read-only branch.
+      if (def.options && def.options.length > 0) {
+        const rawValue = readonlyValue == null ? '' : String(readonlyValue);
+        const matchingOption = def.options.find((option) => String(option.value) === rawValue);
+        return (
+          <div className={styles.fieldReadonly} id={controlId}>
+            {matchingOption?.label ?? (rawValue ? formatDisplayValue(rawValue) : '-')}
+          </div>
+        );
+      }
       return (
         <div className={styles.fieldReadonly} id={controlId}>
           {formatDisplayValue(readonlyValue)}

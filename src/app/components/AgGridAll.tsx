@@ -126,6 +126,7 @@ import { isOfferProductCategory } from '../../lib/offerProductRows';
 import { resolveColumnWidthAssignments, ColumnWidthAssignment } from '../../lib/columnWidthPresets';
 import { useGridUrlState } from '../hooks/useGridUrlState';
 import { parseGridSearchParams } from '../../lib/gridUrlState';
+import { foldForSearch } from '../../lib/textSearch';
 import { captureAndPinScroll } from '../../lib/scrollPreservation';
 import { DdMmYyyyDateFilter } from './dateFilterDdMmYyyy';
 
@@ -381,12 +382,21 @@ const scheduleDeselectAllRows = (api?: GridApi<RowData> | null) => {
 };
 
 const QUICK_SEARCH_REFRESH_DEBOUNCE_MS = 800;
+// Client-side text filters compare through this, so they behave like the
+// server-side ones: accent-, case- and punctuation-insensitive. AG Grid runs the
+// formatter over BOTH the cell value and the typed text, so folding here covers
+// every filter option (contains, equals, startsWith, ...) symmetrically —
+// "pa solutions" matches "P.A. Solutions" and "p.a." matches "PA Solutions".
+const foldFilterText = (value?: string | null): string | null =>
+  value == null ? null : foldForSearch(value);
+
 const BASE_COMPOUND_FILTER_PARAMS = {
   debounceMs: 800,
   buttons: ['reset'] as const,
   maxNumConditions: 2,
   alwaysShowBothConditions: true,
   defaultJoinOperator: 'AND' as const,
+  textFormatter: foldFilterText,
 };
 
 const normalizeFilterButtons = (buttons?: readonly string[]) => {

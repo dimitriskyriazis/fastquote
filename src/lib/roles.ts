@@ -20,6 +20,18 @@ export type Permission =
   | 'createOffers'
   | 'editOffers'
   | 'manageCustomersContacts'
+  // Payment terms agreed with a customer are a commercial commitment, so they
+  // are deliberately NOT part of manageCustomersContacts (which every role from
+  // Simple User up holds). This permission has no case in the switch below, so
+  // it falls through to `default: return false` and lands on Administrator +
+  // Developer only — which is what was asked for.
+  | 'manageCustomerPaymentTerms'
+  // Merging duplicate customers repoints offers and contacts onto a survivor and
+  // disables the records that lost. It is not reversible from the UI, so like
+  // manageCustomerPaymentTerms it deliberately has NO case in the switch below
+  // and falls through to `default: return false` — landing on Administrator +
+  // Developer only.
+  | 'mergeCustomers'
   | 'manageMarketing';
 
 export const APP_ROLE_ORDER: readonly AppRole[] = [

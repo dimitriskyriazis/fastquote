@@ -81,6 +81,12 @@ type OfferCreateDefaults = {
 };
 
 export type MarketOption = DropdownOption & { salesDivisionId: string | null };
+// Each customer carries its own pricing policy ('' when it has none) so the offer's Pricing
+// Policy can default from whoever is selected.
+export type CustomerOption = DropdownOption & { pricingPolicyId?: string };
+// enabled/hasRules mirror the two checks POST /api/offers/create runs. They gate only the
+// AUTO-selected default: every policy stays pickable by hand, exactly as before.
+export type PricingPolicyOption = DropdownOption & { enabled?: boolean; hasRules?: boolean };
 type UserOption = DropdownOption & { salesSeniorityName?: string | null };
 type LookupKey =
   | 'customers'
@@ -92,9 +98,9 @@ type LookupKey =
   | 'fwcProjects'
   | 'currencies';
 type OfferLookupPayload = {
-  customers?: DropdownOption[];
+  customers?: CustomerOption[];
   statuses?: DropdownOption[];
-  pricingPolicies?: DropdownOption[];
+  pricingPolicies?: PricingPolicyOption[];
   markets?: MarketOption[];
   salesDivisions?: DropdownOption[];
   users?: UserOption[];
@@ -103,9 +109,9 @@ type OfferLookupPayload = {
 };
 
 type Props = {
-  customers: DropdownOption[];
+  customers: CustomerOption[];
   statuses: DropdownOption[];
-  pricingPolicies: DropdownOption[];
+  pricingPolicies: PricingPolicyOption[];
   markets: MarketOption[];
   salesDivisions: DropdownOption[];
   users: UserOption[];
@@ -193,6 +199,14 @@ const resolveDefaultPricingPolicyId = (options: DropdownOption[]): string => {
   return byValue?.value ?? '';
 };
 
+// Only a policy POST /api/offers/create would accept may be auto-selected: enabled, and with at
+// least one rule. Flags absent (older cached lookup payload) counts as usable so a stale
+// response can't strand the form on an empty Pricing Policy.
+const isUsablePolicyOption = (option: PricingPolicyOption | undefined): boolean => {
+  if (!option) return false;
+  return option.enabled !== false && option.hasRules !== false;
+};
+
 const resolveDefaultStatusId = (options: DropdownOption[]): string => {
   const normalizedTarget = 'draft request';
   const byLabel = options.find((opt) => (opt.label ?? '').trim().toLowerCase() === normalizedTarget);
@@ -239,10 +253,46 @@ export default function OfferCreateClient({
   const initialCustomerIdParam = (searchParams?.get('customerId') ?? '').trim();
   const initialContactIdParam = (searchParams?.get('contactId') ?? '').trim();
   const appliedContactParamRef = useRef(false);
+  // Last customer whose pricing policy we applied, so re-picking the same customer (blur,
+  // re-focus, a lookup refresh) never re-fires the derivation.
+  const policyDerivedForCustomerRef = useRef<string>('');
+  // Set once the user picks a Pricing Policy by hand: their choice then outranks the customer
+  // default, and switching customers only tells them what the new customer's policy is.
+  const policyTouchedRef = useRef(false);
 
   const defaultPricingPolicyId = useMemo(
     () => resolveDefaultPricingPolicyId(localPricingPolicies),
     [localPricingPolicies],
+  );
+
+  const customerPolicyMap = useMemo(() => {
+    const map = new Map<string, string>();
+    localCustomers.forEach((customer) => {
+      if (!customer?.value) return;
+      map.set(customer.value, (customer.pricingPolicyId ?? '').trim());
+    });
+    return map;
+  }, [localCustomers]);
+
+  const policyOptionMap = useMemo(() => {
+    const map = new Map<string, PricingPolicyOption>();
+    localPricingPolicies.forEach((policy) => {
+      if (!policy?.value) return;
+      map.set(policy.value, policy);
+    });
+    return map;
+  }, [localPricingPolicies]);
+
+  // The offer's pricing policy defaults to the customer's own (dbo.Customers.PricingPolicyID),
+  // falling back to "Default Pricing Policy" when the customer has none or carries one the
+  // create call would reject.
+  const resolvePolicyForCustomer = useCallback(
+    (customerId: string): string => {
+      const policyId = customerPolicyMap.get(customerId.trim()) ?? '';
+      if (policyId && isUsablePolicyOption(policyOptionMap.get(policyId))) return policyId;
+      return defaultPricingPolicyId;
+    },
+    [customerPolicyMap, defaultPricingPolicyId, policyOptionMap],
   );
 
   const defaultStatusId = useMemo(() => resolveDefaultStatusId(localStatuses), [localStatuses]);
@@ -332,6 +382,10 @@ export default function OfferCreateClient({
   ]);
 
   const [values, setValues] = useState<FormValues>(initialValues);
+  // Mirrors the latest values so the customer-driven pricing-policy default can compare against
+  // the current policy without re-creating setCustomerSelection on every keystroke.
+  const valuesRef = useRef(values);
+  valuesRef.current = values;
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
   const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<FormValues>('offer-create', initialValues, userId);
   // Always points at the latest initialValues (with async-resolved defaults: status,
@@ -343,11 +397,24 @@ export default function OfferCreateClient({
   // Restore draft if available
   useEffect(() => {
     if (hasDraft && restoredValues) {
+      // A restored draft already carries the user's own customer + pricing-policy pairing.
+      // Remember the customer so re-picking it is a no-op, and if the saved policy isn't the one
+      // we would derive, treat it as a deliberate manual choice and never overwrite it.
+      const restoredCustomerId = (restoredValues.customerId ?? '').trim();
+      policyDerivedForCustomerRef.current = restoredCustomerId;
+      if (
+        restoredCustomerId &&
+        restoredValues.pricingPolicyId !== resolvePolicyForCustomer(restoredCustomerId)
+      ) {
+        policyTouchedRef.current = true;
+      }
       setValues(restoredValues);
       showToastMessage('Draft restored', 'info', 5500, {
         label: 'Discard',
         onClick: () => {
           clearDraft();
+          policyDerivedForCustomerRef.current = '';
+          policyTouchedRef.current = false;
           setValues(initialValuesRef.current);
         },
       });
@@ -523,9 +590,51 @@ export default function OfferCreateClient({
     }) ?? null;
   }, [localCustomers]);
 
+  // Applies the selected customer's own pricing policy as the offer default. Only a resolved
+  // customer triggers it — clearing or half-typing the combo leaves the policy alone — and it
+  // runs at most once per customer.
+  const applyCustomerPricingPolicy = useCallback(
+    (customerId: string, customerLabel: string) => {
+      const trimmed = customerId.trim();
+      if (!trimmed) return;
+      if (trimmed === policyDerivedForCustomerRef.current) return;
+      policyDerivedForCustomerRef.current = trimmed;
+
+      const nextPolicyId = resolvePolicyForCustomer(trimmed);
+      if (!nextPolicyId) return;
+      const currentPolicyId = valuesRef.current.pricingPolicyId;
+      if (nextPolicyId === currentPolicyId) return;
+      const policyLabel = policyOptionMap.get(nextPolicyId)?.label ?? nextPolicyId;
+
+      // The user already picked a policy by hand: keep it, but say what this customer uses.
+      if (policyTouchedRef.current) {
+        showToastMessage(
+          `${customerLabel.trim() || 'This customer'} uses pricing policy "${policyLabel}" - keeping your selection.`,
+          'info',
+        );
+        return;
+      }
+
+      setValues((prev) => ({ ...prev, pricingPolicyId: nextPolicyId }));
+      setFieldErrors((prev) => {
+        if (!prev.pricingPolicyId) return prev;
+        const next = { ...prev };
+        delete next.pricingPolicyId;
+        return next;
+      });
+      showToastMessage(`Pricing policy set to "${policyLabel}" from the customer.`, 'info');
+    },
+    [policyOptionMap, resolvePolicyForCustomer],
+  );
+
+  // Every path that picks a customer funnels through here (list click, Enter, typing an exact
+  // match, blur, the ?customerId deep link), which is why the pricing-policy default hangs off
+  // this callback rather than an effect on values.customerId: restoring a draft sets customerId
+  // directly and must not re-derive over the policy the draft saved.
   const setCustomerSelection = useCallback((option: DropdownOption | null, rawText: string) => {
     setCustomerText(rawText);
-    setValues((prev) => ({ ...prev, customerId: option?.value ?? '' }));
+    const nextCustomerId = option?.value ?? '';
+    setValues((prev) => ({ ...prev, customerId: nextCustomerId }));
     setShowCustomerList(false);
     setFieldErrors((prev) => {
       if (!prev.customerId) return prev;
@@ -533,7 +642,8 @@ export default function OfferCreateClient({
       delete next.customerId;
       return next;
     });
-  }, []);
+    applyCustomerPricingPolicy(nextCustomerId, option?.label ?? rawText);
+  }, [applyCustomerPricingPolicy]);
 
   useEffect(() => {
     if (appliedCustomerParamRef.current) return;
@@ -672,6 +782,10 @@ export default function OfferCreateClient({
   }, [contactOptions, initialContactIdParam]);
 
   const handleChange = useCallback((field: keyof FormValues, value: string) => {
+    // A hand-picked pricing policy outranks the customer default from here on.
+    if (field === 'pricingPolicyId') {
+      policyTouchedRef.current = true;
+    }
     setValues((prev) => {
       if (field === 'offerLanguage' && (value === 'Greek' || value === 'English') && prev.offerLanguage !== value) {
         const prevDefaults = OFFER_LANGUAGE_DEFAULTS[prev.offerLanguage];

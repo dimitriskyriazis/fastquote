@@ -1,6 +1,10 @@
 import Link from 'next/link';
 import { cookies, headers } from 'next/headers';
-import OfferCreateClient, { type MarketOption } from './OfferCreateClient';
+import OfferCreateClient, {
+  type CustomerOption,
+  type MarketOption,
+  type PricingPolicyOption,
+} from './OfferCreateClient';
 import styles from '../offersDetail.module.css';
 import clientStyles from './OfferCreateClient.module.css';
 import { getPool } from '../../../lib/sql';
@@ -11,19 +15,42 @@ import { getAuditFallbackUserId, resolveAuditUserId } from '../../../lib/auditTr
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
 type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
+// Customers.PricingPolicyID is nvarchar(100) NOT NULL, not an int FK: the overwhelming
+// majority of rows hold '' (no policy), and the rest hold the ID as text.
+type CustomerLookupRow = LookupRow & { PricingPolicyID?: number | string | null };
+type PricingPolicyLookupRow = LookupRow & {
+  Enabled?: boolean | number | null;
+  HasRules?: boolean | number | null;
+};
+
+const toFlag = (value: boolean | number | null | undefined): boolean =>
+  value === true || value === 1;
 
 const mapOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
 
-async function fetchCustomers() {
+// Each customer carries its own PricingPolicyID so the form can default the offer's pricing
+// policy from the customer (see resolvePolicyForCustomer in OfferCreateClient).
+async function fetchCustomers(): Promise<CustomerOption[]> {
   try {
     const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
+    const result = await pool.request().query<CustomerLookupRow>(`
+      SELECT ID, Name, PricingPolicyID
       FROM dbo.Customers
+      WHERE ISNULL(IsParent, 0) = 0
+        AND ISNULL(Enabled, 0) = 1
       ORDER BY Name
     `);
-    return mapOptions(result.recordset);
+    return (result.recordset ?? [])
+      .filter((row): row is CustomerLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => {
+        const stringId = String(row.ID);
+        return {
+          value: stringId,
+          label: normalizeDropdownLabel(row.Name) ?? `Option ${stringId}`,
+          pricingPolicyId: row.PricingPolicyID != null ? String(row.PricingPolicyID).trim() : '',
+        };
+      });
   } catch (err) {
     console.error('Failed to load customers', err);
     return [];
@@ -45,15 +72,33 @@ async function fetchOfferStatuses() {
   }
 }
 
-async function fetchPricingPolicies() {
+// enabled/hasRules mirror what POST /api/offers/create enforces, so the customer-derived
+// default never lands on a policy the create call would reject.
+async function fetchPricingPolicies(): Promise<PricingPolicyOption[]> {
   try {
     const pool = await getPool();
-    const result = await pool.request().query<LookupRow>(`
-      SELECT ID, Name
-      FROM dbo.PricingPolicies
-      ORDER BY Name
+    const result = await pool.request().query<PricingPolicyLookupRow>(`
+      SELECT
+        pp.ID,
+        pp.Name,
+        CAST(CASE WHEN ISNULL(pp.Enabled, 0) = 1 THEN 1 ELSE 0 END AS BIT) AS Enabled,
+        CAST(CASE WHEN EXISTS (
+          SELECT 1 FROM dbo.PricingPolicyRules ppr WHERE ppr.PricingPolicyID = pp.ID
+        ) THEN 1 ELSE 0 END AS BIT) AS HasRules
+      FROM dbo.PricingPolicies pp
+      ORDER BY pp.Name
     `);
-    return mapOptions(result.recordset);
+    return (result.recordset ?? [])
+      .filter((row): row is PricingPolicyLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => {
+        const stringId = String(row.ID);
+        return {
+          value: stringId,
+          label: normalizeDropdownLabel(row.Name) ?? `Option ${stringId}`,
+          enabled: toFlag(row.Enabled),
+          hasRules: toFlag(row.HasRules),
+        };
+      });
   } catch (err) {
     console.error('Failed to load pricing policies', err);
     return [];

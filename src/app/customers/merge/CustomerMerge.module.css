@@ -1,0 +1,466 @@
+/*
+ * The page shell (customerDetail.module.css .page) is `height: 100vh;
+ * overflow: hidden` and its .pageBody is `flex: 1; min-height: 0` with no
+ * overflow rule of its own. Anything long rendered straight into it is clipped
+ * with no scrollbar, so this layout owns its scrolling explicitly: .shell is the
+ * flex column, .scrollArea is the only thing that scrolls, and .footer sits
+ * outside it so the action buttons can never be scrolled off screen.
+ */
+/*
+ * The app shell (.app-content in styles/layout.css) is solid #000000, and every
+ * page is expected to paint its own light surface over it — see the .panel rule
+ * in CustomerBasicDataPanel.module.css, which this matches. Without it the
+ * toolbar, step bar and footer text below would be dark-on-black.
+ */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #f9fafb 0%, #f4f6fb 100%);
+  color: #0f172a;
+}
+
+.scrollArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding-right: 4px;
+}
+
+/* ---------------------------------------------------------------- steps --- */
+
+.stepBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stepItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #f8fafc;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stepItem:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.stepItemActive {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+  color: #ffffff;
+}
+
+.stepItemDone {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.stepIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.1);
+  font-size: 11px;
+}
+
+.stepItemActive .stepIndex {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ---------------------------------------------------------------- cards --- */
+
+.card {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.cardTitle {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.cardHint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.sourceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.sourceCard {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sourceCardPrimary {
+  border-color: #1d4ed8;
+  background: #eff6ff;
+  box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.25);
+}
+
+.sourceName {
+  font-weight: 700;
+  font-size: 14px;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.sourceMeta {
+  font-size: 12px;
+  color: #475569;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sourceActions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
+  white-space: nowrap;
+}
+
+.badgePrimary { background: #1d4ed8; color: #ffffff; }
+.badgeWarn { background: #fef3c7; color: #92400e; }
+.badgeDanger { background: #fee2e2; color: #991b1b; }
+.badgeOk { background: #dcfce7; color: #166534; }
+
+/* --------------------------------------------------------------- fields --- */
+
+.fieldTableWrap {
+  overflow-x: auto;
+}
+
+.fieldTable {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+
+.fieldTable th,
+.fieldTable td {
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.fieldTable thead th {
+  background: #f1f5f9;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-size: 12px;
+}
+
+.fieldLabelCell {
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+}
+
+.valueOption {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 140px;
+}
+
+.valueOptionChosen {
+  background: #eff6ff;
+  outline: 2px solid rgba(29, 78, 216, 0.35);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.valueText {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.valueEmpty {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.rowDiffers { background: #fffbeb; }
+
+/* ------------------------------------------------------------- contacts --- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.toolbarSpacer { flex: 1; }
+
+.input,
+.select {
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.input { min-width: 220px; }
+
+.smallButton {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #f1f5f9;
+  color: #0f172a;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.smallButton:hover { background: #e2e8f0; }
+
+.contactGroup { margin-bottom: 14px; }
+
+.contactGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+  margin-bottom: 6px;
+}
+
+.contactGroupTitle {
+  font-weight: 700;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.contactRow {
+  display: grid;
+  grid-template-columns: 26px minmax(180px, 1.4fr) minmax(150px, 1.4fr) minmax(120px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.contactRow:nth-child(odd) { background: #f8fafc; }
+
+.contactRowDropped { opacity: 0.5; }
+
+.contactRowDuplicate {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.contactName { font-weight: 600; color: #0f172a; overflow-wrap: anywhere; }
+.contactSub { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
+
+.contactBadges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.staysNote {
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
+}
+
+/* --------------------------------------------------------------- review --- */
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.summaryTile {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+
+.summaryValue {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.1;
+}
+
+.summaryLabel {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.warningList {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #92400e;
+}
+
+.warningList li { margin-bottom: 4px; }
+
+.warningCard {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.dangerCard {
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+
+.dangerText {
+  font-size: 13px;
+  color: #991b1b;
+  margin: 0 0 10px;
+}
+
+.confirmRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+/* --------------------------------------------------------------- footer --- */
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(15, 23, 42, 0.1);
+}
+
+.footerSpacer { flex: 1; }
+
+.footerNote {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.primaryButton {
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.dangerButton {
+  border: 1px solid #b91c1c;
+  background: #b91c1c;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dangerButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  border: 1px solid rgba(15, 23, 42, 0.15);
+  background: #f1f5f9;
+  color: #0f172a;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  padding: 24px;
+  text-align: center;
+  color: #475569;
+  font-size: 14px;
+}
+
+.errorBox {
+  border: 1px solid #fca5a5;
+  background: #fef2f2;
+  color: #991b1b;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+}

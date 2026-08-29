@@ -33,7 +33,6 @@ type LogRow = {
   Details: string | null;
 };
 
-type LogRowWithCount = LogRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ID: "dbo.Logs.ID",
@@ -124,15 +123,29 @@ export async function POST(req: NextRequest) {
     const offset = startRow;
 
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
-    const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
+    // No fuzzy variants here. They exist to forgive typos in names; on a
+    // diagnostics grid you search for exact strings — an endpoint path, a request
+    // id, an error message — so the swap/insertion/substitution patterns only add
+    // false matches, and at 203k rows they cost ~30% of the search.
+    const quickFilterClause = buildQuickFilterClause(
+      gridRequest.quickFilterText,
+      QUICK_FILTER_COLUMNS,
+      undefined,
+      { enableFuzzyText: false },
+    );
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
     const combinedParams = [...whereParams, ...quickFilterClause.params];
     const orderClause = buildOrder(gridRequest.sortModel) || "ORDER BY dbo.Logs.Timestamp DESC";
     const paging = `OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY`;
 
+    // No COUNT_BIG(1) OVER (): that windowed count made every page materialize all
+    // 200k+ rows before returning, and because Details is an nvarchar(max) holding
+    // ~110MB in total it dragged every log payload through the spool too. The
+    // unfiltered first page went from 2.0s to 5ms once it was gone. End-of-data is
+    // inferred the way the products grid does it — a full page means "there is
+    // more" (len+1), a short page is the true end.
     const select = `
       SELECT
-        COUNT_BIG(1) OVER () AS __totalCount,
         dbo.Logs.ID,
         dbo.Logs.Timestamp,
         dbo.Logs.Level,
@@ -164,15 +177,11 @@ export async function POST(req: NextRequest) {
     const dataReq = bindParams(pool.request(), combinedParams);
     dataReq.input("__offset", sql.Int, offset);
     dataReq.input("__limit", sql.Int, pageSize);
-    const dataRes = await dataReq.query<LogRowWithCount>(dataSql);
+    const dataRes = await dataReq.query<LogRow>(dataSql);
 
-    const rowsWithCount = dataRes.recordset ?? [];
-    const rowCount = rowsWithCount.length > 0 ? Number(rowsWithCount[0].__totalCount ?? 0) : 0;
-    const rows = rowsWithCount.map((row) => {
-      const { __totalCount, ...rest } = row;
-      void __totalCount;
-      return rest;
-    });
+    const rows = dataRes.recordset ?? [];
+    const fetched = rows.length;
+    const rowCount = fetched < pageSize ? offset + fetched : offset + fetched + 1;
 
     return NextResponse.json({ ok: true, rows, rowCount });
   } catch (err) {

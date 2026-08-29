@@ -15,7 +15,8 @@ type LookupKey =
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries';
+  | 'countries'
+  | 'paymentTerms';
 
 type CustomerLookupsPayload = {
   customerGroups?: CustomerDropdownOption[];
@@ -23,6 +24,7 @@ type CustomerLookupsPayload = {
   pricingPolicies?: CustomerDropdownOption[];
   importanceOptions?: CustomerDropdownOption[];
   countries?: CustomerDropdownOption[];
+  paymentTerms?: CustomerDropdownOption[];
 };
 
 type CustomerBasicDataResponse = {
@@ -43,6 +45,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'pricingPolicies',
   'importanceOptions',
   'countries',
+  'paymentTerms',
 ];
 
 export default function CustomerBasicDataPanel({ customerId, initialRecord }: Props) {
@@ -54,6 +57,7 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
   const [pricingPolicies, setPricingPolicies] = useState<CustomerDropdownOption[]>([]);
   const [importanceOptions, setImportanceOptions] = useState<CustomerDropdownOption[]>([]);
   const [countries, setCountries] = useState<CustomerDropdownOption[]>([]);
+  const [paymentTerms, setPaymentTerms] = useState<CustomerDropdownOption[]>([]);
   const [loading, setLoading] = useState(initialRecord == null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -102,6 +106,9 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
           Array.isArray(lookupsPayload.lookups.importanceOptions) ? lookupsPayload.lookups.importanceOptions : [],
         );
         setCountries(Array.isArray(lookupsPayload.lookups.countries) ? lookupsPayload.lookups.countries : []);
+        setPaymentTerms(
+          Array.isArray(lookupsPayload.lookups.paymentTerms) ? lookupsPayload.lookups.paymentTerms : [],
+        );
       } catch (err) {
         if (!active) return;
         console.error('Failed to load customer basic data page payload', err);
@@ -146,6 +153,7 @@ export default function CustomerBasicDataPanel({ customerId, initialRecord }: Pr
       pricingPolicies={pricingPolicies}
       importanceOptions={importanceOptions}
       countries={countries}
+      paymentTerms={paymentTerms}
     />
   );
 }

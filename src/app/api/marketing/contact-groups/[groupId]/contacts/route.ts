@@ -34,12 +34,24 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   Fax: "c.Fax",
   Importance: "cgl.Importance",
   Note: "cgl.Note",
+  // Surfaced so the grid can show/filter them and, more importantly, so the
+  // Excel/CSV export can leave these rows out — the mail-list export routes
+  // refuse to mail them, and a right-click export of this grid must not be a
+  // way around that. Contact groups feed mails through dbo.MailContactGroups,
+  // so this list is a mailing list by another name. Not filtered in SQL on
+  // purpose: this is the screen you use to remove such a contact from a group,
+  // so it has to stay visible here.
+  CustomerEnabled: "cust.Enabled",
+  ContactEnabled: "c.Enabled",
 };
 
-const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
-  colId,
-  expression,
-}));
+// Bit columns are excluded: the quick search wraps each expression in a LIKE
+// over text, which is meaningless (and needlessly expensive) against a BIT.
+const QUICK_FILTER_EXCLUDED = new Set(["CustomerEnabled", "ContactEnabled"]);
+
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS)
+  .filter(([colId]) => !QUICK_FILTER_EXCLUDED.has(colId))
+  .map(([colId, expression]) => ({ colId, expression }));
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"], extraWhere: string) {
   const parts: string[] = extraWhere ? [extraWhere] : [];
@@ -133,7 +145,9 @@ export async function POST(
         c.Email,
         c.Fax,
         cgl.Importance,
-        cgl.Note
+        cgl.Note,
+        cust.Enabled AS CustomerEnabled,
+        c.Enabled AS ContactEnabled
       FROM dbo.ContactsGroupLists cgl
       INNER JOIN dbo.Contacts c ON c.ID = cgl.ContactID
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID

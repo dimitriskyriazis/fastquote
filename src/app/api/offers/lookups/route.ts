@@ -9,6 +9,20 @@ import { collateSearch } from '../../../../lib/textSearch';
 type LookupRow = RawDropdownRow & { ID: number; Name: string | null };
 type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
 type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
+// Customers.PricingPolicyID is nvarchar(100) NOT NULL, not an int FK: the overwhelming
+// majority of rows hold '' (no policy), and the rest hold the ID as text.
+type CustomerLookupRow = LookupRow & { PricingPolicyID?: number | string | null };
+type PricingPolicyLookupRow = LookupRow & {
+  Enabled?: boolean | number | null;
+  HasRules?: boolean | number | null;
+};
+
+// The Create Offer form defaults its pricing policy from the selected customer, so every
+// customer option carries that customer's own PricingPolicyID, and every pricing-policy
+// option carries the two flags POST /api/offers/create validates (enabled + has rules) so
+// the client never auto-selects a policy the create call would reject.
+type CustomerOption = DropdownOption & { pricingPolicyId: string };
+type PricingPolicyOption = DropdownOption & { enabled: boolean; hasRules: boolean };
 
 type LookupKey =
   | 'customers'
@@ -21,9 +35,9 @@ type LookupKey =
   | 'currencies';
 
 type OfferLookupPayload = {
-  customers?: DropdownOption[];
+  customers?: CustomerOption[];
   statuses?: DropdownOption[];
-  pricingPolicies?: DropdownOption[];
+  pricingPolicies?: PricingPolicyOption[];
   markets?: Array<DropdownOption & { salesDivisionId: string }>;
   salesDivisions?: DropdownOption[];
   users?: Array<DropdownOption & { salesSeniorityName?: string | null }>;
@@ -44,6 +58,9 @@ const LOOKUP_KEYS: LookupKey[] = [
 
 const toLookupOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
   toDropdownOptions<LookupRow>(rows);
+
+const toFlag = (value: boolean | number | null | undefined): boolean =>
+  value === true || value === 1;
 
 const normalizeLabel = (value: string | null | undefined): string | null => {
   if (!value) return null;
@@ -69,26 +86,57 @@ const parseRequestedKeys = (req: NextRequest): LookupKey[] => {
   return requested.size > 0 ? Array.from(requested) : LOOKUP_KEYS;
 };
 
+const toCustomerOptions = (rows: CustomerLookupRow[] | undefined | null): CustomerOption[] =>
+  (rows ?? [])
+    .filter((row): row is CustomerLookupRow & { ID: number } => row?.ID != null)
+    .map((row) => {
+      const stringId = String(row.ID);
+      return {
+        value: stringId,
+        label: normalizeLabel(row.Name) ?? `Option ${stringId}`,
+        pricingPolicyId: row.PricingPolicyID != null ? String(row.PricingPolicyID).trim() : '',
+      };
+    });
+
+const toPricingPolicyOptions = (
+  rows: PricingPolicyLookupRow[] | undefined | null,
+): PricingPolicyOption[] =>
+  (rows ?? [])
+    .filter((row): row is PricingPolicyLookupRow & { ID: number } => row?.ID != null)
+    .map((row) => {
+      const stringId = String(row.ID);
+      return {
+        value: stringId,
+        label: normalizeLabel(row.Name) ?? `Option ${stringId}`,
+        enabled: toFlag(row.Enabled),
+        hasRules: toFlag(row.HasRules),
+      };
+    });
+
 async function fetchCustomers(search?: string) {
   const pool = await getPool();
   const needle = (search ?? '').trim();
   if (needle.length > 0) {
     const req = pool.request();
     req.input('customerSearch', sql.NVarChar(200), `%${needle}%`);
-    const result = await req.query<LookupRow>(`
-      SELECT TOP 50 ID, Name
+    const result = await req.query<CustomerLookupRow>(`
+      SELECT TOP 50 ID, Name, PricingPolicyID
       FROM dbo.Customers
       WHERE ${collateSearch('Name')} LIKE @customerSearch
+        AND ISNULL(IsParent, 0) = 0
+        AND ISNULL(Enabled, 0) = 1
       ORDER BY Name
     `);
-    return toLookupOptions(result.recordset);
+    return toCustomerOptions(result.recordset);
   }
-  const result = await pool.request().query<LookupRow>(`
-    SELECT ID, Name
+  const result = await pool.request().query<CustomerLookupRow>(`
+    SELECT ID, Name, PricingPolicyID
     FROM dbo.Customers
+    WHERE ISNULL(IsParent, 0) = 0
+      AND ISNULL(Enabled, 0) = 1
     ORDER BY Name
   `);
-  return toLookupOptions(result.recordset);
+  return toCustomerOptions(result.recordset);
 }
 
 async function fetchStatuses() {
@@ -103,12 +151,18 @@ async function fetchStatuses() {
 
 async function fetchPricingPolicies() {
   const pool = await getPool();
-  const result = await pool.request().query<LookupRow>(`
-    SELECT ID, Name
-    FROM dbo.PricingPolicies
-    ORDER BY Name
+  const result = await pool.request().query<PricingPolicyLookupRow>(`
+    SELECT
+      pp.ID,
+      pp.Name,
+      CAST(CASE WHEN ISNULL(pp.Enabled, 0) = 1 THEN 1 ELSE 0 END AS BIT) AS Enabled,
+      CAST(CASE WHEN EXISTS (
+        SELECT 1 FROM dbo.PricingPolicyRules ppr WHERE ppr.PricingPolicyID = pp.ID
+      ) THEN 1 ELSE 0 END AS BIT) AS HasRules
+    FROM dbo.PricingPolicies pp
+    ORDER BY pp.Name
   `);
-  return toLookupOptions(result.recordset);
+  return toPricingPolicyOptions(result.recordset);
 }
 
 async function fetchMarkets() {

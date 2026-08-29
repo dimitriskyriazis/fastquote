@@ -10,7 +10,13 @@ import {
   NumberCondition,
   DateCondition,
 } from './filterTypes';
-import { buildTextMatchPredicate, isSensitiveColumn, QueryParam } from './gridFilters';
+import {
+  buildTextMatchPredicate,
+  isSensitiveColumn,
+  QueryParam,
+  holdsUnboundedText,
+  supportsPunctuationFolding,
+} from './gridFilters';
 
 export type FilterContext = {
   columnExpression: string;
@@ -89,6 +95,8 @@ function processSingleTextCondition(
     paramKey: context.paramBase,
     mode,
     enablePhonetic: !isSensitiveColumn(context.columnId),
+    enablePunctuationFolding: supportsPunctuationFolding(context.columnId),
+    unboundedText: holdsUnboundedText(context.columnId),
   });
 }
 
@@ -343,4 +351,88 @@ export function processFilter(
     default:
       return { clause: '', params: [] };
   }
+}
+
+/**
+ * Condition types that mean "does NOT match". When one filter is spread over
+ * several columns these have to be ANDed rather than ORed, so the columns keep
+ * behaving like a single virtual value: "not contains X" must exclude the row
+ * when EITHER column contains X, and "blank" only passes when both are blank.
+ */
+const NEGATED_CONDITION_TYPES = new Set(['notContains', 'notEqual', 'blank']);
+
+const isNegatedCondition = (filter: KnownFilterModel): boolean => {
+  const type = (filter as { type?: unknown }).type;
+  return typeof type === 'string' && NEGATED_CONDITION_TYPES.has(type);
+};
+
+export type CrossColumnTarget = {
+  columnExpression: string;
+  columnId: string;
+};
+
+/**
+ * Apply one column's filter to several columns at once, so a term typed into a
+ * column also searches its aliases (e.g. Customer Name <-> Official Name).
+ *
+ * Compound filters are split first and each condition spread over the targets
+ * individually. Spreading the whole model per column instead would give
+ * "contains X AND notContains Y" the wrong meaning, because the two conditions
+ * would then have to be satisfied by the same column.
+ *
+ * With a single target this is exactly processFilter().
+ */
+export function processFilterAcrossColumns(
+  filter: KnownFilterModel,
+  targets: CrossColumnTarget[],
+  options: { paramBase: string; preserveTime?: boolean }
+): { clause: string; params: QueryParam[] } {
+  if (targets.length === 0) return { clause: '', params: [] };
+  if (targets.length === 1) {
+    return processFilter(filter, {
+      columnExpression: targets[0].columnExpression,
+      columnId: targets[0].columnId,
+      paramBase: options.paramBase,
+      preserveTime: options.preserveTime,
+    });
+  }
+
+  const compound = isCompoundFilter(filter);
+  const conditions: KnownFilterModel[] = compound ? getCompoundFilterConditions(filter) : [filter];
+  const operator = compound ? filter.operator : 'AND';
+
+  // Conditions coming from older grid payloads can omit filterType; inherit the
+  // parent's so processFilter still routes them to the right processor.
+  const withParentFilterType = (condition: KnownFilterModel): KnownFilterModel =>
+    (condition as { filterType?: unknown }).filterType
+      ? condition
+      : ({ ...condition, filterType: filter.filterType } as KnownFilterModel);
+
+  const conditionClauses: string[] = [];
+  const params: QueryParam[] = [];
+
+  conditions.forEach((condition, conditionIdx) => {
+    const resolved = withParentFilterType(condition);
+    const results = targets
+      .map((target, targetIdx) =>
+        processFilter(resolved, {
+          columnExpression: target.columnExpression,
+          columnId: target.columnId,
+          paramBase: `${options.paramBase}_c${conditionIdx}_x${targetIdx}`,
+          preserveTime: options.preserveTime,
+        })
+      )
+      .filter(result => result.clause);
+
+    if (results.length === 0) return;
+    results.forEach(result => params.push(...result.params));
+    const joiner = isNegatedCondition(resolved) ? ' AND ' : ' OR ';
+    conditionClauses.push(
+      results.length === 1 ? results[0].clause : `(${results.map(r => r.clause).join(joiner)})`
+    );
+  });
+
+  if (conditionClauses.length === 0) return { clause: '', params: [] };
+  if (conditionClauses.length === 1) return { clause: conditionClauses[0], params };
+  return { clause: `(${conditionClauses.join(` ${operator} `)})`, params };
 }

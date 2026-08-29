@@ -9,6 +9,7 @@ import { handleApiError } from '../../../../lib/errorHandler';
 import { validateRequest, stringSchema, positiveIntSchema, emailSchema, urlSchema } from '../../../../lib/validation';
 import { sanitizeJsonUnsafeChars } from '../../../../lib/normalize';
 import { requirePermission } from '../../../../lib/authz';
+import { roleHasPermission } from '../../../../lib/roles';
 import { logAddAuditDetails } from '../../../../lib/mutationAudit';
 
 // Strict schema-based validation with rejection of unknown fields
@@ -21,6 +22,12 @@ const createCustomerSchema = z.object({
   taxOffice: stringSchema(128),
   profession: stringSchema(256),
   customerGroupId: positiveIntSchema,
+
+  // Agreed payment terms. Administrator/Developer only — the schema is .strict(),
+  // so without this entry the field would be rejected outright; with it, the
+  // permission check below is what actually gates it. Omitted/null means "not
+  // assigned", which offers resolve to OTHER at read time.
+  paymentTermId: positiveIntSchema,
 
   // Customers.ERPID is an int: the numeric Soft1 TRDR, also stamped by the draft-order
   // wizard. Users pasting the Soft1 CODE ('Δι.4082') must get a clear rejection, not a
@@ -40,6 +47,10 @@ const createCustomerSchema = z.object({
       return Number.parseInt(trimmed, 10);
     }),
   ]).nullable().optional(),
+
+  // Customers.ERPCode is the alphanumeric Soft1 dbo.TRDR.CODE ('ΔΙ.3748'), the companion
+  // namespace to the numeric TRDR held in ERPID. Free text, so no numeric validation here.
+  erpCode: stringSchema(25),
   isParent: z.union([z.literal(0), z.literal(1), z.boolean()]).transform((val) => {
     if (typeof val === 'boolean') return val ? 1 : 0;
     return val;
@@ -91,8 +102,23 @@ export async function POST(req: NextRequest) {
     const taxOffice = body.taxOffice;
     const profession = body.profession;
     const customerGroupId = body.customerGroupId;
+    const paymentTermId = body.paymentTermId ?? null;
+
+    // Mirrors ADMIN_ONLY_FIELDS in api/customers/[customerId]/basicdata: creating
+    // a customer must not be the way round the edit restriction.
+    if (paymentTermId != null && !roleHasPermission(auth.roles, 'manageCustomerPaymentTerms')) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Only Administrators can set payment terms.',
+          requiredPermission: 'manageCustomerPaymentTerms',
+        },
+        { status: 403 },
+      );
+    }
 
     const erpId = body.erpId ?? null;
+    const erpCode = body.erpCode ?? null;
     const isParent = body.isParent ?? 0;
     const parentCustomerId = body.parentCustomerId;
     const pricingPolicyId = body.pricingPolicyId!; // Validated as required
@@ -124,6 +150,24 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // A bad id would raise FK 547 as a raw 500; a disabled term would pass the FK.
+    if (paymentTermId != null) {
+      const termExists = await pool.request()
+        .input('__ptid', sql.Int, paymentTermId)
+        .query<{ ID: number }>(`
+          SELECT TOP 1 ID
+          FROM dbo.PaymentTerms
+          WHERE ID = @__ptid
+            AND ISNULL(Enabled, 0) = 1
+        `);
+      if (!termExists.recordset?.[0]?.ID) {
+        return NextResponse.json(
+          { ok: false, error: 'Selected payment term was not found or is disabled.' },
+          { status: 400 },
+        );
+      }
+    }
+
     const request = pool.request();
     request.input('Name', sql.NVarChar(512), name);
     request.input('BrandName', sql.NVarChar(512), brandName);
@@ -131,8 +175,10 @@ export async function POST(req: NextRequest) {
     request.input('TaxOffice', sql.NVarChar(128), taxOffice);
     request.input('Profession', sql.NVarChar(256), profession);
     request.input('CustomerGroupID', sql.Int, customerGroupId);
+    request.input('PaymentTermID', sql.Int, paymentTermId);
 
     request.input('ERPID', sql.Int, erpId);
+    request.input('ERPCode', sql.NVarChar(25), erpCode);
     request.input('IsParent', sql.Bit, isParent ?? 0);
     request.input('ParentCustomerID', sql.Int, parentCustomerId);
     request.input('PricingPolicyID', sql.Int, pricingPolicyId);
@@ -158,8 +204,10 @@ export async function POST(req: NextRequest) {
         TaxOffice,
         Profession,
         CustomerGroupID,
+        PaymentTermID,
 
         ERPID,
+        ERPCode,
         IsParent,
         ParentCustomerID,
         PricingPolicyID,
@@ -185,8 +233,10 @@ export async function POST(req: NextRequest) {
         @TaxOffice,
         @Profession,
         @CustomerGroupID,
+        @PaymentTermID,
 
         @ERPID,
+        @ERPCode,
         @IsParent,
         @ParentCustomerID,
         @PricingPolicyID,

@@ -14,7 +14,7 @@ import {
   QueryParam,
 } from "../../../lib/gridFilters";
 import { KnownFilterModel } from "../../../lib/filterTypes";
-import { processFilter } from "../../../lib/filterProcessing";
+import { processFilterAcrossColumns, CrossColumnTarget } from "../../../lib/filterProcessing";
 import { normalizeId } from '../../../lib/normalize';
 import { BATCH_DELETE_SIZE } from '../../../lib/constants';
 
@@ -37,6 +37,7 @@ type CustomerRow = {
   ParentCustomer: string | null;
   PricingPolicy: string | null;
   CustomerGroup: string | null;
+  PaymentTerm: string | null;
   Importance: string | null;
   Country: string | null;
   City: string | null;
@@ -64,13 +65,30 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   ParentCustomer: "parentCustomer.Name",
   PricingPolicy: "dbo.PricingPolicies.Name",
   CustomerGroup: "customerGroup.Name",
+  PaymentTerm: "paymentTerm.Name",
   Importance: "dbo.Customers.Importance",
   Country: "country.Name",
   City: "dbo.Customers.City",
   Enabled: "dbo.Customers.Enabled",
 };
 
-const ALLOWED_ROW_GROUP_FIELDS = new Set(["IsParent", "PricingPolicy", "ParentCustomer", "CustomerGroup", "Importance"]);
+// Customer Name and Official Name are two spellings of the same company (the
+// trading name and the legal/invoicing name), so a filter typed into either one
+// searches both: someone who only knows "Kapa Studios" still finds the row filed
+// as "Γ. Καραγιάννης & ΣΙΑ Α.Ε", and vice versa. First entry is the column the
+// filter was typed into, which keeps the generated SQL readable.
+const CROSS_SEARCH_GROUPS: Record<string, string[]> = {
+  CustomerName: ["CustomerName", "BrandName"],
+  BrandName: ["BrandName", "CustomerName"],
+};
+
+const resolveFilterTargets = (col: string): CrossColumnTarget[] =>
+  (CROSS_SEARCH_GROUPS[col] ?? [col]).map((columnId) => ({
+    columnId,
+    columnExpression: COLUMN_EXPRESSIONS[columnId] ?? `[${columnId}]`,
+  }));
+
+const ALLOWED_ROW_GROUP_FIELDS = new Set(["IsParent", "PricingPolicy", "ParentCustomer", "CustomerGroup", "PaymentTerm", "Importance"]);
 const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
   colId,
   expression,
@@ -87,12 +105,10 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
 
-    // Use centralized filter processor
-    const result = processFilter(fm, {
-      columnExpression,
-      columnId: col,
+    // Use centralized filter processor. Most columns resolve to a single target,
+    // which behaves exactly like processFilter().
+    const result = processFilterAcrossColumns(fm, resolveFilterTargets(col), {
       paramBase: pBase,
     });
 
@@ -230,6 +246,7 @@ export async function POST(req: NextRequest) {
         parentCustomer.Name AS ParentCustomer,
         dbo.PricingPolicies.Name AS PricingPolicy,
         customerGroup.Name AS CustomerGroup,
+        paymentTerm.Name AS PaymentTerm,
         dbo.Customers.Importance,
         country.Name AS Country,
         dbo.Customers.City,
@@ -240,6 +257,7 @@ export async function POST(req: NextRequest) {
       FROM dbo.Customers
       LEFT OUTER JOIN dbo.PricingPolicies ON dbo.Customers.PricingPolicyID = dbo.PricingPolicies.ID
       LEFT OUTER JOIN dbo.Customers AS parentCustomer ON dbo.Customers.ParentCustomerID = parentCustomer.ID
+      LEFT OUTER JOIN dbo.PaymentTerms AS paymentTerm ON dbo.Customers.PaymentTermID = paymentTerm.ID
       LEFT OUTER JOIN dbo.CustomerGroups AS customerGroup ON dbo.Customers.CustomerGroupID = customerGroup.ID
       LEFT OUTER JOIN dbo.Countries AS country ON dbo.Customers.CountryID = country.ID
     `;

@@ -36,10 +36,13 @@ export async function findBrandInErp(
       @FoundCount = @FoundCount OUTPUT;
   `);
   const row = result.recordset?.[0];
+  // Trim the CODE: it feeds the item CODE prefix, and a legacy row whose code
+  // carries a trailing space (SQL comparison and every UI hide those) would
+  // otherwise leak the space into every item code generated for the brand.
   return {
     found: row?.FoundCount ?? 0,
     brandId: row?.BrandId ?? null,
-    brandCode: row?.BrandCode ?? null,
+    brandCode: row?.BrandCode?.trim() ?? null,
   };
 }
 
@@ -66,7 +69,8 @@ export async function findBrandById(
     SELECT TOP (1) MTRMANFCTR, CODE FROM dbo.MTRMANFCTR WHERE MTRMANFCTR = @Mtrmanfctr
   `);
   const row = result.recordset?.[0];
-  return { brandId: row?.MTRMANFCTR ?? null, brandCode: row?.CODE ?? null };
+  // Trimmed for the same reason as findBrandInErp — see the note there.
+  return { brandId: row?.MTRMANFCTR ?? null, brandCode: row?.CODE?.trim() ?? null };
 }
 
 /**

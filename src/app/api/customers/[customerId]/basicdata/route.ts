@@ -9,8 +9,10 @@ import type {
 } from "../../../../customers/[customerId]/CustomerBasicDataTypes";
 import { sanitizeJsonUnsafeChars } from "../../../../../lib/normalize";
 import { requirePermission } from "../../../../../lib/authz";
+import { roleHasPermission, type Permission } from "../../../../../lib/roles";
 import { getRequestId } from "../../../../../lib/requestId";
 import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
+import { invalidateDuplicateScans } from "../../../../../lib/duplicateScanCache";
 
 type UpdateInput = {
   field?: CustomerBasicUpdateField;
@@ -45,9 +47,19 @@ const FIELD_CONFIG: Record<CustomerBasicUpdateField, FieldConfig> = {
   Profession: { column: "Profession", type: "string", sqlType: sql.NVarChar, length: 256 },
   CustomerGroupID: { column: "CustomerGroupID", type: "number", sqlType: sql.Int },
 
+  // The payment terms agreed with this customer. NULL means "not assigned" and
+  // is deliberately kept distinct from a deliberate OTHER, so the bulk-assignment
+  // coverage stays measurable. Administrator/Developer only — see
+  // ADMIN_ONLY_FIELDS below.
+  PaymentTermID: { column: "PaymentTermID", type: "number", sqlType: sql.Int },
+
   // ERPID = the numeric Soft1 TRDR (int column), also stamped by the draft-order wizard.
   // Soft1 codes like 'Δι.4082' are a different namespace and must be rejected, not stored.
   ERPID: { column: "ERPID", type: "number", sqlType: sql.Int },
+
+  // ERPCode = the alphanumeric Soft1 dbo.TRDR.CODE (e.g. ΔΙ.3748), the companion
+  // namespace to the numeric TRDR held in ERPID. Free text, so no numeric guard.
+  ERPCode: { column: "ERPCode", type: "string", sqlType: sql.NVarChar, length: 25 },
   IsParent: { column: "IsParent", type: "number", sqlType: sql.Bit },
   ParentCustomerID: { column: "ParentCustomerID", type: "number", sqlType: sql.Int },
   PricingPolicyID: { column: "PricingPolicyID", type: "number", sqlType: sql.Int },
@@ -61,6 +73,15 @@ const FIELD_CONFIG: Record<CustomerBasicUpdateField, FieldConfig> = {
   WebSite: { column: "WebSite", type: "string", sqlType: sql.NVarChar, length: 512 },
   Notes: { column: "Notes", type: "string", sqlType: sql.NVarChar, length: sql.MAX },
 };
+
+// Fields inside FIELD_CONFIG that need MORE than 'manageCustomersContacts'
+// (which every role from Simple User up holds). Enforced server-side below; the
+// client's adminOnly flag on the field definition is UX only and bypassable.
+const ADMIN_ONLY_FIELDS: ReadonlySet<CustomerBasicUpdateField> = new Set([
+  'PaymentTermID',
+]);
+
+const ADMIN_ONLY_FIELD_PERMISSION: Permission = 'manageCustomerPaymentTerms';
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   if (value === null || value === undefined) return null;
@@ -133,8 +154,11 @@ export async function GET(
         c.Profession,
         c.CustomerGroupID,
         cg.Name AS CustomerGroupName,
+        c.PaymentTermID,
+        pt.Name AS PaymentTermName,
 
         c.ERPID,
+        c.ERPCode,
         c.IsParent,
         c.ParentCustomerID,
         parent.Name AS ParentCustomerName,
@@ -155,6 +179,7 @@ export async function GET(
       LEFT JOIN dbo.Customers AS parent ON c.ParentCustomerID = parent.ID
       LEFT JOIN dbo.Countries AS country ON c.CountryID = country.ID
       LEFT JOIN dbo.PricingPolicies AS pp ON c.PricingPolicyID = pp.ID
+      LEFT JOIN dbo.PaymentTerms AS pt ON c.PaymentTermID = pt.ID
       WHERE c.ID = @customerId
     `);
     const record = result.recordset?.[0] ?? null;
@@ -207,6 +232,26 @@ export async function PATCH(
       normalizedUpdates.push({ field: entry.field, config, value: normalizedValue });
     });
 
+    // Reject the whole batch if it touches an admin-only field without the
+    // rights for it. Rejecting the batch rather than dropping the field means a
+    // caller can never half-apply an update and believe it succeeded.
+    const attemptedAdminFields = normalizedUpdates
+      .map((u) => u.field)
+      .filter((field) => ADMIN_ONLY_FIELDS.has(field));
+    if (
+      attemptedAdminFields.length > 0
+      && !roleHasPermission(auth.roles, ADMIN_ONLY_FIELD_PERMISSION)
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Only Administrators can change ${attemptedAdminFields.join(', ')}.`,
+          requiredPermission: ADMIN_ONLY_FIELD_PERMISSION,
+        },
+        { status: 403 },
+      );
+    }
+
     // A non-numeric ERPID normalizes to null; erroring beats silently clearing the TRDR.
     const invalidErpId = normalizedUpdates.find(
       (u) => u.field === 'ERPID' && u.value === null
@@ -224,6 +269,25 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+
+    // Validate PaymentTermID before the UPDATE. Without this the FK raises 547
+    // and surfaces as a raw 500; and a disabled term would be accepted, since
+    // the FK only checks existence.
+    const paymentTermUpdate = normalizedUpdates.find((u) => u.field === 'PaymentTermID');
+    if (paymentTermUpdate && paymentTermUpdate.value !== null) {
+      const termCheck = await pool
+        .request()
+        .input('paymentTermId', sql.Int, paymentTermUpdate.value as number)
+        .query<{ ID: number }>(
+          'SELECT ID FROM dbo.PaymentTerms WHERE ID = @paymentTermId AND Enabled = 1',
+        );
+      if (!termCheck.recordset?.[0]) {
+        return NextResponse.json(
+          { ok: false, error: 'Unknown or disabled payment term.' },
+          { status: 400 },
+        );
+      }
+    }
     const request = pool.request();
     request.input("__customerId", sql.Int, parsedId);
 
@@ -254,6 +318,11 @@ export async function PATCH(
     `;
     const result = await request.query(query);
     const rowsAffected = result.rowsAffected?.[0] ?? 0;
+
+    // Renaming a customer, or changing its tax/ERP id, changes what the
+    // duplicate scanner would report, so any cached scan is now describing
+    // customers that no longer look like that.
+    invalidateDuplicateScans();
 
     const changes = normalizedUpdates.map((u) => ({
       targetId: parsedId,

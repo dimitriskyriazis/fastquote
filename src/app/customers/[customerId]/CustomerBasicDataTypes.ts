@@ -9,8 +9,11 @@ export type CustomerBasicRecord = {
   Profession: string | null;
   CustomerGroupID: number | null;
   CustomerGroupName: string | null;
+  PaymentTermID: number | null;
+  PaymentTermName: string | null;
 
   ERPID: number | null;
+  ERPCode: string | null;
   IsParent: boolean | number | null;
   ParentCustomerID: number | null;
   ParentCustomerName: string | null;
@@ -37,8 +40,10 @@ export type CustomerBasicUpdateField =
   | 'TaxOffice'
   | 'Profession'
   | 'CustomerGroupID'
+  | 'PaymentTermID'
 
   | 'ERPID'
+  | 'ERPCode'
   | 'IsParent'
   | 'ParentCustomerID'
   | 'PricingPolicyID'

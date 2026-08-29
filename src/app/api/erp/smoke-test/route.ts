@@ -576,7 +576,7 @@ export async function POST(req: NextRequest) {
                 WHERE UPPER(LTRIM(RTRIM(NAME))) = UPPER(LTRIM(RTRIM(@brandName)))
                 ORDER BY MTRMANFCTR
               `);
-            brandCode = brandResult.recordset?.[0]?.CODE ?? null;
+            brandCode = brandResult.recordset?.[0]?.CODE?.trim() ?? null;
           }
 
           const codePrefix = scCode3 && typeLetter && brandCode

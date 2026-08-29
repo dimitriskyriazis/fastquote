@@ -2,6 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { buildTextMatchPredicate, buildQuickFilterClause } from '../gridFilters';
 import { processFilter } from '../filterProcessing';
 import { SEARCH_COLLATION } from '../textSearch';
+import { collatedParamComparisons, paramComparisons } from './sqlClauseTestUtils';
+
+// Every comparison that reads a bound parameter has to sit on a collated
+// expression. Counting COLLATE occurrences instead would miss the point now
+// that one predicate can carry several (the punctuation fold adds a guard and a
+// folded expression alongside the plain one, sharing a single parameter).
+const expectEveryComparisonCollated = (clause: string) => {
+  const comparisons = paramComparisons(clause);
+  expect(comparisons.length).toBeGreaterThan(0);
+  expect(collatedParamComparisons(clause, SEARCH_COLLATION)).toHaveLength(comparisons.length);
+};
 
 const COLLATE = `COLLATE ${SEARCH_COLLATION}`;
 const ctx = { columnExpression: 'c.Name', columnId: 'Name', paramBase: 'p' };
@@ -18,11 +29,8 @@ describe('text filter accent-insensitivity', () => {
     // A 4–9 char term with no digits also produces swap/insertion/substitution
     // variants; each one gets its own predicate and must be collated too.
     const { clause, params } = buildTextMatchPredicate('c.Name', 'ενεργεια', { paramKey: 'p' });
-    const predicates = clause.split(' OR ');
-    expect(predicates.length).toBeGreaterThan(1);
-    for (const predicate of predicates) expect(predicate).toContain(COLLATE);
-    // One COLLATE per bound parameter — no predicate left uncollated.
-    expect(clause.split(COLLATE).length - 1).toBe(params.length);
+    expect(params.length).toBeGreaterThan(1);
+    expectEveryComparisonCollated(clause);
   });
 
   it('collates compound (AND/OR) conditions on both sides', () => {
@@ -37,7 +45,9 @@ describe('text filter accent-insensitivity', () => {
       } as never,
       ctx,
     );
-    expect(clause.split(COLLATE).length - 1).toBe(2);
+    expect(clause).toContain('@p_c0');
+    expect(clause).toContain('@p_c1');
+    expectEveryComparisonCollated(clause);
   });
 
   it('collates the quick filter', () => {

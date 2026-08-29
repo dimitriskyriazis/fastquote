@@ -10,8 +10,10 @@ import type {
   GetContextMenuItemsParams,
   MenuItemDef,
 } from "ag-grid-community";
-import { GridRowDeletion } from "../../lib/gridRowDeletion";
+import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../lib/gridRowDeletion";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
+import { coerceRoles, roleHasPermission } from "../../lib/roles";
+import { MAX_MERGE_SECONDARIES } from "./merge/customerMergeTypes";
 import { useAuditUser } from "../components/AuditUserProvider";
 import styles from "./CustomersClient.module.css";
 import PageHeader from "../components/PageHeader";
@@ -69,12 +71,27 @@ const CUSTOMER_FIELD_LABELS: Record<string, string> = {
   Enabled: "Enabled",
 };
 
+const mergeMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 3v5a4 4 0 0 0 4 4h2a4 4 0 0 1 4 4v5" />
+      <path d="M17 3v5a4 4 0 0 1-4 4h-2a4 4 0 0 0-4 4v5" />
+    </svg>
+  </span>
+`;
+
 export default function CustomersClient() {
   const router = useRouter();
   const { roles, userId } = useAuditUser();
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const defaultEnabledFilterAppliedRef = useRef(false);
   const enabledOptions = useMemo(() => ["Yes", "No"], []);
+  // Administrator + Developer only. Hiding the entry points is convenience; the
+  // /api/customers/merge routes enforce the same permission server-side.
+  const canMergeCustomers = useMemo(
+    () => roleHasPermission(coerceRoles(roles), 'mergeCustomers'),
+    [roles],
+  );
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
@@ -139,6 +156,20 @@ export default function CustomersClient() {
       {
         field: "CustomerGroup",
         headerName: "Customer Group",
+        filter: "agTextColumnFilter",
+        enableRowGroup: true,
+      },
+      {
+        // Read-only here on purpose. The PATCH target
+        // (/api/customers/[id]/basicdata) is keyed by PaymentTermID (int), so an
+        // editable column would have to send the joined NAME and be resolved
+        // back to an id server-side. Edits go through the customer detail page,
+        // which is Administrator-gated; bulk assignment is a SQL script.
+        // agTextColumnFilter rather than a set filter: AG Grid cannot enumerate
+        // distinct values under the server-side row model, and every set filter
+        // in this codebase supplies filterParams.values explicitly.
+        field: "PaymentTerm",
+        headerName: "Payment Terms",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
       },
@@ -319,6 +350,46 @@ export default function CustomersClient() {
       };
       items.unshift(viewBasicDataItem, viewContactsItem, 'separator');
 
+      // Merge duplicates. The selection has to be read from the snapshot AgGridAll
+      // captured on right-click: it wraps every context-menu action so that the
+      // grid is deselected first, so params.api.getSelectedNodes() inside the
+      // action would come back empty.
+      if (canMergeCustomers) {
+        const selectAllActive = Boolean(
+          typeof params.api?.getServerSideSelectionState === 'function'
+            && (params.api.getServerSideSelectionState() as { selectAll?: boolean } | null)?.selectAll,
+        );
+        const selectedIds = getContextMenuSelectionSnapshot(params.api)
+          .map((node) => normalizeCustomerId((node?.data as { CustomerID?: unknown } | undefined)?.CustomerID ?? null))
+          .filter((id): id is number => id != null);
+        const uniqueIds = Array.from(new Set(selectedIds));
+        const secondaryIds = uniqueIds.filter((id) => id !== clickedCustomerId);
+
+        // "Select all" under the server-side model means every row matching the
+        // filter, which is never a deliberate merge gesture — hide it rather
+        // than let someone fold the customer base into one record.
+        if (!selectAllActive && secondaryIds.length > 0) {
+          const withinLimit = secondaryIds.length <= MAX_MERGE_SECONDARIES;
+          const mergeItem: MenuItemDef<Record<string, unknown>> = {
+            name: withinLimit
+              ? `Merge ${secondaryIds.length + 1} customers into "${resolveCustomerLabel(
+                params.node?.data as Record<string, unknown> | undefined,
+                `#${clickedCustomerId}`,
+              )}"`
+              : `Too many selected to merge (${secondaryIds.length + 1}, limit ${MAX_MERGE_SECONDARIES + 1})`,
+            icon: mergeMenuIcon,
+            disabled: !withinLimit,
+            action: () => {
+              if (!withinLimit) return;
+              router.push(
+                `/customers/merge?primary=${clickedCustomerId}&secondary=${secondaryIds.join(',')}`,
+              );
+            },
+          };
+          items.unshift(mergeItem, 'separator');
+        }
+      }
+
       if (isMultiSelection) {
         return items;
       }
@@ -343,7 +414,7 @@ export default function CustomersClient() {
 
       return items;
     },
-    [customerRowDeletion, router, userId],
+    [customerRowDeletion, router, userId, canMergeCustomers],
   );
 
   return (
@@ -362,15 +433,28 @@ export default function CustomersClient() {
           ) : undefined
         }
         rightActions={
-          <button
-            type="button"
-            className={`${styles.headerButton} page-header-button`}
-            onClick={() => {
-              router.push("/customers/create");
-            }}
-          >
-            Add Customer
-          </button>
+          <>
+            {canMergeCustomers ? (
+              <button
+                type="button"
+                className={`${styles.headerButton} page-header-button`}
+                onClick={() => {
+                  router.push("/customers/duplicates");
+                }}
+              >
+                Find Duplicates
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={`${styles.headerButton} page-header-button`}
+              onClick={() => {
+                router.push("/customers/create");
+              }}
+            >
+              Add Customer
+            </button>
+          </>
         }
       >
         <GridQuickSearchProvider>

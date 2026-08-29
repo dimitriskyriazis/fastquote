@@ -67,7 +67,6 @@ type OfferDetailRow = {
   ModifiedOn: string | null;
 };
 
-type OfferDetailRowWithCount = OfferDetailRow & { __totalCount: number | bigint | null };
 
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   OfferDetailID: 'od.ID',
@@ -237,9 +236,14 @@ async function readGridRequest(req: NextRequest): Promise<{ request: GridRequest
   return { request: { startRow: 0, endRow: 100 } };
 }
 
+// No COUNT_BIG(1) OVER (): that windowed count made every page wait for the
+// whole filtered set to materialize across all ten joins, so a quick search cost
+// 3.2s where the same query without it costs 0.17s. End-of-data is inferred the
+// way the products grid does it — a full page means "there is more" (len+1), a
+// short page is the true end (exact count). AgGridAll's end-of-data check
+// (startRow + rows.length >= rowCount) paginates correctly on that.
 const selectClause = `
   SELECT
-    COUNT_BIG(1) OVER () AS __totalCount,
     od.ID AS OfferDetailID,
     od.ProductID,
     od.OfferID,
@@ -384,13 +388,12 @@ export async function POST(req: NextRequest) {
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
     const dataSql = `${selectClause} ${fromClause} ${appliedWhere} ${orderClause} ${paging}`;
-    const dataRes = await dataReq.query<OfferDetailRowWithCount>(dataSql);
-    const rawRows = dataRes.recordset ?? [];
-    const totalCount = rawRows.length > 0 ? Number(rawRows[0].__totalCount ?? 0) : 0;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const rows = rawRows.map(({ __totalCount, ...rest }) => rest);
+    const dataRes = await dataReq.query<OfferDetailRow>(dataSql);
+    const rows = dataRes.recordset ?? [];
+    const fetched = rows.length;
+    const rowCount = fetched < pageSize ? offset + fetched : offset + fetched + 1;
 
-    return NextResponse.json({ ok: true, rows, rowCount: totalCount });
+    return NextResponse.json({ ok: true, rows, rowCount });
   } catch (error) {
     console.error('Failed to load offered products', error);
     return NextResponse.json(

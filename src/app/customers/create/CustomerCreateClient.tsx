@@ -141,6 +141,17 @@ const buildFieldDefinitions = (
     section: 'business',
     type: 'text',
     inputType: 'number',
+    hint: 'ex. 35860',
+  },
+
+  // Customers.ERPCode holds the alphanumeric Soft1 dbo.TRDR.CODE — the companion
+  // namespace to the numeric TRDR in ERPID. Greek letters, so plain text, no inputType.
+  {
+    id: 'erpCode',
+    label: 'ERP Code',
+    section: 'business',
+    type: 'text',
+    hint: 'ex. ΔΙ.3748',
   },
   {
     id: 'address',
@@ -405,7 +416,10 @@ export default function CustomerCreateClient({
   // Restore a saved draft on mount (mirrors the create-offer form).
   useEffect(() => {
     if (hasDraft && restoredValues) {
-      setValues(restoredValues);
+      // Merge OVER the derived initial values, never replace them: a draft saved by an
+      // older build has no key for a field added since, and a wholesale replace would
+      // leave that key undefined -- which throws in the submit payload builder below.
+      setValues({ ...initialValuesRef.current, ...restoredValues });
       showToastMessage('Draft restored', 'info', 5500, {
         label: 'Discard',
         onClick: () => {
@@ -705,6 +719,7 @@ export default function CustomerCreateClient({
         customerGroupId: toNumberOrNull(values.customerGroup),
 
         erpId: erpText ? Number.parseInt(erpText, 10) : null,
+        erpCode: toNullableString(values.erpCode ?? ''),
         isParent: toBooleanNumber(values.isParent) ?? 0,
         parentCustomerId: toNumberOrNull(values.parentCustomer),
         pricingPolicyId: toNumberOrNull(values.pricingPolicy),

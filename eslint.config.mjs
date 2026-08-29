@@ -24,6 +24,15 @@ const eslintConfig = [
       "react-hooks/preserve-manual-memoization": "off",
     },
   },
+  {
+    // .cjs is CommonJS by definition, so require() is the only import form
+    // available there. Node tooling and the one-off DB scripts under
+    // scripts/sql use it; the TS import rule does not apply to them.
+    files: ["**/*.cjs"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
 ];
 
 export default eslintConfig;
