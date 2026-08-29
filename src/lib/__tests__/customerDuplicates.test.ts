@@ -6,6 +6,7 @@ import {
   norm,
   normalizeTaxId,
   tokens,
+  tokensMatch,
   translit,
   type DuplicateScanCustomer,
 } from '../customerDuplicates';
@@ -91,6 +92,29 @@ describe('translit', () => {
 describe('acronym', () => {
   it('builds initials from significant words only', () => {
     expect(acronym('Ελληνική Ομοσπονδία Καλαθοσφαίρισης')).toBe('ΕΟΚ');
+  });
+});
+
+describe('tokensMatch', () => {
+  it('forgives a typo in a long enough word', () => {
+    // The live case: 'PA Solutions Cypurs' vs 'P.A. SOLUTIONS LTD - Cyprus'.
+    // A transposition, which plain Levenshtein would score as 2 and miss.
+    expect(tokensMatch('CYPURS', 'CYPRUS')).toBe(true);
+    expect(tokensMatch('SOLUTIONS', 'SOLUTIONS')).toBe(true);
+    expect(tokensMatch('ΘΕΣΣΑΛΟΝΙΚΗ', 'ΘΕΣΑΛΟΝΙΚΗ')).toBe(true);
+  });
+
+  it('will not conflate short words that merely rhyme', () => {
+    // Five-letter Greek words one vowel apart are different words, not typos.
+    expect(tokensMatch('ΠΑΤΡΑ', 'ΠΕΤΡΑ')).toBe(false);
+    expect(tokensMatch('ΜΑΡΙΑ', 'ΜΑΡΙΟΣ')).toBe(false);
+    expect(tokensMatch('ΡΑ', 'ΡΒ')).toBe(false);
+    expect(tokensMatch('SOUND', 'ROUND')).toBe(false);
+  });
+
+  it('will not conflate genuinely different words', () => {
+    expect(tokensMatch('ΑΘΗΝΑ', 'ΘΕΣΣΑΛΟΝΙΚΗ')).toBe(false);
+    expect(tokensMatch('ΠΑΝΕΠΙΣΤΗΜΙΟ', 'ΕΠΙΜΕΛΗΤΗΡΙΟ')).toBe(false);
   });
 });
 
@@ -189,6 +213,19 @@ describe('findDuplicateGroups', () => {
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].members).toHaveLength(2);
+  });
+
+  it('puts all three spellings on one card despite a typo in one of them', () => {
+    // Reported from the live page: these arrived as two separate pairs, each
+    // pairing the short name with one Cyprus record, because 'Cypurs' and
+    // 'Cyprus' are different words — so no clique could hold all three.
+    const groups = findDuplicateGroups([
+      customer({ Name: 'P.A. Solutions' }),
+      customer({ Name: 'P.A. Solutions Cypurs' }),
+      customer({ Name: 'P.A. SOLUTIONS LTD - Cyprus', TaxID: '60038695' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members).toHaveLength(3);
   });
 
   it('still separates two companies whose initials differ', () => {

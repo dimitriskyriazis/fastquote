@@ -141,9 +141,101 @@ export const tokens = (value: unknown): Set<string> =>
       .filter((w) => w.length >= MIN_TOKEN_LENGTH && !NORMALIZED_STOPWORDS.has(w)),
   );
 
+/**
+ * A word has to be at least this long before a near-miss counts as a match.
+ *
+ * Six is measured, not guessed. At five, one wrong letter is most of the word
+ * and Greek is full of five-letter words a single vowel apart — ΠΑΤΡΑ (Patras)
+ * matched ΠΕΤΡΑ (stone), ΣΟΥΝΤ-length words collided freely, and the largest
+ * suggested group swelled from 22 records to 31 unrelated ones. At seven, the
+ * case this exists for stops working: CYPURS/CYPRUS is six letters.
+ */
+const MIN_FUZZY_TOKEN_LENGTH = 6;
+
+/** Edit budget for a near-miss, by the length of the shorter word. */
+const editBudget = (length: number): number => (length >= 8 ? 2 : 1);
+
+/**
+ * Optimal string alignment distance — Levenshtein plus adjacent transposition,
+ * capped so it can give up early. The transposition case is the one that
+ * matters here: 'CYPURS' for 'CYPRUS' is a single swap, which plain Levenshtein
+ * scores as 2 and would therefore miss at a budget of 1.
+ */
+const osaDistance = (a: string, b: string, max: number): number => {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let prev2: number[] = [];
+  let prev: number[] = Array.from({ length: cols }, (_, j) => j);
+  let current: number[] = new Array(cols);
+
+  for (let i = 1; i < rows; i += 1) {
+    current[0] = i;
+    let best = current[0];
+    for (let j = 1; j < cols; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let value = Math.min(current[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        value = Math.min(value, prev2[j - 2] + 1);
+      }
+      current[j] = value;
+      if (value < best) best = value;
+    }
+    // Every remaining path can only grow, so a whole row above the cap is done.
+    if (best > max) return max + 1;
+    prev2 = prev;
+    prev = current;
+    current = new Array(cols);
+  }
+  return prev[cols - 1];
+};
+
+/**
+ * Whether two words are the same word, allowing for a typo.
+ *
+ * Real duplicate records are frequently keyed apart by nothing but a slip of
+ * the fingers — 'PA Solutions Cypurs' against 'P.A. SOLUTIONS LTD Cyprus' is a
+ * live example, where the transposed pair of letters was the only thing keeping
+ * two records of one company from being offered as a merge.
+ */
+export const tokensMatch = (a: string, b: string): boolean => {
+  if (a === b) return true;
+  const shorter = Math.min(a.length, b.length);
+  if (shorter < MIN_FUZZY_TOKEN_LENGTH) return false;
+  const budget = editBudget(shorter);
+  if (Math.abs(a.length - b.length) > budget) return false;
+  return osaDistance(a, b, budget) <= budget;
+};
+
+/**
+ * Words of `a` that also appear in `b`, counting near-misses. Each word of `b`
+ * is consumed at most once, so two typos of one word cannot both claim it.
+ */
+export const sharedTokens = (
+  a: ReadonlySet<string>,
+  b: ReadonlySet<string>,
+): string[] => {
+  const matched: string[] = [];
+  const taken = new Set<string>();
+  for (const left of a) {
+    if (b.has(left)) {           // exact: the overwhelmingly common case
+      if (taken.has(left)) continue;
+      taken.add(left);
+      matched.push(left);
+      continue;
+    }
+    for (const right of b) {
+      if (taken.has(right)) continue;
+      if (!tokensMatch(left, right)) continue;
+      taken.add(right);
+      matched.push(left);
+      break;
+    }
+  }
+  return matched;
+};
+
 export const jaccard = (a: ReadonlySet<string>, b: ReadonlySet<string>): number => {
-  let intersection = 0;
-  for (const t of a) if (b.has(t)) intersection += 1;
+  const intersection = sharedTokens(a, b).length;
   const union = a.size + b.size - intersection;
   return union ? intersection / union : 0;
 };
@@ -151,9 +243,7 @@ export const jaccard = (a: ReadonlySet<string>, b: ReadonlySet<string>): number 
 /** Fraction of a's tokens present in b. Asymmetric on purpose. */
 export const containment = (a: ReadonlySet<string>, b: ReadonlySet<string>): number => {
   if (!a.size) return 0;
-  let intersection = 0;
-  for (const t of a) if (b.has(t)) intersection += 1;
-  return intersection / a.size;
+  return sharedTokens(a, b).length / a.size;
 };
 
 /**
@@ -400,7 +490,7 @@ const carriesEvidence = (
 /** Scores one spelling of a company against one spelling of another. */
 const scoreSignature = (a: Signature, b: Signature, rarity: TokenRarity): PairScore => {
   const reasons: string[] = [];
-  const sharedPlain = [...a.t].filter((t) => b.t.has(t));
+  const sharedPlain = sharedTokens(a.t, b.t);
   const plainCarries = carriesEvidence(sharedPlain, rarity.isRarePlain);
   const j = plainCarries ? jaccard(a.t, b.t) : 0;
   let score = j;
@@ -422,7 +512,7 @@ const scoreSignature = (a: Signature, b: Signature, rarity: TokenRarity): PairSc
     }
   }
 
-  const sharedTl = [...a.tl].filter((t) => b.tl.has(t));
+  const sharedTl = sharedTokens(a.tl, b.tl);
   if (a.tl.size && b.tl.size && carriesEvidence(sharedTl, rarity.isRareTranslit)) {
     const jt = jaccard(a.tl, b.tl);
     if (jt === 1) {
