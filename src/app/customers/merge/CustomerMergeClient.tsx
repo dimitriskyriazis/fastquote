@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import layoutStyles from '../customerDetail.module.css';
 import styles from './CustomerMerge.module.css';
 import { showToastMessage } from '../../../lib/toast';
+import { foldForSearch, searchIncludes } from '../../../lib/textSearch';
 import {
   contactDuplicateKey,
   type MergeContactRecord,
@@ -264,7 +265,11 @@ export default function CustomerMergeClient() {
 
   const visibleContacts = useCallback(
     (list: MergeContactRecord[]) => {
-      const needle = contactSearch.trim().toLowerCase();
+      // foldForSearch rather than toLowerCase: these are Greek names and phone
+      // numbers, so the filter has to ignore accents ("παπαδοπουλος" must find
+      // "Παπαδόπουλος") and punctuation ("6970000000" must find "697 000 0000")
+      // the same way every other search box in the app does.
+      const needle = foldForSearch(contactSearch);
       return list.filter((contact) => {
         if (contactFilter === 'duplicates' && !isDuplicate(contact)) return false;
         if (contactFilter === 'offers' && contact.OfferCount === 0) return false;
@@ -272,7 +277,7 @@ export default function CustomerMergeClient() {
         return [
           contact.LastName, contact.FirstName, contact.Email,
           contact.SecondEmail, contact.Position, contact.Mobile, contact.Phone,
-        ].some((value) => (value ?? '').toLowerCase().includes(needle));
+        ].some((value) => searchIncludes(value, needle));
       });
     },
     [contactFilter, contactSearch, isDuplicate],

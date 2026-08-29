@@ -135,6 +135,27 @@ export const hasPunctuationSql = (expression: string): string =>
  * definition behind both {@link searchIncludes} and AG Grid's client-side text
  * filters — so a search box and a column filter never disagree.
  */
+/**
+ * Everything the browser side folds before comparing: accents, case, Greek final
+ * sigma and punctuation. The JS twin of the grid's SQL predicate, and the single
+ * definition behind both {@link searchIncludes} and AG Grid's client-side text
+ * filters — so a search box and a column filter never disagree.
+ *
+ * Deliberately does NOT fold Latin/Greek homoglyphs, so 'ote' does not match
+ * 'ΟΤΕ' here. That was built and measured on the live data, and reverted: with
+ * substring matching, folding the two alphabets together floods short queries.
+ * 'kapa' went from 3 hits to 70, of which 67 were Greek 'Καρα-' surnames
+ * (Καραγιάννης, Καραχάλιος, Καραμπάτζου...) and none was the 'Kapa Studios' the
+ * user wanted; 'ote' picked up Αριστοτέλειο, Ελληνοτεχνική, ΒΙΟΤΕΡ. The real
+ * cross-script cases are acronyms — ΟΤΕ, ΔΕΗ, ΕΡΤ — so making it pay would need
+ * whole-word anchoring, which in T-SQL LIKE means character classes spanning
+ * both alphabets in the hottest query path in the app.
+ *
+ * Where cross-script matching genuinely earns its keep — deciding whether two
+ * CUSTOMERS are the same company — it lives in lib/customerDuplicates.ts, which
+ * compares whole tokens rather than substrings and so does not have this
+ * problem.
+ */
 export const foldForSearch = (value: unknown): string =>
   foldPunctuation(normalizeSearchText(value));
 

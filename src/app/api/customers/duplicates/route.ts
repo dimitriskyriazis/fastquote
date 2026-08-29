@@ -12,8 +12,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '../../../../lib/apiHelpers';
 import { requirePermission } from '../../../../lib/authz';
 import { getDuplicateScan } from '../../../../lib/duplicateScanCache';
-import type { DuplicateConfidence } from '../../../../lib/customerDuplicates';
-import { normalizeSearchText } from '../../../../lib/textSearch';
+import { norm, type DuplicateConfidence } from '../../../../lib/customerDuplicates';
+import { foldForSearch, searchIncludes } from '../../../../lib/textSearch';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -41,7 +41,24 @@ export async function GET(req: NextRequest) {
       ? (requestedConfidence as DuplicateConfidence)
       : null;
 
-    const search = normalizeSearchText(params.get('search') ?? '');
+    // Two ways of folding the query, because this box has to answer for two
+    // different things.
+    //
+    //  - foldForSearch is the app-wide search fold (accents, case, punctuation),
+    //    so this box behaves like every other one. normalizeSearchText alone
+    //    keeps punctuation, which is why "pa solutions" used to miss the
+    //    customer named "P.A. Solutions" — the very name this page shows you.
+    //  - norm() is the scanner's OWN fold: it additionally folds Latin/Greek
+    //    homoglyphs, rejoins dotted initials and collapses whitespace. Matching
+    //    on it as well means the search agrees with the grouping it is
+    //    searching — Latin "ote" finds Greek "ΟΤΕ Α.Ε.", "p a solutions" and
+    //    "PA  Solutions" both find "P.A. Solutions".
+    //
+    // A query of pure punctuation folds away to nothing on both and is then
+    // treated as no filter at all, rather than matching everything by accident.
+    const rawSearch = params.get('search') ?? '';
+    const search = foldForSearch(rawSearch);
+    const searchNorm = norm(rawSearch);
 
     const offset = Math.max(0, Number.parseInt(params.get('offset') ?? '0', 10) || 0);
     const requestedLimit = Number.parseInt(params.get('limit') ?? '', 10);
@@ -61,13 +78,17 @@ export async function GET(req: NextRequest) {
     if (confidenceFilter) {
       filtered = filtered.filter((group) => group.confidence === confidenceFilter);
     }
-    if (search) {
+    if (search || searchNorm) {
+      const matchesText = (value: unknown): boolean =>
+        (search !== '' && searchIncludes(value, search))
+        || (searchNorm !== '' && norm(value).includes(searchNorm));
+
       filtered = filtered.filter((group) =>
         group.members.some((member) =>
-          normalizeSearchText(member.Name).includes(search)
-          || normalizeSearchText(member.BrandName).includes(search)
+          matchesText(member.Name)
+          || matchesText(member.BrandName)
           || String(member.CustomerID) === search
-          || normalizeSearchText(member.TaxID).includes(search)),
+          || matchesText(member.TaxID)),
       );
     }
 
