@@ -257,9 +257,19 @@ export const buildTextMatchPredicate = (
       extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
 
-    // Substitution: keep the first two and last characters stable to reduce false positives.
-    // This avoids broad matches like "extron" -> "xrestron" while still allowing
-    // omissions in the middle (e.g. "exron" -> "crestron").
+    // Substitution: one mistyped character, anywhere but the first two and the
+    // last (users rarely miss the start of a name, and anchoring keeps the scan
+    // selective).
+    //
+    // The dropped character is replaced by LIKE's single-character wildcard, NOT
+    // by '%'. With '%' the variant stops being a typo at all and becomes "left
+    // fragment, then anything, then right fragment": for a 6-letter term the
+    // last variant is `%<first four>%<last letter>%`, which on Greek company
+    // names matches almost the whole table — "ΟΠΤΙΜΑ" became `%ΟΠΤΙ%Α%` and
+    // returned 130 customers (every «Οπτικοακουστικές», every «Ραδιοτηλεοπτική
+    // Α.Ε.») for a name that does not exist in the database. Measured on the
+    // live customer table, '_' takes that same term to 4 rows, all of them real
+    // one-letter neighbours ("ΤΗΛΕΟΠΤΙΚΑΙ").
     for (let i = 0; i < upperTerm.length; i += 1) {
       if (i < 2 || i >= upperTerm.length - 1) continue;
       const left = upperTerm.slice(0, i);
@@ -267,7 +277,25 @@ export const buildTextMatchPredicate = (
       if (left.length < 1 || right.length < 1) continue;
       if (Math.max(left.length, right.length) < 3) continue;
       const key = `${paramKey}_sub${i}`;
-      params.push({ key, value: `%${left}%${right}%` });
+      params.push({ key, value: `%${left}_${right}%` });
+      extraClauses.push(`(${ciExpr} LIKE @${key})`);
+    }
+
+    // Doubled character: the one extra-character typo worth paying for, because
+    // it is the one people actually make ("ΟΠΤΤΙΜΑ", "CRESSTRON"). Dropping the
+    // repeat gives a contiguous fragment, so the variant stays as selective as
+    // the term itself. Terms with no repeated letter add no clause at all — the
+    // general "user typed one character too many" case is deliberately left out,
+    // since covering every position costs ~50% more query time than the whole
+    // rest of the fuzzy set.
+    const doubledKeys = new Set<string>();
+    for (let i = 1; i < upperTerm.length; i += 1) {
+      if (upperTerm[i] !== upperTerm[i - 1]) continue;
+      const collapsed = upperTerm.slice(0, i) + upperTerm.slice(i + 1);
+      if (collapsed.length < 3 || doubledKeys.has(collapsed)) continue;
+      doubledKeys.add(collapsed);
+      const key = `${paramKey}_dbl${i}`;
+      params.push({ key, value: `%${collapsed}%` });
       extraClauses.push(`(${ciExpr} LIKE @${key})`);
     }
 
