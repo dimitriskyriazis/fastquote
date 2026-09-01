@@ -16,6 +16,7 @@ import { matchesCountrySearch } from '../../../lib/countryAliases';
 import { searchEquals, searchIncludes } from '../../../lib/textSearch';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useAuditUser } from '../../components/AuditUserProvider';
+import { coerceRoles, roleHasPermission } from '../../../lib/roles';
 
 type SectionKey = 'general' | 'business' | 'location' | 'contact' | 'notes';
 
@@ -51,6 +52,8 @@ const buildFieldDefinitions = (
   pricingPolicies: CustomerDropdownOption[],
   importanceOptions: CustomerDropdownOption[],
   countries: CustomerDropdownOption[],
+  paymentTerms: CustomerDropdownOption[],
+  canEditPaymentTerms: boolean,
 ): FieldDefinition[] => [
   {
     id: 'name',
@@ -90,6 +93,18 @@ const buildFieldDefinitions = (
     options: importanceOptions,
     required: true,
   },
+  // Payment terms are a commercial commitment, so the field only exists for
+  // Administrators and Developers. The create API enforces the same permission
+  // independently: a non-admin posting paymentTermId gets a 403, so hiding it
+  // here is convenience, not the control.
+  ...(canEditPaymentTerms ? [{
+    id: 'paymentTerm',
+    label: 'Payment Terms',
+    section: 'general' as SectionKey,
+    type: 'select' as const,
+    options: paymentTerms,
+    hint: 'Agreed payment terms. Offers for this customer inherit this. Administrators only.',
+  }] : []),
   {
     id: 'pricingPolicy',
     label: 'Pricing Policy',
@@ -239,7 +254,8 @@ type LookupKey =
   | 'parentCustomers'
   | 'pricingPolicies'
   | 'importanceOptions'
-  | 'countries';
+  | 'countries'
+  | 'paymentTerms';
 
 type CustomerLookupsPayload = {
   customerGroups?: CustomerDropdownOption[];
@@ -247,6 +263,7 @@ type CustomerLookupsPayload = {
   pricingPolicies?: CustomerDropdownOption[];
   importanceOptions?: CustomerDropdownOption[];
   countries?: CustomerDropdownOption[];
+  paymentTerms?: CustomerDropdownOption[];
 };
 
 type CustomerLookupsResponse = {
@@ -262,6 +279,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'pricingPolicies',
   'importanceOptions',
   'countries',
+  'paymentTerms',
 ];
 
 const resolveDefaultPricingPolicyId = (options: CustomerDropdownOption[]): string => {
@@ -288,6 +306,12 @@ export default function CustomerCreateClient({
   const [localPricingPolicies, setLocalPricingPolicies] = useState(pricingPolicies);
   const [localImportanceOptions, setLocalImportanceOptions] = useState(importanceOptions);
   const [countryOptions, setCountryOptions] = useState(countries);
+  const [paymentTermOptions, setPaymentTermOptions] = useState<CustomerDropdownOption[]>([]);
+  const { userId, roles } = useAuditUser();
+  const canEditPaymentTerms = useMemo(
+    () => roleHasPermission(coerceRoles([...roles]), 'manageCustomerPaymentTerms'),
+    [roles],
+  );
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
   const [newCountryName, setNewCountryName] = useState('');
   const [newCountryEnabled, setNewCountryEnabled] = useState('1');
@@ -316,6 +340,7 @@ export default function CustomerCreateClient({
       if (!response.ok || !payload?.ok || !payload.lookups) {
         throw new Error(payload?.error ?? 'Unable to refresh lookup options');
       }
+      if (payload.lookups.paymentTerms) setPaymentTermOptions(payload.lookups.paymentTerms);
       if (payload.lookups.customerGroups) setLocalCustomerGroups(payload.lookups.customerGroups);
       if (payload.lookups.parentCustomers) setLocalParentCustomers(payload.lookups.parentCustomers);
       if (payload.lookups.pricingPolicies) setLocalPricingPolicies(payload.lookups.pricingPolicies);
@@ -358,8 +383,11 @@ export default function CustomerCreateClient({
         localPricingPolicies,
         localImportanceOptions,
         countryOptions,
+        paymentTermOptions,
+        canEditPaymentTerms,
       ),
-    [countryOptions, localCustomerGroups, localImportanceOptions, localParentCustomers, localPricingPolicies],
+    [countryOptions, localCustomerGroups, localImportanceOptions, localParentCustomers,
+      localPricingPolicies, paymentTermOptions, canEditPaymentTerms],
   );
 
   const initialValues = useMemo(() => {
@@ -389,7 +417,6 @@ export default function CustomerCreateClient({
 
   const [values, setValues] = useState(initialValues);
   const { warnings: duplicateWarnings, check: checkDuplicates } = useDuplicateCheck('customer');
-  const { userId } = useAuditUser();
   const { hasDraft, restoredValues, saveDraft: saveDraftValues, clearDraft } = useFormDraft<Record<string, string>>(
     'customer-create',
     initialValues,
@@ -717,6 +744,9 @@ export default function CustomerCreateClient({
         taxOffice: toNullableString(values.taxOffice),
         profession: toNullableString(values.profession),
         customerGroupId: toNumberOrNull(values.customerGroup),
+        // Omitted entirely for non-admins: the create API 403s on a non-null
+        // paymentTermId without 'manageCustomerPaymentTerms'.
+        paymentTermId: canEditPaymentTerms ? toNumberOrNull(values.paymentTerm) : null,
 
         erpId: erpText ? Number.parseInt(erpText, 10) : null,
         erpCode: toNullableString(values.erpCode ?? ''),
@@ -759,7 +789,7 @@ export default function CustomerCreateClient({
         setSubmitting(false);
       }
     },
-    [router, values, clearDraft],
+    [router, values, clearDraft, canEditPaymentTerms],
   );
 
   const openCountryModal = useCallback(() => {

@@ -222,17 +222,35 @@ export async function PATCH(
       type: SqlInputType;
     }> = [];
 
-    // Editing a part number can walk around the create-time duplicate gate, so
-    // the same check applies here. Only when the part number actually changes,
-    // and only against OTHER live products of the same brand.
-    if (body.partNumber !== undefined && !body.acknowledgeDuplicate) {
-      const newCleared = toClearedPartModel(body.partNumber);
-      if (newCleared) {
-        const dupPool = await getPool();
-        const dupRequest = dupPool.request();
+    // Editing a product can walk around the create-time duplicate gate two ways:
+    // by renaming its part number, or by MOVING it into a brand that already has
+    // that cleaned part number. Both are checked here.
+    //
+    // Unlike create, this blocks only a provable RESPELLING (same characters,
+    // separators in the same places). Renaming into one of the 42 verified-
+    // different collision groups is a legitimate operation and must stay
+    // possible: blocking on the cleaned key alone made a part-number UNDO
+    // permanently fail, because restoring a previous value can land on a live
+    // sibling that merely shares the key (Ross KIVA-AVC-1-01-HM vs
+    // KIVA+-AVC-1-01-HM). Byte-identical part numbers are still caught by the
+    // global unique index on PartNumber.
+    if ((body.partNumber !== undefined || body.brandId !== undefined) && !body.acknowledgeDuplicate) {
+      const gatePool = await getPool();
+      const currentReq = gatePool.request();
+      currentReq.input('ProductID', sql.Int, normalized);
+      const currentRes = await currentReq.query<{ PartNumber: string | null; BrandID: number | null }>(
+        'SELECT PartNumber, BrandID FROM dbo.Products WHERE ID = @ProductID',
+      );
+      const current = currentRes.recordset?.[0];
+      const effectivePartNumber = body.partNumber !== undefined ? body.partNumber : current?.PartNumber ?? null;
+      const effectiveBrandId = body.brandId !== undefined ? body.brandId : current?.BrandID ?? null;
+      const newCleared = toClearedPartModel(effectivePartNumber);
+
+      if (newCleared && effectiveBrandId != null) {
+        const dupRequest = gatePool.request();
         dupRequest.input('ProductID', sql.Int, normalized);
         dupRequest.input('PartNumberCleared', sql.NVarChar(255), newCleared);
-        dupRequest.input('BrandID', sql.Int, body.brandId ?? null);
+        dupRequest.input('BrandID', sql.Int, effectiveBrandId);
         const dupResult = await dupRequest.query<{
           ID: number;
           PartNumber: string | null;
@@ -242,29 +260,29 @@ export async function PATCH(
           SELECT TOP (10) p.ID, p.PartNumber, p.ModelNumber, p.Description
           FROM dbo.Products p
           WHERE p.ID <> @ProductID
+            AND p.BrandID = @BrandID
             AND p.PartNumberCleared = @PartNumberCleared
             AND ISNULL(p.Enabled, 1) = 1
-            AND p.BrandID = ISNULL(@BrandID, (SELECT BrandID FROM dbo.Products WHERE ID = @ProductID))
           ORDER BY p.ID
         `);
-        const collisions = dupResult.recordset ?? [];
-        if (collisions.length > 0) {
+        // Only a same-spelling sibling blocks.
+        const blocking = (dupResult.recordset ?? []).filter((c) =>
+          isSameProductSpelling(effectivePartNumber ?? '', c.PartNumber ?? ''));
+        if (blocking.length > 0) {
           return NextResponse.json(
             {
               ok: false,
-              error: collisions.length === 1
-                ? `This brand already has a product with the same part number once separators are ignored: "${collisions[0].PartNumber ?? ''}". Use that product, or confirm this is a different product.`
-                : `This brand already has ${collisions.length} products with the same part number once separators are ignored.`,
+              error: `This brand already has "${blocking[0].PartNumber ?? ''}", which is the same part number written differently. Use that product, or confirm this is a different product.`,
               duplicateCleanedPartNumber: {
-                partNumber: body.partNumber,
+                partNumber: effectivePartNumber,
                 partNumberCleared: newCleared,
-                matches: collisions.map((c) => ({
+                matches: blocking.map((c) => ({
                   id: c.ID,
                   partNumber: c.PartNumber,
                   modelNumber: c.ModelNumber,
                   description: c.Description,
                   enabled: true,
-                  sameSpelling: isSameProductSpelling(body.partNumber ?? '', c.PartNumber ?? ''),
+                  sameSpelling: true,
                 })),
               },
             },

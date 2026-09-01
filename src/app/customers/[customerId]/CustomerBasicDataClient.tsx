@@ -443,6 +443,26 @@ export default function CustomerBasicDataClient({
   const [countrySaving, setCountrySaving] = useState(false);
   const [countryError, setCountryError] = useState<string | null>(null);
 
+  // The lookup only returns terms with Enabled = 1, but a customer keeps pointing at a
+  // term after an admin disables it on /payment-terms (disabling is that page's delete).
+  // Both branches of renderFieldControl resolve the label by finding the id in this list,
+  // so without the assigned term in it the read-only view shows the raw id and the select
+  // renders blank. Re-add it, marked, rather than widening the lookup: it must stay out of
+  // the choices offered on every OTHER customer.
+  const paymentTermOptions = useMemo(() => {
+    const assignedId = record.PaymentTermID;
+    if (assignedId == null) return localPaymentTerms;
+    const assignedValue = String(assignedId);
+    if (localPaymentTerms.some((option) => String(option.value) === assignedValue)) {
+      return localPaymentTerms;
+    }
+    const assignedName = record.PaymentTermName?.trim();
+    return [
+      ...localPaymentTerms,
+      { value: assignedValue, label: assignedName ? `${assignedName} (disabled)` : `${assignedValue} (disabled)` },
+    ];
+  }, [localPaymentTerms, record.PaymentTermID, record.PaymentTermName]);
+
   const fieldDefinitions = useMemo(
     () =>
       buildFieldDefinitions(
@@ -451,7 +471,7 @@ export default function CustomerBasicDataClient({
         localPricingPolicies,
         localImportanceOptions,
         countryOptions,
-        localPaymentTerms,
+        paymentTermOptions,
       ).map((def) =>
         def.adminOnly && !canEditPaymentTerms ? { ...def, readOnly: true } : def,
       ),
@@ -461,7 +481,7 @@ export default function CustomerBasicDataClient({
       localCustomerGroups,
       localImportanceOptions,
       localParentCustomers,
-      localPaymentTerms,
+      paymentTermOptions,
       localPricingPolicies,
     ],
   );

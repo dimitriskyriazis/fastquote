@@ -83,6 +83,7 @@ const navItems: NavItem[] = [
     subItems: [
       { label: "Markets", href: "/markets" },
       { label: "Customer Groups", href: "/customer-groups" },
+      { label: "Payment Terms", href: "/payment-terms" },
       { label: "Logs", href: "/logs" },
     ],
   },

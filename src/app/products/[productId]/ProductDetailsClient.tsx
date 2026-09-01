@@ -193,7 +193,16 @@ export default function ProductDetailsClient({
       } catch (err) {
         console.error(err);
         setValues((prev) => ({ ...prev, [def.id]: savedValuesRef.current[def.id] ?? '' }));
-        showToastMessage(`Unable to update ${def.label}. Please try again.`, 'error');
+        // Show the server's reason when there is one. A part-number or brand edit
+        // can be refused because it would duplicate an existing product of that
+        // brand, and "Please try again" leaves the user with no idea why.
+        const detail = err instanceof Error ? err.message.trim() : '';
+        showToastMessage(
+          detail && !/^Failed to update/i.test(detail)
+            ? detail
+            : `Unable to update ${def.label}. Please try again.`,
+          'error',
+        );
         return false;
       } finally {
         setPendingFields((prev) => ({ ...prev, [def.id]: false }));

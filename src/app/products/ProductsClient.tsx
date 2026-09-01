@@ -1017,7 +1017,17 @@ export default function ProductsClient() {
           }
         } catch (err) {
           console.error(`Failed to update ${label}`, err);
-          showToastMessage(`Unable to update ${label.toLowerCase()}. Please try again.`, "error");
+          // Surface the server's message when there is one. A part-number edit can
+          // be refused because it collides with an existing product of the same
+          // brand once separators are ignored, and "Please try again" tells the
+          // user nothing about what to do.
+          const detail = err instanceof Error ? err.message.trim() : "";
+          showToastMessage(
+            detail && !/^Failed to update /i.test(detail)
+              ? detail
+              : `Unable to update ${label.toLowerCase()}. Please try again.`,
+            "error",
+          );
           revertValue();
         }
       };

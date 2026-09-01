@@ -25,6 +25,8 @@ export type Permission =
   // Simple User up holds). This permission has no case in the switch below, so
   // it falls through to `default: return false` and lands on Administrator +
   // Developer only — which is what was asked for.
+  // Also gates the /payment-terms catalogue (dbo.PaymentTerms rows themselves),
+  // not just Customers.PaymentTermID: adding a `case` here would open BOTH.
   | 'manageCustomerPaymentTerms'
   // Merging duplicate customers repoints offers and contacts onto a survivor and
   // disables the records that lost. It is not reversible from the UI, so like

@@ -147,7 +147,12 @@ export function makePatternAUndoFn(params: {
     const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
     if (!res.ok || !payload?.ok) throw new Error('Failed to revert');
     try {
-      node?.setDataValue(field, oldValue);
+      // Source 'api', matching makeOfferDetailRevert above. AG Grid dispatches the write
+      // as a fresh cellValueChanged whose oldValue and newValue genuinely differ, so a
+      // handler comparing those two cannot tell an undo apart from a user edit and fires
+      // a second PATCH. Handlers that bail on source === 'api' are immune; the rest are
+      // unaffected by the extra argument.
+      node?.setDataValue(field, oldValue, 'api');
     } catch {
       /* noop */
     }

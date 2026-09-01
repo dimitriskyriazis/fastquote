@@ -42,6 +42,8 @@ const normalizeCustomerId = (value: unknown): number | null => {
   return null;
 };
 
+const paymentTermMenuIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span>';
+
 const createOfferMenuIcon = `
   <span class="fastquote-menu-icon fastquote-menu-icon--copy" aria-hidden="true">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -308,6 +310,57 @@ export default function CustomersClient() {
     [roles],
   );
 
+  // Payment terms for the bulk right-click. Fetched once; the catalogue is 13
+  // rows and never changes during a session.
+  const [paymentTerms, setPaymentTerms] = React.useState<Array<{ value: string; label: string }>>([]);
+  const canEditPaymentTerms = useMemo(
+    () => roleHasPermission(coerceRoles([...roles]), 'manageCustomerPaymentTerms'),
+    [roles],
+  );
+  React.useEffect(() => {
+    if (!canEditPaymentTerms) return;
+    let active = true;
+    void (async () => {
+      try {
+        const res = await fetch('/api/customers/lookups?keys=paymentTerms', { cache: 'no-store' });
+        const payload = await res.json().catch(() => null);
+        if (!active || !payload?.ok) return;
+        setPaymentTerms(Array.isArray(payload.lookups?.paymentTerms) ? payload.lookups.paymentTerms : []);
+      } catch {
+        // A failed lookup just means the submenu is empty; nothing else breaks.
+      }
+    })();
+    return () => { active = false; };
+  }, [canEditPaymentTerms]);
+
+  const applyPaymentTerm = useCallback(
+    async (customerIds: number[], termId: number | null, termLabel: string, api: unknown) => {
+      try {
+        const res = await fetch('/api/customers/payment-term', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerIds, paymentTermId: termId }),
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok || !payload?.ok) {
+          showToastMessage(payload?.error ?? 'Could not change the payment terms.', 'error');
+          return;
+        }
+        const skipped = Number(payload.skipped ?? 0);
+        showToastMessage(
+          `${payload.updated} customer${payload.updated === 1 ? '' : 's'} set to ${termLabel}`
+          + (skipped ? ` (${skipped} unchanged)` : ''),
+          'success',
+        );
+        (api as { refreshServerSide?: (o: { purge: boolean }) => void } | null)
+          ?.refreshServerSide?.({ purge: false });
+      } catch {
+        showToastMessage('Could not change the payment terms.', 'error');
+      }
+    },
+    [],
+  );
+
   const customerContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
       const baseItems = customerRowDeletion.getContextMenuItems(params);
@@ -390,6 +443,50 @@ export default function CustomersClient() {
         }
       }
 
+      // Bulk payment terms. Uses the SAME right-click selection snapshot as the
+      // merge item above: AgGridAll deselects the grid before running a
+      // context-menu action, so params.api.getSelectedNodes() inside the action
+      // comes back empty.
+      if (canEditPaymentTerms && paymentTerms.length > 0) {
+        const selectAllActive = Boolean(
+          typeof params.api?.getServerSideSelectionState === 'function'
+            && (params.api.getServerSideSelectionState() as { selectAll?: boolean } | null)?.selectAll,
+        );
+        const snapshotIds = getContextMenuSelectionSnapshot(params.api)
+          .map((node) => normalizeCustomerId((node?.data as { CustomerID?: unknown } | undefined)?.CustomerID ?? null))
+          .filter((id): id is number => id != null);
+        // Right-clicking a row that is not part of the selection acts on that row.
+        const ids = Array.from(new Set(
+          snapshotIds.length > 0 && snapshotIds.includes(clickedCustomerId)
+            ? snapshotIds
+            : [clickedCustomerId],
+        ));
+
+        // "Select all" under the server-side model means every row matching the
+        // filter, which is not a deliberate gesture for a commercial field.
+        if (!selectAllActive) {
+          const gridApi = params.api;
+          const label = ids.length > 1
+            ? `Change Payment Terms for ${ids.length} customers`
+            : 'Change Payment Terms';
+          items.unshift({
+            name: label,
+            icon: paymentTermMenuIcon,
+            subMenu: [
+              ...paymentTerms.map((t) => ({
+                name: t.label,
+                action: () => { void applyPaymentTerm(ids, Number(t.value), t.label, gridApi); },
+              })),
+              'separator',
+              {
+                name: 'Clear (no payment terms)',
+                action: () => { void applyPaymentTerm(ids, null, 'no payment terms', gridApi); },
+              },
+            ],
+          } as MenuItemDef<Record<string, unknown>>, 'separator');
+        }
+      }
+
       if (isMultiSelection) {
         return items;
       }
@@ -414,7 +511,8 @@ export default function CustomersClient() {
 
       return items;
     },
-    [customerRowDeletion, router, userId, canMergeCustomers],
+    [customerRowDeletion, router, userId, canMergeCustomers,
+      canEditPaymentTerms, paymentTerms, applyPaymentTerm],
   );
 
   return (

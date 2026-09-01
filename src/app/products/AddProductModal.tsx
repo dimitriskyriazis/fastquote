@@ -683,7 +683,13 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
           ) : null}
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldFull}`}>
-          <DuplicateWarning warnings={duplicateWarnings} />
+          <DuplicateWarning
+            warnings={
+              duplicateBlock
+                ? duplicateWarnings.filter((w) => w.type !== 'partNumber')
+                : duplicateWarnings
+            }
+          />
           {duplicateBlock ? (
             <div className={styles.duplicateBlock} role="alert">
               <div className={styles.duplicateBlockTitle}>
@@ -700,7 +706,11 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
                       <span className={styles.duplicateBlockSame}> same product, different punctuation</span>
                     ) : null}
                     {m.enabled ? null : <span className={styles.duplicateBlockDisabled}> (disabled)</span>}
-                    {m.description ? <div className={styles.duplicateBlockDesc}>{m.description}</div> : null}
+                    {m.description ? (
+                      <div className={styles.duplicateBlockDesc} title={m.description}>
+                        {m.description.length > 90 ? `${m.description.slice(0, 90)}...` : m.description}
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>
