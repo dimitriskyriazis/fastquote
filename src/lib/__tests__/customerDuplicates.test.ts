@@ -152,6 +152,41 @@ describe('findDuplicateGroups', () => {
     expect(groups[0].reasons.some((r) => r.startsWith('same tax id'))).toBe(true);
   });
 
+  it('will NOT call a tax-id match high when the names disagree', () => {
+    // The merge that had to be undone: 999005192 is a shared/placeholder AFM,
+    // and these are two unrelated ΟΕs. Still reported — the tax id might be
+    // right — but never as a certainty.
+    const groups = findDuplicateGroups([
+      customer({ Name: 'Μάριος Αλεξέλλης και ΣΙΑ ΟΕ', TaxID: '999005192' }),
+      customer({ Name: 'Β ΚΑΡΥΠΙΑΔΗΣ ΚΑΙ ΣΙΑ ΟΕ', TaxID: '999005192' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].confidence).toBe('medium');
+    expect(groups[0].reasons.some((r) => r.includes('nothing in common'))).toBe(true);
+  });
+
+  it('will not call one organisation with many accounts a certainty either', () => {
+    // 90153025 is shared by the Army, the Air Force and the Navy.
+    const groups = findDuplicateGroups([
+      customer({ Name: 'Στρατός Ξηράς -ΑΣΔΕΝ', TaxID: '090153025' }),
+      customer({ Name: '110 Πτέρυγα Μάχης/Μ.Ε.Υ', TaxID: '090153025' }),
+      customer({ Name: 'ΠΟΛΕΜΙΚΟ ΝΑΥΤΙΚΟ ( ΝΚΕ )', TaxID: '090153025' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].confidence).toBe('medium');
+  });
+
+  it('still calls a tax-id match high when the names DO agree', () => {
+    // 94019245 is every ΟΤΕ record — the corroborated case must not regress.
+    const groups = findDuplicateGroups([
+      customer({ Name: 'ΟΤΕ Α.Ε.', TaxID: '094019245' }),
+      customer({ Name: 'Μουσείο ΟΤΕ Α.Ε.', TaxID: '94019245' }),
+      customer({ Name: 'ΟΤΕ Δνση Διαχείρισης', TaxID: '094019245' }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].confidence).toBe('high');
+  });
+
   it('never groups on a placeholder tax id', () => {
     const groups = findDuplicateGroups([
       customer({ Name: 'Foreign Buyer One', TaxID: '999999999' }),

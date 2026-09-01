@@ -1,7 +1,7 @@
 import sql from 'mssql';
 import { getPool } from '../../../../../../lib/sql';
 import { priceListInEffectSql } from '../../../../../../lib/priceListSql';
-import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
+import {clearPartModelNumberUpper} from '../../../../../../lib/partModelNumber';
 import { collateSearch } from '../../../../../../lib/textSearch';
 import OpenAI from 'openai';
 
@@ -110,9 +110,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), cleared);
     conditions.push(
-      `(${stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`)} = @${p}`
-      + ` OR ${stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`)} = @${p}`
-      + ` OR ${stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`)} = @${p})`,
+      `(${`UPPER(ISNULL(p.PartNumberCleared, ''))`} = @${p}`
+      + ` OR ${`UPPER(ISNULL(p.ModelNumberCleared, ''))`} = @${p}`
+      + ` OR ${`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`} = @${p})`,
     );
     weights.push(weight);
   };
@@ -126,9 +126,9 @@ export async function suggestProducts(input: SuggestInput): Promise<CandidateRow
     if (!cleared) return;
     const p = `${prefix}_${paramIdx++}`;
     request.input(p, sql.NVarChar(255), cleared);
-    const partX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`);
-    const modelX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`);
-    const legacyX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
+    const partX = `UPPER(ISNULL(p.PartNumberCleared, ''))`;
+    const modelX = `UPPER(ISNULL(p.ModelNumberCleared, ''))`;
+    const legacyX = `UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`;
     conditions.push(
       `(
         ${partX} LIKE @${p} + N'%'

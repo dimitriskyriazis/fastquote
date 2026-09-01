@@ -68,11 +68,15 @@ async function fetchCustomerGroups() {
   return mapLookupRows(result.recordset);
 }
 
+// Only customers flagged as parents can be picked as a Parent Customer. Legacy
+// rows may still point at a non-parent; the basic-data panel keeps showing that
+// name from the record (ParentCustomerName), so filtering here loses nothing.
 async function fetchParentCustomers() {
   const pool = await getPool();
   const result = await pool.request().query<LookupRow>(`
     SELECT ID, Name
     FROM dbo.Customers
+    WHERE ISNULL(IsParent, 0) = 1
     ORDER BY Name
   `);
   return mapLookupRows(result.recordset);

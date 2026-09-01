@@ -140,6 +140,28 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * The legal/official name under the trading name. Quieter than the name itself,
+ * but not as quiet as the metadata row: picking a survivor often turns on it.
+ * Used stacked (source cards, field-table headers) and inline (the contacts
+ * group heads, which are a flex row), so the vertical nudge is scoped to the
+ * stacked case rather than baked into the class.
+ */
+.sourceOfficialName {
+  font-size: 12px;
+  color: #475569;
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.sourceCard .sourceOfficialName {
+  margin-top: -4px;
+}
+
+.contactGroupHead .sourceOfficialName {
+  font-weight: 400;
+}
+
 .sourceMeta {
   font-size: 12px;
   color: #475569;

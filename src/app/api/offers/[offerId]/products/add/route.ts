@@ -12,7 +12,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../../lib/gridFilters';
-import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from '../../../../../../lib/partModelNumber';
+import {clearPartModelNumberUpper} from '../../../../../../lib/partModelNumber';
 import { collateSearch } from '../../../../../../lib/textSearch';
 import { realtimeEvents } from '../../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../../lib/authz';
@@ -199,12 +199,12 @@ const normalizePartModelNumber = (value: string): string => {
 // Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
   if (expr.includes('.PartNumber')) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`);
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
   }
   if (expr.includes('.ModelNumber')) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`);
+    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
   }
-  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
+  return `UPPER(ISNULL(${expr}, ''))`;
 };
 
 const buildBlankClause = (columnExpression: string): string =>
@@ -295,7 +295,7 @@ const buildWhereClauses = (filterModel: GridRequest['filterModel'], columnExpres
             // was supplied so the legacy column uses the same table prefix.
             const tablePrefixMatch = /^([a-zA-Z_]\w*)\.(PartNumber|ModelNumber)$/.exec(columnExpression);
             const legacyExpr = tablePrefixMatch
-              ? stripXBetweenDigitsSql(`UPPER(ISNULL(${tablePrefixMatch[1]}.LegacyPartNoCleaned, ''))`)
+              ? `UPPER(ISNULL(${tablePrefixMatch[1]}.LegacyPartNoCleaned, ''))`
               : null;
             const legacyOr = legacyExpr ? ` OR ${legacyExpr}` : '';
             if (type === 'equals') {
@@ -627,9 +627,9 @@ async function tryStage1QuickMatch(
   // UPPER + ISNULL to handle nulls).  LIKE '%<code>%' on cleared columns is
   // index-friendly enough for 56k rows; Description LIKE is a scan but only
   // fires once per code, so typical total is <100ms.
-  const partClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.PartNumberCleared, ''))`);
-  const modelClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.ModelNumberCleared, ''))`);
-  const legacyClearedX = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
+  const partClearedX = `UPPER(ISNULL(p.PartNumberCleared, ''))`;
+  const modelClearedX = `UPPER(ISNULL(p.ModelNumberCleared, ''))`;
+  const legacyClearedX = `UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`;
 
   const orGroups: string[] = [];
   codes.forEach(({ key }) => {

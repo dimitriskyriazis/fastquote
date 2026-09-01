@@ -648,6 +648,16 @@ const pickPrimary = (members: DuplicateScanCustomer[]): number => {
 
 const CONFIDENCE_ORDER: Record<DuplicateConfidence, number> = { high: 0, medium: 1, low: 2 };
 
+/**
+ * Fragments that mark a reason as "the ids match but the names do not". Matching
+ * on the text keeps the reason strings free to carry the actual id, which is
+ * what makes them useful on screen.
+ */
+const UNCORROBORATED_MARKERS = [
+  'the names have nothing in common',
+  'is shared by',
+] as const;
+
 const GENERIC_NAME_REASON =
   'identical name repeated across many records, with nothing else in common — verify before merging';
 
@@ -751,11 +761,45 @@ export const findDuplicateGroups = (
   const hardPairs = new Map<string, string[]>();
   const uf = new UnionFind();
 
-  const linkHard = (bucket: Enriched[], reason: string, oversizeReason: string) => {
+  /**
+   * Does anything in the two NAMES back up an id match?
+   *
+   * A shared tax id is not the proof it looks like. Measured on the live base,
+   * of 165 shared tax ids many belong to one organisation with many accounts
+   * rather than to duplicate records: 90153025 covers the Army, the Air Force
+   * AND the Navy; 94028358 covers four separate Lambrakis media companies;
+   * 999005192 covers two unrelated ΟΕs and is what merged 'Μάριος Αλεξέλλης και
+   * ΣΙΑ ΟΕ' into 'Β ΚΑΡΥΠΙΑΔΗΣ ΚΑΙ ΣΙΑ ΟΕ'. Meanwhile 94019245 (every record an
+   * ΟΤΕ one) and 90000045 (every record a ΔΕΗ one) are exactly right.
+   *
+   * The thing that separates them is whether the names agree. So an id match
+   * still GROUPS either way — losing 'VK RECORDS' against its legal name
+   * 'Ε ΚΑΠΠΟΣ ΜΟΝΟΠΡΟΣΩΠΗ ΙΚΕ' would be worse — but only a corroborated one is
+   * allowed to call itself high confidence.
+   */
+  const namesCorroborate = (a: Enriched, b: Enriched): boolean => {
+    if (a.normName && a.normName === b.normName) return true;
+    return sharedTokens(a.name.t, b.name.t).length > 0
+      || sharedTokens(a.name.tl, b.name.tl).length > 0;
+  };
+
+  const linkHard = (
+    bucket: Enriched[],
+    reason: string,
+    oversizeReason: string,
+    /** When set, a pair whose names do not agree is linked under this instead. */
+    uncorroboratedReason?: (a: Enriched, b: Enriched) => string,
+  ) => {
     if (bucket.length < 2) return;
-    const label = bucket.length > MAX_GROUP_SIZE ? oversizeReason : reason;
+    const oversize = bucket.length > MAX_GROUP_SIZE;
     for (let i = 0; i < bucket.length; i += 1) {
       for (let j = i + 1; j < bucket.length; j += 1) {
+        const weak = uncorroboratedReason && !namesCorroborate(bucket[i], bucket[j]);
+        const label = oversize
+          ? oversizeReason
+          : weak
+            ? uncorroboratedReason(bucket[i], bucket[j])
+            : reason;
         const key = pairKey(bucket[i].CustomerID, bucket[j].CustomerID);
         const reasons = hardPairs.get(key);
         if (reasons) {
@@ -773,6 +817,8 @@ export const findDuplicateGroups = (
       bucket,
       `same tax id (${taxKey})`,
       `tax id ${taxKey} is shared by ${bucket.length} customers — likely a placeholder, verify`,
+      () => `same tax id (${taxKey}) but the names have nothing in common — one organisation`
+        + ' with several accounts looks exactly like this, so check before merging',
     );
   }
   for (const [erpId, bucket] of byErp) {
@@ -780,6 +826,7 @@ export const findDuplicateGroups = (
       bucket,
       `same ERP id (${erpId})`,
       `ERP id ${erpId} is shared by ${bucket.length} customers — verify`,
+      () => `same ERP id (${erpId}) but the names have nothing in common — verify before merging`,
     );
   }
   for (const [, bucket] of byName) {
@@ -926,6 +973,10 @@ export const findDuplicateGroups = (
     const reasons = new Set<string>();
     let bestScore = 0;
     let hasHardEdge = false;
+    /** A hard edge the NAMES also support. */
+    let hasCorroboratedHardEdge = false;
+    /** An id match whose names disagree — ONE of these disqualifies the group. */
+    let hasUncorroboratedHardEdge = false;
     for (let i = 0; i < members.length; i += 1) {
       for (let j = i + 1; j < members.length; j += 1) {
         const key = pairKey(members[i].CustomerID, members[j].CustomerID);
@@ -935,6 +986,11 @@ export const findDuplicateGroups = (
           hard.forEach((reason) => reasons.add(reason));
           hasHardEdge = true;
           bestScore = 1;
+          if (hard.some((reason) => UNCORROBORATED_MARKERS.some((m) => reason.includes(m)))) {
+            hasUncorroboratedHardEdge = true;
+          } else {
+            hasCorroboratedHardEdge = true;
+          }
         }
         const fuzzy = fuzzyPairs.get(key);
         if (fuzzy) {
@@ -945,11 +1001,18 @@ export const findDuplicateGroups = (
     }
 
     const suspect = reasons.has(GENERIC_NAME_REASON) || members.length > MAX_GROUP_SIZE;
+    // An id match whose names disagree is reported, but never as 'high' — that
+    // is how the Army/Navy, the Lambrakis companies and 'Μάριος Αλεξέλλης' vs
+    // 'Β ΚΑΡΥΠΙΑΔΗΣ' each came to look like a certainty.
+    // ONE uncorroborated edge disqualifies the whole group, even if other pairs
+    // inside it agree: three identical 'Μάριος Αλεξέλλης' records corroborate
+    // each other perfectly well, and that is no reason to be confident about the
+    // unrelated 'Β ΚΑΡΥΠΙΑΔΗΣ' the shared tax id dragged in with them.
     const confidence: DuplicateConfidence = suspect
       ? 'medium'
-      : hasHardEdge
+      : hasCorroboratedHardEdge && !hasUncorroboratedHardEdge
         ? 'high'
-        : bestScore >= MEDIUM_THRESHOLD
+        : hasHardEdge || bestScore >= MEDIUM_THRESHOLD
           ? 'medium'
           : 'low';
     groups.push(buildGroup(members, confidence, bestScore, reasons));

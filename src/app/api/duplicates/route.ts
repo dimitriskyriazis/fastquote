@@ -4,7 +4,7 @@ import sql from "mssql";
 import { getPool } from "../../../lib/sql";
 import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
-import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../lib/partModelNumber";
+import {clearPartModelNumberUpper} from "../../../lib/partModelNumber";
 import { SEARCH_COLLATION, foldAccents } from "../../../lib/textSearch";
 
 // Duplicate detection is deliberately fuzzy: creating "Ελλας ΑΕ" when "Ελλάς ΑΕ"
@@ -255,9 +255,9 @@ export async function POST(req: NextRequest) {
         const request = pool.request()
           .input("partNumber", sql.NVarChar(255), cleared);
         let partQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description,
-            CASE WHEN ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @partNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @partNumber THEN 1 ELSE 0 END AS MatchedPart,
-            CASE WHEN ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @partNumber THEN 1 ELSE 0 END AS MatchedModel
-          FROM dbo.Products p WHERE (${stripXBetweenDigitsSql('p.PartNumberCleared')} = @partNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @partNumber OR ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @partNumber)`;
+            CASE WHEN ${'p.PartNumberCleared'} = @partNumber OR ${'p.LegacyPartNoCleaned'} = @partNumber THEN 1 ELSE 0 END AS MatchedPart,
+            CASE WHEN ${'p.ModelNumberCleared'} = @partNumber THEN 1 ELSE 0 END AS MatchedModel
+          FROM dbo.Products p WHERE (${'p.PartNumberCleared'} = @partNumber OR ${'p.LegacyPartNoCleaned'} = @partNumber OR ${'p.ModelNumberCleared'} = @partNumber)`;
         if (brandId) {
           request.input("brandId", sql.Int, brandId);
           partQuery += ` AND p.BrandID = @brandId`;
@@ -297,9 +297,9 @@ export async function POST(req: NextRequest) {
         const request = pool.request()
           .input("modelNumber", sql.NVarChar(255), cleared);
         let modelQuery = `SELECT TOP 10 p.ID, p.PartNumber, p.ModelNumber, p.Description,
-            CASE WHEN ${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @modelNumber THEN 1 ELSE 0 END AS MatchedModel,
-            CASE WHEN ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @modelNumber THEN 1 ELSE 0 END AS MatchedPart
-          FROM dbo.Products p WHERE (${stripXBetweenDigitsSql('p.ModelNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.PartNumberCleared')} = @modelNumber OR ${stripXBetweenDigitsSql('p.LegacyPartNoCleaned')} = @modelNumber)`;
+            CASE WHEN ${'p.ModelNumberCleared'} = @modelNumber THEN 1 ELSE 0 END AS MatchedModel,
+            CASE WHEN ${'p.PartNumberCleared'} = @modelNumber OR ${'p.LegacyPartNoCleaned'} = @modelNumber THEN 1 ELSE 0 END AS MatchedPart
+          FROM dbo.Products p WHERE (${'p.ModelNumberCleared'} = @modelNumber OR ${'p.PartNumberCleared'} = @modelNumber OR ${'p.LegacyPartNoCleaned'} = @modelNumber)`;
         if (brandId) {
           request.input("brandId", sql.Int, brandId);
           modelQuery += ` AND p.BrandID = @brandId`;

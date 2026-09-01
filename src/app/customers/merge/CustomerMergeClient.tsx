@@ -48,6 +48,21 @@ const parseIdList = (value: string | null): number[] => {
 const customerLabel = (customer: MergeCustomerRecord): string =>
   customer.Name?.trim() || customer.BrandName?.trim() || `#${customer.CustomerID}`;
 
+/**
+ * The official name, when it adds something the displayed name does not.
+ *
+ * Two records of one company are often filed under a trading name and a legal
+ * name ('VK RECORDS' vs 'Ε ΚΑΠΠΟΣ ΜΟΝΟΠΡΟΣΩΠΗ ΙΚΕ'), so deciding which record
+ * survives needs both. Returns '' when BrandName is empty or is already what
+ * customerLabel is showing, so the line simply disappears rather than repeating
+ * the name back.
+ */
+const officialName = (customer: MergeCustomerRecord): string => {
+  const brand = customer.BrandName?.trim() ?? '';
+  if (!brand) return '';
+  return brand === customerLabel(customer) ? '' : brand;
+};
+
 const contactName = (contact: MergeContactRecord): string => {
   const name = `${contact.LastName?.trim() ?? ''} ${contact.FirstName?.trim() ?? ''}`.trim();
   return name || `Contact #${contact.ContactID}`;
@@ -400,6 +415,9 @@ export default function CustomerMergeClient() {
                 className={`${styles.sourceCard} ${isPrimary ? styles.sourceCardPrimary : ''}`}
               >
                 <div className={styles.sourceName}>{customerLabel(source)}</div>
+                {officialName(source) ? (
+                  <div className={styles.sourceOfficialName}>{officialName(source)}</div>
+                ) : null}
                 <div className={styles.sourceMeta}>
                   <span className={isPrimary ? `${styles.badge} ${styles.badgePrimary}` : styles.badge}>
                     {isPrimary ? 'Primary' : `#${source.CustomerID}`}
@@ -474,6 +492,9 @@ export default function CustomerMergeClient() {
                   <th key={source.CustomerID}>
                     {source.CustomerID === preview.primary.CustomerID ? '★ ' : ''}
                     {customerLabel(source)}
+                    {officialName(source) ? (
+                      <div className={styles.sourceOfficialName}>{officialName(source)}</div>
+                    ) : null}
                     <div className={styles.contactSub}>#{source.CustomerID}</div>
                   </th>
                 ))}
@@ -566,6 +587,11 @@ export default function CustomerMergeClient() {
               <span className={styles.contactGroupTitle}>
                 Already on {customerLabel(preview.primary)}
               </span>
+              {officialName(preview.primary) ? (
+                <span className={styles.sourceOfficialName}>
+                  {officialName(preview.primary)}
+                </span>
+              ) : null}
               <span className={styles.badge}>#{preview.primary.CustomerID}</span>
               <span className={styles.badge}>{primaryContacts.length} contacts</span>
               <span className={styles.staysNote}>unticking switches one off</span>
@@ -632,6 +658,9 @@ export default function CustomerMergeClient() {
             <div key={secondary.CustomerID} className={styles.contactGroup}>
               <div className={styles.contactGroupHead}>
                 <span className={styles.contactGroupTitle}>{customerLabel(secondary)}</span>
+                {officialName(secondary) ? (
+                  <span className={styles.sourceOfficialName}>{officialName(secondary)}</span>
+                ) : null}
                 <span className={styles.badge}>#{secondary.CustomerID}</span>
                 <span className={styles.badge}>{own.length} contacts</span>
                 <div className={styles.toolbarSpacer} />

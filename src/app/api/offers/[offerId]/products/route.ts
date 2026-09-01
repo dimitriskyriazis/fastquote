@@ -17,7 +17,7 @@ import {
   mergeWhereClauses,
   QueryParam,
 } from '../../../../../lib/gridFilters';
-import { clearPartModelNumber, stripXBetweenDigitsSql } from '../../../../../lib/partModelNumber';
+import {clearPartModelNumber} from '../../../../../lib/partModelNumber';
 import { collateSearch } from '../../../../../lib/textSearch';
 import { realtimeEvents } from '../../../../../lib/realtimeEvents';
 import { requirePermission } from '../../../../../lib/authz';
@@ -1141,15 +1141,15 @@ const partModelNumberSql = (expr: string) => {
     const cleared = expr.startsWith('od.')
       ? 'p.PartNumberCleared'
       : expr.replace('.PartNumber', '.PartNumberCleared');
-    return stripXBetweenDigitsSql(`ISNULL(${cleared}, '')`);
+    return `ISNULL(${cleared}, '')`;
   }
   if (expr.includes('.ModelNumber')) {
     const cleared = expr.startsWith('od.')
       ? 'p.ModelNumberCleared'
       : expr.replace('.ModelNumber', '.ModelNumberCleared');
-    return stripXBetweenDigitsSql(`ISNULL(${cleared}, '')`);
+    return `ISNULL(${cleared}, '')`;
   }
-  return stripXBetweenDigitsSql(`ISNULL(${expr}, '')`);
+  return `ISNULL(${expr}, '')`;
 };
 
 const buildBlankClause = (columnExpression: string): string =>
@@ -1221,7 +1221,7 @@ function buildFilterClauses(filterModel: GridRequest['filterModel']) {
             const descCrossParam = `${conditionParamBase}_desc`;
 
             // Also search LegacyPartNoCleaned
-            const legacySql = stripXBetweenDigitsSql(`UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`);
+            const legacySql = `UPPER(ISNULL(p.LegacyPartNoCleaned, ''))`;
 
             if (type === 'equals') {
               if (otherColumnExpression) {

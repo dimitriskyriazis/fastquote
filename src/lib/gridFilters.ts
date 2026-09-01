@@ -1,4 +1,4 @@
-import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "./partModelNumber";
+import {clearPartModelNumberUpper} from "./partModelNumber";
 import { collateSearch, foldPunctuation, foldPunctuationSql, hasPunctuationSql } from "./textSearch";
 
 export type QueryParam = { key: string; value: string | number | boolean };
@@ -26,17 +26,17 @@ const normalizePartModelNumber = (value: string): string => {
 // (cable specs like "2x250" / "2x2x250" match users typing "2250" / "22250").
 const partModelNumberSql = (expr: string) => {
   if (expr.includes('.PartNumber')) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`);
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.PartNumberCleared')}, ''))`;
   }
   if (expr.includes('.ModelNumber')) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`);
+    return `UPPER(ISNULL(${expr.replace('.ModelNumber', '.ModelNumberCleared')}, ''))`;
   }
-  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
+  return `UPPER(ISNULL(${expr}, ''))`;
 };
 
 const legacyPartNoClearedSql = (expr: string): string | null => {
   if (expr.includes('.PartNumber')) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace('.PartNumber', '.LegacyPartNoCleaned')}, ''))`);
+    return `UPPER(ISNULL(${expr.replace('.PartNumber', '.LegacyPartNoCleaned')}, ''))`;
   }
   return null;
 };
@@ -333,11 +333,11 @@ export const buildQuickFilterClause = (
   // This is needed when PartNumber/ModelNumber come from a table without Cleared columns (e.g. OfferDetails)
   const resolvePartNumberSql = (expr: string) =>
     options?.partNumberClearedExpression && /\.PartNumber/i.test(expr)
-      ? stripXBetweenDigitsSql(`UPPER(ISNULL(${options.partNumberClearedExpression}, ''))`)
+      ? `UPPER(ISNULL(${options.partNumberClearedExpression}, ''))`
       : partModelNumberSql(expr);
   const resolveModelNumberSql = (expr: string) =>
     options?.modelNumberClearedExpression && /\.ModelNumber/i.test(expr)
-      ? stripXBetweenDigitsSql(`UPPER(ISNULL(${options.modelNumberClearedExpression}, ''))`)
+      ? `UPPER(ISNULL(${options.modelNumberClearedExpression}, ''))`
       : partModelNumberSql(expr);
   const resolvePartModelSql = (expr: string) => {
     if (/\.PartNumber/i.test(expr)) return resolvePartNumberSql(expr);
@@ -362,7 +362,7 @@ export const buildQuickFilterClause = (
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
         const legacyExpr = options?.legacyPartNoExpression
-          ? stripXBetweenDigitsSql(`UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`)
+          ? `UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`
           : legacyPartNoClearedSql(expr);
         const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(
@@ -376,7 +376,7 @@ export const buildQuickFilterClause = (
         const paramKey = `${paramPrefix}_${termIdx}_partmodel`;
         params.push({ key: paramKey, value: `%${normalizedTerm}%` });
         const legacyExpr = options?.legacyPartNoExpression
-          ? stripXBetweenDigitsSql(`UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`)
+          ? `UPPER(ISNULL(${options.legacyPartNoExpression}, ''))`
           : legacyPartNoClearedSql(partNumberColumn.expression);
         const legacyClause = legacyExpr ? ` OR ${legacyExpr} LIKE @${paramKey}` : '';
         likeParts.push(

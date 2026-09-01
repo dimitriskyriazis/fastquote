@@ -9,7 +9,7 @@ import { fetchUserRoles } from "../../../../../lib/authz";
 import { checkDeletePermission } from "../../../../../lib/deletePermissions";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../lib/filterProcessing";
-import { clearPartModelNumberUpper, stripXBetweenDigitsSql } from "../../../../../lib/partModelNumber";
+import {clearPartModelNumberUpper} from "../../../../../lib/partModelNumber";
 import { collateSearch } from "../../../../../lib/textSearch";
 
 type GridRequest = {
@@ -94,12 +94,12 @@ const normalizePartModelNumber = (value: string): string => clearPartModelNumber
 // Strips x/X between digits at query time to avoid backfilling stored cleared values.
 const partModelNumberSql = (expr: string) => {
   if (expr.includes(".PartNumber")) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace(".PartNumber", ".PartNumberCleared")}, ''))`);
+    return `UPPER(ISNULL(${expr.replace(".PartNumber", ".PartNumberCleared")}, ''))`;
   }
   if (expr.includes(".ModelNumber")) {
-    return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr.replace(".ModelNumber", ".ModelNumberCleared")}, ''))`);
+    return `UPPER(ISNULL(${expr.replace(".ModelNumber", ".ModelNumberCleared")}, ''))`;
   }
-  return stripXBetweenDigitsSql(`UPPER(ISNULL(${expr}, ''))`);
+  return `UPPER(ISNULL(${expr}, ''))`;
 };
 
 const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
@@ -142,7 +142,7 @@ const buildWhereAndParams = (filterModel: GridRequest["filterModel"]) => {
       const descParam = `${pBase}_desc`;
 
       // Also search LegacyPartNoCleaned
-      const legacySql = stripXBetweenDigitsSql(`UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`);
+      const legacySql = `UPPER(ISNULL(dbo.Products.LegacyPartNoCleaned, ''))`;
 
       if (type === "contains") {
         let clause = `(${partModelNumberSql(columnExpression)} LIKE @${pBase} OR ${partModelNumberSql(otherColumnExpression)} LIKE @${pBase} OR ${legacySql} LIKE @${pBase}`;

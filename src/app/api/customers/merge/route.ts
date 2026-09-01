@@ -186,6 +186,7 @@ export async function POST(req: NextRequest) {
     let strandedOfferContacts = 0;
     let disabledContacts = 0;
     let disabledContactIds: number[] = [];
+    let primaryBefore: Record<string, unknown> = {};
 
     try {
       // --- lock the whole working set for the duration of the merge --------
@@ -281,6 +282,22 @@ export async function POST(req: NextRequest) {
       const modifiedByClause = modifiedBy != null ? 'ModifiedBy = @modifiedBy, ' : '';
 
       // --- 1. the surviving customer takes the chosen values ---------------
+      // Read what it holds FIRST. Without this the audit records before: null
+      // for every field, and a revert can restore the contacts, offers and
+      // disabled records but not the values it overwrote here — which is
+      // exactly the hole found when 21 merges had to be undone on 2026-09-01.
+      if (fieldUpdates.length > 0) {
+        const beforeRequest = transaction.request();
+        beforeRequest.input('primaryId', sql.Int, primaryId);
+        const beforeColumns = fieldUpdates
+          .map(({ field }) => `[${MERGE_FIELD_COLUMNS[field].column}]`)
+          .join(', ');
+        const beforeResult = await beforeRequest.query<Record<string, unknown>>(
+          `SELECT TOP (1) ${beforeColumns} FROM dbo.Customers WHERE ID = @primaryId`,
+        );
+        primaryBefore = beforeResult.recordset?.[0] ?? {};
+      }
+
       if (fieldUpdates.length > 0) {
         const request = scopedRequest();
         const setClauses = fieldUpdates.map(({ field, value }, index) => {
@@ -453,6 +470,27 @@ export async function POST(req: NextRequest) {
       throw txErr;
     }
 
+    // Only the fields that genuinely CHANGED, with their real previous value.
+    // Most picks re-write the primary's own value unchanged — logging those too
+    // buried the handful that mattered in 218 rows of noise the last time a
+    // merge had to be examined.
+    const auditValue = (value: unknown): string | number | null => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'number') return value;
+      // nchar columns (City) come back space-padded; compare and log them trimmed.
+      const text = String(value).trim();
+      return text.length > 0 ? text : null;
+    };
+    const fieldChanges = fieldUpdates
+      .map((update) => ({
+        targetId: primaryId,
+        targetName: primaryName,
+        field: update.field,
+        before: auditValue(primaryBefore[MERGE_FIELD_COLUMNS[update.field].column]),
+        after: auditValue(update.value),
+      }))
+      .filter((change) => String(change.before ?? '') !== String(change.after ?? ''));
+
     // dbo.Logs is the only record of a merge, so it carries everything needed to
     // reverse one by hand: which ids were folded in, and what moved.
     logEditAuditDetails({
@@ -470,13 +508,7 @@ export async function POST(req: NextRequest) {
           before: null,
           after: secondaryIds.join(', '),
         },
-        ...fieldUpdates.map((update) => ({
-          targetId: primaryId,
-          targetName: primaryName,
-          field: update.field,
-          before: null,
-          after: update.value,
-        })),
+        ...fieldChanges,
       ],
       message: `Customers merged into #${primaryId}`,
       extra: {
