@@ -536,6 +536,9 @@ export default function CustomerCreateClient({
           Array.isArray(payload.lookups.importanceOptions) ? payload.lookups.importanceOptions : [],
         );
         setCountryOptions(Array.isArray(payload.lookups.countries) ? payload.lookups.countries : []);
+        setPaymentTermOptions(
+          Array.isArray(payload.lookups.paymentTerms) ? payload.lookups.paymentTerms : [],
+        );
       } catch (err) {
         if (!active) return;
         console.error('Failed to load create-customer lookups', err);

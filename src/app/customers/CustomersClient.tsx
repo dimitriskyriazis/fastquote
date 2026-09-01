@@ -333,6 +333,33 @@ export default function CustomersClient() {
     return () => { active = false; };
   }, [canEditPaymentTerms]);
 
+  // Row deletion gets away with refreshServerSide({purge:true}) because the rows
+  // disappear and the selection goes with them. A payment-term change keeps the
+  // rows, so purge:false leaves them rendered AND still selected — the grid has
+  // no reason to drop a selection for rows that still exist. Clear it by hand.
+  //
+  // Under the server-side row model the authoritative state is the api's own
+  // selectAll/toggledNodes pair, not the node flags: deselectAll() alone leaves
+  // toggledNodes populated and the next block fetch re-selects the rows.
+  const clearGridSelection = useCallback((api: unknown) => {
+    const gridApi = api as {
+      isDestroyed?: () => boolean;
+      deselectAll?: () => void;
+      setServerSideSelectionState?: (s: { selectAll: boolean; toggledNodes: string[] }) => void;
+      clearCellSelection?: () => void;
+      clearFocusedCell?: () => void;
+    } | null;
+    if (!gridApi || gridApi.isDestroyed?.()) return;
+    try {
+      gridApi.deselectAll?.();
+      gridApi.setServerSideSelectionState?.({ selectAll: false, toggledNodes: [] });
+      gridApi.clearCellSelection?.();
+      gridApi.clearFocusedCell?.();
+    } catch {
+      /* a grid torn down mid-request is not an error worth surfacing */
+    }
+  }, []);
+
   const applyPaymentTerm = useCallback(
     async (customerIds: number[], termId: number | null, termLabel: string, api: unknown) => {
       try {
@@ -352,13 +379,16 @@ export default function CustomersClient() {
           + (skipped ? ` (${skipped} unchanged)` : ''),
           'success',
         );
+        // Clear the selection BEFORE the refetch, so the incoming blocks render
+        // against an already-empty selection state rather than re-applying it.
+        clearGridSelection(api);
         (api as { refreshServerSide?: (o: { purge: boolean }) => void } | null)
           ?.refreshServerSide?.({ purge: false });
       } catch {
         showToastMessage('Could not change the payment terms.', 'error');
       }
     },
-    [],
+    [clearGridSelection],
   );
 
   const customerContextMenuItems = useCallback(
