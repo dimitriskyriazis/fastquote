@@ -479,6 +479,229 @@ export const showSelectableConfirmDialog = async ({
 };
 
 // ---------------------------------------------------------------------------
+// Row-resolution dialog
+// Each row carries its OWN choices and the user picks one per row, so a batch of
+// ambiguous cases is resolved in a single pass instead of being cancelled and
+// re-submitted. Unlike showSelectableConfirmDialog (one on/off per row) the
+// answer is a value per row, not a selection.
+// ---------------------------------------------------------------------------
+
+export type RowResolutionOption = {
+  /** Returned for this row when chosen. */
+  value: string;
+  label: string;
+};
+
+export type RowResolutionRow = {
+  /** Key the chosen value is returned under. */
+  key: string;
+  /** Display cells, aligned to `columns`. */
+  cells: string[];
+  options: RowResolutionOption[];
+  /** Pre-selected option; defaults to the first. */
+  defaultValue?: string;
+};
+
+export type RowResolutionDialogOptions = {
+  title?: string;
+  message: string;
+  /** Headers for `cells`. The picker column header is appended automatically. */
+  columns: string[];
+  /** Header for the picker column. */
+  choiceColumnLabel?: string;
+  rows: RowResolutionRow[];
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Widths (CSS) aligned to `columns`; the picker column takes the remainder. */
+  columnWidths?: string[];
+  /** Optional "apply this to every row" shortcuts, by option value. */
+  bulkOptions?: RowResolutionOption[];
+};
+
+/**
+ * Returns the chosen value per row keyed by `row.key`, or `false` if cancelled.
+ */
+export const showRowResolutionDialog = async ({
+  title,
+  message,
+  columns,
+  choiceColumnLabel = 'Action',
+  rows,
+  confirmLabel = 'Apply',
+  cancelLabel = 'Cancel',
+  columnWidths,
+  bulkOptions,
+}: RowResolutionDialogOptions): Promise<Record<string, string> | false> => {
+  const defaults = () =>
+    Object.fromEntries(rows.map((r) => [r.key, r.defaultValue ?? r.options[0]?.value ?? '']));
+  if (typeof window === 'undefined' || typeof document === 'undefined' || rows.length === 0) {
+    return defaults();
+  }
+
+  return new Promise<Record<string, string> | false>((resolve) => {
+    const state: Record<string, string> = defaults();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fastquote-confirm-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'fastquote-confirm-dialog';
+    dialog.style.cssText =
+      'width:min(96vw,1100px);max-width:96vw;padding:24px 28px 20px;display:flex;flex-direction:column;gap:0;';
+
+    if (title) {
+      const heading = document.createElement('h3');
+      heading.className = 'fastquote-confirm-title';
+      heading.textContent = title;
+      dialog.appendChild(heading);
+    }
+
+    const messageEl = document.createElement('p');
+    messageEl.className = 'fastquote-confirm-message';
+    messageEl.style.marginBottom = '14px';
+    messageEl.textContent = message;
+    dialog.appendChild(messageEl);
+
+    const selects: HTMLSelectElement[] = [];
+
+    // "Apply to all" shortcut, so forty identical decisions are one click.
+    if (bulkOptions && bulkOptions.length > 0 && rows.length > 1) {
+      const bulkBar = document.createElement('div');
+      bulkBar.style.cssText =
+        'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;font-size:0.82rem;';
+      const bulkLabel = document.createElement('span');
+      bulkLabel.textContent = 'Apply to all rows:';
+      bulkLabel.style.color = '#475569';
+      bulkBar.appendChild(bulkLabel);
+      bulkOptions.forEach((opt) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = opt.label;
+        btn.style.cssText =
+          'padding:4px 10px;border:1px solid #d1d5db;border-radius:6px;background:#fff;'
+          + 'cursor:pointer;font-size:0.8rem;';
+        btn.addEventListener('click', () => {
+          rows.forEach((r, idx) => {
+            if (!r.options.some((o) => o.value === opt.value)) return;
+            state[r.key] = opt.value;
+            const sel = selects[idx];
+            if (sel) sel.value = opt.value;
+          });
+        });
+        bulkBar.appendChild(btn);
+      });
+      dialog.appendChild(bulkBar);
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText =
+      'overflow-y:auto;max-height:55vh;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:18px;flex:1 1 auto;';
+
+    const table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.82rem;table-layout:fixed;';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+    [...columns, choiceColumnLabel].forEach((labelText, colIdx) => {
+      const th = document.createElement('th');
+      th.textContent = labelText;
+      const width = colIdx < columns.length ? columnWidths?.[colIdx] : undefined;
+      th.style.cssText =
+        'text-align:left;padding:7px 10px;background:#f3f4f6;border-bottom:1px solid #e5e7eb;'
+        + 'font-weight:600;position:sticky;top:0;z-index:1;'
+        + (width ? `width:${width};` : '');
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    rows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+      tr.style.background = idx % 2 === 1 ? '#fafafa' : '#ffffff';
+
+      row.cells.forEach((cell) => {
+        const td = document.createElement('td');
+        td.style.cssText =
+          'padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;'
+          + 'word-break:break-word;white-space:pre-wrap;line-height:1.4;';
+        td.textContent = cell;
+        tr.appendChild(td);
+      });
+
+      const tdSel = document.createElement('td');
+      tdSel.style.cssText = 'padding:6px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top;';
+      const select = document.createElement('select');
+      select.style.cssText =
+        'width:100%;padding:4px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:0.8rem;cursor:pointer;';
+      row.options.forEach((opt) => {
+        const option = document.createElement('option');
+        option.value = opt.value;
+        option.textContent = opt.label;
+        select.appendChild(option);
+      });
+      select.value = state[row.key];
+      select.addEventListener('change', () => {
+        state[row.key] = select.value;
+      });
+      selects.push(select);
+      tdSel.appendChild(select);
+      tr.appendChild(tdSel);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    dialog.appendChild(wrapper);
+
+    const buttons = document.createElement('div');
+    buttons.className = 'fastquote-confirm-buttons';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--cancel';
+    cancelBtn.textContent = cancelLabel;
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'fastquote-confirm-btn fastquote-confirm-btn--confirm';
+    confirmBtn.textContent = confirmLabel;
+
+    buttons.appendChild(cancelBtn);
+    buttons.appendChild(confirmBtn);
+    dialog.appendChild(buttons);
+    overlay.appendChild(dialog);
+
+    const cleanup = (result: Record<string, string> | false) => {
+      overlay.classList.remove('visible');
+      window.setTimeout(() => overlay.remove(), 180);
+      window.removeEventListener('keydown', handleKey);
+      resolve(result);
+    };
+
+    cancelBtn.addEventListener('click', () => cleanup(false));
+    confirmBtn.addEventListener('click', () => cleanup({ ...state }));
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) cleanup(false);
+    });
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cleanup(false);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+
+    document.body.appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.classList.add('visible');
+      confirmBtn.focus();
+    });
+  });
+};
+
+// ---------------------------------------------------------------------------
 // Checklist dialog
 // A short list of independent on/off choices (not a per-row picker like
 // showSelectableConfirmDialog) — e.g. "which row types go into this export".

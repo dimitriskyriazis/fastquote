@@ -23,6 +23,43 @@ type BulkBody = {
 // "select all", which is never a deliberate gesture for a commercial field.
 const MAX_BULK = 500;
 
+// Read side, for the local match-review tool's "Refresh from FastQuote" button.
+// Returns every customer that already carries a term, so the tool can drop rows
+// somebody has since assigned in the app rather than asking about them again.
+// Small by construction: only assigned customers come back, not the whole table.
+export async function GET(req: NextRequest) {
+  logRequest(req, '/api/customers/payment-term');
+  try {
+    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    if (!auth.ok) return auth.response;
+
+    const pool = await getPool();
+    const assigned = (await pool.request().query<{ ID: number; PaymentTermID: number }>(`
+      SELECT ID, PaymentTermID
+      FROM dbo.Customers
+      WHERE PaymentTermID IS NOT NULL
+        AND ISNULL(Enabled, 0) = 1
+        AND ISNULL(IsParent, 0) = 0;
+    `)).recordset;
+
+    const terms = (await pool.request().query<{ ID: number; Name: string }>(
+      'SELECT ID, Name FROM dbo.PaymentTerms WHERE Enabled = 1 ORDER BY ID',
+    )).recordset;
+
+    return NextResponse.json({
+      ok: true,
+      // Compact pairs: the tool only needs the mapping, and this keeps a
+      // few-thousand-row response small.
+      assigned: assigned.map((r) => [r.ID, r.PaymentTermID]),
+      terms: terms.map((r) => [r.ID, r.Name]),
+    });
+  } catch (err) {
+    console.error('Payment-term read failed', err);
+    const message = err instanceof Error ? err.message : 'Server error';
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   logRequest(req, '/api/customers/payment-term');
   const requestId = await getRequestId(req);

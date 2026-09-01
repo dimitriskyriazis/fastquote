@@ -81,9 +81,12 @@ sql/
 # excel files
 *.xlsx
 
+# html files
+*.html
+
+#csv files
+*.csv
+
 # Datasheets
 /public/Datasheets
 
-# local payment-terms match review tool (embeds customer names + VAT numbers)
-payment-terms-review.html
-payment-terms-decisions.csv

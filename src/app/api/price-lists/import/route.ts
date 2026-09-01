@@ -1058,6 +1058,31 @@ export async function POST(req: NextRequest) {
     // collides with a differently-spelled existing product and confirmed they
     // are different products.
     const acknowledgeClearedCollisions = normalizeBool(formData.get("acknowledgeClearedCollisions")) === true;
+    // Per-row decisions for cleaned-key collisions, posted on the re-submit:
+    // { "<rowIndex>": <ProductID> }  -> match that row to that existing product
+    // { "<rowIndex>": "new" }        -> create it as a new product
+    // Resolving inline beats cancelling and re-importing, and covers many rows
+    // in one pass.
+    const clearedCollisionResolutions = (() => {
+      const raw = formData.get("clearedCollisionResolutions");
+      if (typeof raw !== "string" || !raw.trim()) return new Map<number, number | "new">();
+      try {
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const out = new Map<number, number | "new">();
+        for (const [k, v] of Object.entries(parsed)) {
+          const idx = Number.parseInt(k, 10);
+          if (!Number.isFinite(idx)) continue;
+          if (v === "new") out.set(idx, "new");
+          else {
+            const id = typeof v === "number" ? v : Number.parseInt(String(v), 10);
+            if (Number.isFinite(id) && id > 0) out.set(idx, id);
+          }
+        }
+        return out;
+      } catch {
+        return new Map<number, number | "new">();
+      }
+    })();
     const swapCorrections: number[] = (() => {
       const raw = formData.get("swapCorrections");
       if (typeof raw !== "string") return [];
@@ -1551,14 +1576,19 @@ export async function POST(req: NextRequest) {
     // (Belden XDR8419-312W vs XDR8419-312-W). Refuse before the transaction so
     // the user can decide; dropping them mid-import would finalize a price list
     // silently missing those products, with no way to complete the import.
-    if (!acknowledgeClearedCollisions) {
+    {
       type ClearedCollision = {
         rowIndex: number;
         partNumber: string;
         modelNumber: string | null;
         description: string | null;
         listPrice: number | null;
-        existing: Array<{ id: number; partNumber: string | null; description: string | null }>;
+        existing: Array<{
+          id: number;
+          partNumber: string | null;
+          modelNumber: string | null;
+          description: string | null;
+        }>;
       };
       const clearedCollisions: ClearedCollision[] = [];
       parsedRows.forEach((row, idx) => {
@@ -1575,6 +1605,9 @@ export async function POST(req: NextRequest) {
         }
         const lookup = lookupCleared(row.partNumber);
         if (lookup.kind !== "ask") return;
+        // Already decided by the user on a previous pass.
+        if (clearedCollisionResolutions.has(idx)) return;
+        if (acknowledgeClearedCollisions) return;
         clearedCollisions.push({
           rowIndex: idx,
           partNumber: row.partNumber!.trim(),
@@ -1584,6 +1617,7 @@ export async function POST(req: NextRequest) {
           existing: lookup.products.map((c) => ({
             id: c.ID,
             partNumber: c.PartNumber,
+            modelNumber: c.ModelNumber,
             description: c.Description,
           })),
         });
@@ -1593,7 +1627,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             ok: false,
-            error: `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} have a part number that matches an existing product of this brand once separators are ignored, but spelled differently. Confirm whether each is the same product or a new one.`,
+            error: `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} in this file could match an existing product of this brand. Choose, for each row, which product it is, or create it as new.`,
             clearedPartNumberCollisions: clearedCollisions,
           },
           { status: 409 },
@@ -1819,7 +1853,7 @@ export async function POST(req: NextRequest) {
 
       let legacyUpdatedCount = 0;
 
-      for (const row of parsedRows) {
+      for (const [rowIndex, row] of parsedRows.entries()) {
         const partKey = normalizeKey(row.partNumber);
         const modelKey = normalizeKey(row.modelNumber);
         const legacyKey = normalizeKey(row.legacyPartNumber);
@@ -1855,7 +1889,38 @@ export async function POST(req: NextRequest) {
           ? lookupCleared(row.partNumber)
           : ({ kind: "none" } as ClearedLookup);
 
-        if (partKey && byPartNumber.has(partKey)) {
+        // The user resolved this row's collision in the import dialog. Their
+        // decision outranks every automatic tier below.
+        const resolution = clearedCollisionResolutions.get(rowIndex);
+        if (resolution !== undefined && resolution !== "new") {
+          const chosen = existingProducts.find((c) => c.ID === resolution);
+          if (chosen) {
+            existingProduct = chosen;
+            productId = chosen.ID;
+            isExistingProduct = true;
+            normalizedMatchDetails.push({
+              filePartNumber: row.partNumber,
+              matchedPartNumber: chosen.PartNumber,
+              productId,
+            });
+          } else {
+            // The chosen product is not among this brand's candidates (stale
+            // dialog, or someone tampered with the payload). Refuse the row
+            // rather than guessing.
+            skippedRows += 1;
+            skippedRowDetails.push({
+              partNumber: row.partNumber,
+              modelNumber: row.modelNumber,
+              description: row.description,
+              listPrice: row.listPrice,
+              reason: `Chosen product #${resolution} is not a valid match for this row - re-run the import`,
+            });
+            continue;
+          }
+        } else if (resolution === "new") {
+          // Explicitly a different product: fall through to creation without
+          // consulting the cleared/legacy/model tiers.
+        } else if (partKey && byPartNumber.has(partKey)) {
           existingProduct = byPartNumber.get(partKey);
           productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;

@@ -19,7 +19,7 @@ import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
 import { searchIncludes } from "../../../lib/textSearch";
 import { formatDateUK } from "../../lib/formatDateTime";
-import { showConfirmDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
+import { showConfirmDialog, showRowResolutionDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
 import styles from "./PriceListImport.module.css";
 import lookupStyles from "../../components/LookupModal.module.css";
@@ -1344,7 +1344,12 @@ export default function PriceListImportClient({
           modelNumber: string | null;
           description: string | null;
           listPrice: number | null;
-          existing: Array<{ id: number; partNumber: string | null; description: string | null }>;
+          existing: Array<{
+            id: number;
+            partNumber: string | null;
+            modelNumber: string | null;
+            description: string | null;
+          }>;
         }>;
         partModelSwapWarnings?: Array<{
           rowIndex: number;
@@ -1438,33 +1443,49 @@ export default function PriceListImportClient({
           && clearedCollisions.length > 0
           && !clearedCollisionsAcknowledged
         ) {
-          const lines = clearedCollisions.slice(0, 12).map((c) => {
-            const existing = c.existing
-              .map((x) => `${x.partNumber ?? `#${x.id}`}`)
-              .join(", ");
-            return `${c.partNumber}  ->  already exists as: ${existing}`;
-          });
-          if (clearedCollisions.length > lines.length) {
-            lines.push(`... and ${clearedCollisions.length - lines.length} more`);
-          }
-          const proceed = await showConfirmDialog({
-            title: "Part numbers that may already exist",
-            message: [
-              `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} in this file have a part number that matches an existing product of this brand once dashes, spaces and dots are ignored, but spelled differently.`,
-              "",
-              ...lines,
-              "",
-              "If these are the SAME products, cancel and fix the spelling in the file so they update the existing products instead of creating duplicates.",
-              "If they are genuinely DIFFERENT products, continue and they will be created as new products.",
-            ].join("\n"),
-            confirmLabel: "They are different products, continue",
+          // One picker per row, so a whole batch is resolved in a single pass
+          // instead of cancelling and re-importing. Each row offers the existing
+          // products it could be, plus "create as new".
+          const NEW_PRODUCT = "new";
+          const resolved = await showRowResolutionDialog({
+            title: "Match these part numbers",
+            message:
+              `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} in this file could be an existing product of this brand: `
+              + "the part number matches once dashes, spaces and dots are ignored, but it is spelled differently. "
+              + "For each row, pick the product it is, or create it as a new product.",
+            columns: ["Part Number In File", "Description In File", "Price"],
+            columnWidths: ["22%", "30%", "8%"],
+            choiceColumnLabel: "This row is",
+            rows: clearedCollisions.map((c) => ({
+              key: String(c.rowIndex),
+              cells: [
+                c.partNumber,
+                c.description ?? "-",
+                c.listPrice != null ? String(c.listPrice) : "-",
+              ],
+              options: [
+                // Just the part number (plus enough description to tell near-identical
+                // products apart). No verb: the choice is which product this row IS,
+                // not what to do to it.
+                ...c.existing.map((x) => ({
+                  value: String(x.id),
+                  label: `${x.partNumber ?? `#${x.id}`}${x.description ? ` - ${x.description.slice(0, 45)}` : ""}`,
+                })),
+                { value: NEW_PRODUCT, label: "A new product" },
+              ],
+              // No safe default: the whole point is that this is ambiguous, so
+              // start on the first candidate and make the user look.
+              defaultValue: String(c.existing[0]?.id ?? NEW_PRODUCT),
+            })),
+            bulkOptions: [{ value: NEW_PRODUCT, label: "All are new products" }],
+            confirmLabel: `Apply to ${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""}`,
             cancelLabel: "Cancel the import",
           });
-          if (!proceed) {
+          if (!resolved) {
             setError("Import cancelled - part numbers may already exist under a different spelling.");
             return;
           }
-          formData.set("acknowledgeClearedCollisions", "1");
+          formData.set("clearedCollisionResolutions", JSON.stringify(resolved));
           clearedCollisionsAcknowledged = true;
           continue;
         }
