@@ -1297,6 +1297,14 @@ export async function POST(req: NextRequest) {
       if (!key) return { kind: "none" };
       const candidates = byClearedPartKey.get(key);
       if (!candidates || candidates.length === 0) return { kind: "none" };
+      // More than one live product already shares this cleaned key, so the brand
+      // has a KNOWN-AMBIGUOUS group (Belden XDR8419-312W welded 1243.47 vs
+      // XDR8419-312-W white 585.00; Shure SLXD15-S50 vs SLXD15+-S50). A spelling
+      // match is strong evidence when there is exactly ONE candidate, but here
+      // the file's spelling can line up with the wrong member by coincidence -
+      // "XDR8419 312 W" has its separators in the same positions as the WHITE
+      // rack, yet a human reading it could mean either. Never pick: ask.
+      if (candidates.length > 1) return { kind: "ask", products: candidates };
       const spellingMatches = candidates.filter((c) => isSameProductSpelling(partNumber, c.PartNumber ?? ""));
       if (spellingMatches.length === 1) return { kind: "sameProduct", product: spellingMatches[0] };
       return { kind: "ask", products: candidates };
