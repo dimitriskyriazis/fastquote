@@ -259,8 +259,16 @@ export default function PriceListImportClient({
       listPrice: number | null;
       reason: string;
     }>;
+    // Rows matched to an existing product by the cleaned part number rather than
+    // an exact one, i.e. the supplier respelled it. Shown so the mapping is never
+    // silent.
+    normalizedMatches: Array<{
+      filePartNumber: string | null;
+      matchedPartNumber: string | null;
+      productId: number;
+    }>;
   } | null>(null);
-  const [summaryTab, setSummaryTab] = useState<"priceChanges" | "newProducts" | "skipped">("priceChanges");
+  const [summaryTab, setSummaryTab] = useState<"priceChanges" | "newProducts" | "skipped" | "normalized">("priceChanges");
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [brandText, setBrandText] = useState(() => {
     if (prefill?.brandId) {
@@ -1327,6 +1335,17 @@ export default function PriceListImportClient({
         }>;
         descriptionMismatches?: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[];
         modelNumberMismatches?: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[];
+        // 409 before any write: rows whose part number matches an existing product
+        // of this brand once separators are ignored, but spelled differently, so
+        // they may be a genuinely different product.
+        clearedPartNumberCollisions?: Array<{
+          rowIndex: number;
+          partNumber: string;
+          modelNumber: string | null;
+          description: string | null;
+          listPrice: number | null;
+          existing: Array<{ id: number; partNumber: string | null; description: string | null }>;
+        }>;
         partModelSwapWarnings?: Array<{
           rowIndex: number;
           importedPart: string | null;
@@ -1352,6 +1371,11 @@ export default function PriceListImportClient({
           listPrice: number | null;
           costPrice: number | null;
         }>;
+        normalizedMatches?: Array<{
+          filePartNumber: string | null;
+          matchedPartNumber: string | null;
+          productId: number;
+        }>;
         skippedRowDetails?: Array<{
           partNumber: string | null;
           modelNumber: string | null;
@@ -1366,6 +1390,7 @@ export default function PriceListImportClient({
       let raw = "";
       let typedPayload: ImportResponse | null = null;
       let swapAcknowledged = false;
+      let clearedCollisionsAcknowledged = false;
       // The first POST can return Part/Model swap warnings (409) without
       // committing. After the user decides (cancel / import as-is / auto-fix the
       // selected rows) we re-submit ONCE with the acknowledgement + corrections.
@@ -1404,6 +1429,44 @@ export default function PriceListImportClient({
           });
           setError(typedPayload.error ?? "Import cancelled: duplicate part numbers.");
           return;
+        }
+
+        const clearedCollisions = typedPayload?.clearedPartNumberCollisions;
+        if (
+          response.status === 409
+          && clearedCollisions
+          && clearedCollisions.length > 0
+          && !clearedCollisionsAcknowledged
+        ) {
+          const lines = clearedCollisions.slice(0, 12).map((c) => {
+            const existing = c.existing
+              .map((x) => `${x.partNumber ?? `#${x.id}`}`)
+              .join(", ");
+            return `${c.partNumber}  ->  already exists as: ${existing}`;
+          });
+          if (clearedCollisions.length > lines.length) {
+            lines.push(`... and ${clearedCollisions.length - lines.length} more`);
+          }
+          const proceed = await showConfirmDialog({
+            title: "Part numbers that may already exist",
+            message: [
+              `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} in this file have a part number that matches an existing product of this brand once dashes, spaces and dots are ignored, but spelled differently.`,
+              "",
+              ...lines,
+              "",
+              "If these are the SAME products, cancel and fix the spelling in the file so they update the existing products instead of creating duplicates.",
+              "If they are genuinely DIFFERENT products, continue and they will be created as new products.",
+            ].join("\n"),
+            confirmLabel: "They are different products, continue",
+            cancelLabel: "Cancel the import",
+          });
+          if (!proceed) {
+            setError("Import cancelled - part numbers may already exist under a different spelling.");
+            return;
+          }
+          formData.set("acknowledgeClearedCollisions", "1");
+          clearedCollisionsAcknowledged = true;
+          continue;
         }
 
         const swapWarnings = typedPayload?.partModelSwapWarnings;
@@ -1627,7 +1690,8 @@ export default function PriceListImportClient({
       const hasSummaryData =
         (typedPayload.priceChanges && typedPayload.priceChanges.length > 0) ||
         (typedPayload.newProducts && typedPayload.newProducts.length > 0) ||
-        (typedPayload.skippedRowDetails && typedPayload.skippedRowDetails.length > 0);
+        (typedPayload.skippedRowDetails && typedPayload.skippedRowDetails.length > 0) ||
+        (typedPayload.normalizedMatches && typedPayload.normalizedMatches.length > 0);
 
       // Import succeeded — clear saved draft so it doesn't restore on next visit.
       clearDraft();
@@ -1644,6 +1708,7 @@ export default function PriceListImportClient({
           priceChanges: typedPayload.priceChanges ?? [],
           newProducts: typedPayload.newProducts ?? [],
           skippedRowDetails: typedPayload.skippedRowDetails ?? [],
+          normalizedMatches: typedPayload.normalizedMatches ?? [],
         });
         setSummaryTab(
           typedPayload.priceChanges && typedPayload.priceChanges.length > 0
@@ -2734,6 +2799,17 @@ export default function PriceListImportClient({
                 Skipped
                 <span className={styles.summaryTabBadge}>{importSummary.skippedRowDetails.length}</span>
               </button>
+              {importSummary.normalizedMatches.length > 0 ? (
+                <button
+                  type="button"
+                  className={`${styles.summaryTab} ${summaryTab === "normalized" ? styles.summaryTabActive : ""}`}
+                  onClick={() => setSummaryTab("normalized")}
+                  title="Rows whose part number was respelled in the file and matched to the existing product instead of creating a duplicate"
+                >
+                  Respelled
+                  <span className={styles.summaryTabBadge}>{importSummary.normalizedMatches.length}</span>
+                </button>
+              ) : null}
             </div>
             <div className={styles.summaryBody}>
               {summaryTab === "priceChanges" ? (
@@ -2851,6 +2927,29 @@ export default function PriceListImportClient({
                   </div>
                 ) : (
                   <div className={styles.summaryEmpty}>No new products.</div>
+                )
+              ) : summaryTab === "normalized" ? (
+                importSummary.normalizedMatches.length > 0 ? (
+                  <div className={styles.summaryTableWrapper}>
+                    <table className={styles.summaryTable}>
+                      <thead>
+                        <tr>
+                          <th>Part Number In File</th>
+                          <th>Matched Existing Product</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importSummary.normalizedMatches.map((row, index) => (
+                          <tr key={`${row.productId}-${index}`}>
+                            <td>{row.filePartNumber ?? "-"}</td>
+                            <td>{row.matchedPartNumber ?? `#${row.productId}`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className={styles.summaryEmpty}>No respelled part numbers.</div>
                 )
               ) : importSummary.skippedRowDetails.length > 0 ? (
                 <div className={styles.summaryTableWrapper}>

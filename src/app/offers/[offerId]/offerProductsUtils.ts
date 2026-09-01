@@ -1832,8 +1832,23 @@ export const createFarnellProduct = async (
         subCategoryId: null,
       }),
     });
+    const payload = (await res.json().catch(() => null)) as {
+      ok?: boolean;
+      productId?: number;
+      duplicateCleanedPartNumber?: { matches?: Array<{ id: number; enabled?: boolean }> };
+    } | null;
+    // /api/products/create refuses (409) when this brand already has a product
+    // with the same part number once separators are ignored. This caller has no
+    // user to ask, and for a Farnell SKU an existing product with that part
+    // number IS the product we wanted, so adopt it instead of dead-ending -
+    // returning null here would be reported to the user as "not found on
+    // Farnell" and would leave the row unassigned.
+    if (res.status === 409) {
+      const matches = payload?.duplicateCleanedPartNumber?.matches ?? [];
+      const adopt = matches.find((m) => m.enabled !== false) ?? matches[0];
+      return typeof adopt?.id === 'number' ? adopt.id : null;
+    }
     if (!res.ok) return null;
-    const payload = (await res.json().catch(() => null)) as { ok?: boolean; productId?: number } | null;
     return payload?.ok && typeof payload.productId === 'number' ? payload.productId : null;
   } catch (err) {
     console.error('Failed to create Farnell product', err);

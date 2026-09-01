@@ -5,6 +5,7 @@ import LookupModal from '../components/LookupModal';
 import AddBrandModal from '../components/AddBrandModal';
 import lookupStyles from '../components/LookupModal.module.css';
 import lookupButtonStyles from '../components/LookupAddButton.module.css';
+import styles from './AddProductModal.module.css';
 import { showToastMessage } from '../../lib/toast';
 import { useDuplicateCheck } from '../lib/useDuplicateCheck';
 import DuplicateWarning from '../components/DuplicateWarning';
@@ -50,6 +51,24 @@ type CreateProductResponse = {
   ok?: boolean;
   error?: string;
   productId?: number | null;
+  duplicateCleanedPartNumber?: DuplicateCleanedPayload;
+};
+
+// Returned with 409 by /api/products/create when this brand already has a
+// product with the same part number once separators are ignored.
+type DuplicateCleanedPayload = {
+  partNumber: string | null;
+  partNumberCleared: string | null;
+  matches: Array<{
+    id: number;
+    partNumber: string | null;
+    modelNumber: string | null;
+    description: string | null;
+    enabled: boolean;
+    // true when the existing row differs only in WHICH separators were used,
+    // so it is almost certainly the same product rather than a new one.
+    sameSpelling: boolean;
+  }>;
 };
 
 type ProductFormState = {
@@ -120,6 +139,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
   const [form, setForm] = useState<ProductFormState>(createEmptyProductForm());
   const [formError, setFormError] = useState<string | null>(null);
   const [savingProduct, setSavingProduct] = useState(false);
+  const [duplicateBlock, setDuplicateBlock] = useState<DuplicateCleanedPayload | null>(null);
   const [brandText, setBrandText] = useState('');
   const [isBrandListOpen, setIsBrandListOpen] = useState(false);
   const brandListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,6 +251,10 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
   const updateFormField = useCallback((field: keyof ProductFormState, value: string | boolean) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     setFormError(null);
+    // Any edit invalidates a pending duplicate acknowledgement: the collisions on
+    // screen were computed for the OLD part number/brand, and acknowledging them
+    // for a new one would bypass the server gate entirely.
+    setDuplicateBlock(null);
   }, []);
 
   const cancelBrandListClose = useCallback(() => {
@@ -316,7 +340,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     [brandOptions, form.brandId],
   );
 
-  const handleCreateProduct = useCallback(async () => {
+  const handleCreateProduct = useCallback(async (acknowledgeDuplicate = false) => {
     if (!form.brandId) {
       setFormError('Brand is required.');
       return;
@@ -348,6 +372,18 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
       }
     }
     setFormError(null);
+    if (acknowledgeDuplicate) {
+      // Refuse to send an acknowledgement for a part number other than the one
+      // whose collisions were actually displayed.
+      const shownFor = duplicateBlock?.partNumber ?? null;
+      if (!shownFor || shownFor !== canonicalPartNumber) {
+        setDuplicateBlock(null);
+        setFormError('The part number changed. Please add the product again to re-check for duplicates.');
+        return;
+      }
+    } else {
+      setDuplicateBlock(null);
+    }
     setSavingProduct(true);
     try {
       const payload = {
@@ -362,6 +398,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
         weblink: form.weblink.trim() || null,
         comments: form.comments.trim() || null,
         enabled: form.enabled,
+        ...(acknowledgeDuplicate ? { acknowledgeDuplicate: true } : {}),
       };
       const response = await fetch(PRODUCT_CREATE_ENDPOINT, {
         method: 'POST',
@@ -369,6 +406,13 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
         body: JSON.stringify(payload),
       });
       const result = (await response.json().catch(() => null)) as CreateProductResponse | null;
+      if (response.status === 409 && result?.duplicateCleanedPartNumber) {
+        // Not an error the user should have to retype past: show the existing
+        // products and let them either use one or confirm this is different.
+        setDuplicateBlock(result.duplicateCleanedPartNumber);
+        setFormError(result.error ?? 'A product with this part number already exists for this brand.');
+        return;
+      }
       if (!response.ok || !result?.ok) {
         throw new Error(result?.error ?? 'Unable to add product. Please try again.');
       }
@@ -376,6 +420,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
       setForm(createEmptyProductForm());
       setBrandText('');
       setFormError(null);
+      setDuplicateBlock(null);
       onAdded?.({ productId: result.productId ?? null });
       onClose();
     } catch (err) {
@@ -384,7 +429,7 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
     } finally {
       setSavingProduct(false);
     }
-  }, [form, onAdded, onClose, selectedBrand]);
+  }, [duplicateBlock, form, onAdded, onClose, selectedBrand]);
 
   const brandPatternConfig = useMemo<PartNumberPatternConfig>(
     () =>
@@ -454,12 +499,18 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
 
   useEffect(() => () => cancelBrandListClose(), [cancelBrandListClose]);
 
+  // Reset the duplicate panel whenever the modal opens or closes, so a
+  // collision from a previous product can never be acknowledged for the next.
+  useEffect(() => {
+    setDuplicateBlock(null);
+  }, [open]);
+
   return (
     <LookupModal
       open={open}
       title="Add product"
       onClose={onClose}
-      onConfirm={handleCreateProduct}
+      onConfirm={() => { void handleCreateProduct(false); }}
       confirmLabel="Add product"
       saving={savingProduct}
       error={modalError}
@@ -633,6 +684,60 @@ export default function AddProductModal({ open, onClose, onAdded, initialValues 
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldFull}`}>
           <DuplicateWarning warnings={duplicateWarnings} />
+          {duplicateBlock ? (
+            <div className={styles.duplicateBlock} role="alert">
+              <div className={styles.duplicateBlockTitle}>
+                {duplicateBlock.matches.length === 1
+                  ? 'This brand already has a product with this part number'
+                  : `This brand already has ${duplicateBlock.matches.length} products with this part number`}
+                {' '}(ignoring dashes, spaces and dots)
+              </div>
+              <ul className={styles.duplicateBlockList}>
+                {duplicateBlock.matches.map((m) => (
+                  <li key={m.id}>
+                    <strong>{m.partNumber ?? `#${m.id}`}</strong>
+                    {m.sameSpelling ? (
+                      <span className={styles.duplicateBlockSame}> same product, different punctuation</span>
+                    ) : null}
+                    {m.enabled ? null : <span className={styles.duplicateBlockDisabled}> (disabled)</span>}
+                    {m.description ? <div className={styles.duplicateBlockDesc}>{m.description}</div> : null}
+                  </li>
+                ))}
+              </ul>
+              <div className={styles.duplicateBlockActions}>
+                <button
+                  type="button"
+                  className={styles.duplicateBlockCancel}
+                  onClick={() => {
+                    // Hand the existing product back to the caller (the offer
+                    // flows use this to assign a Requested row) and close, rather
+                    // than just dismissing and leaving the user stuck.
+                    const useId = duplicateBlock.matches.find((m) => m.enabled)?.id
+                      ?? duplicateBlock.matches[0]?.id
+                      ?? null;
+                    setDuplicateBlock(null);
+                    setFormError(null);
+                    if (useId != null) {
+                      showToastMessage('Using the existing product', 'success');
+                      onAdded?.({ productId: useId });
+                      onClose();
+                    }
+                  }}
+                  disabled={savingProduct}
+                >
+                  Use the existing product
+                </button>
+                <button
+                  type="button"
+                  className={styles.duplicateBlockConfirm}
+                  onClick={() => { void handleCreateProduct(true); }}
+                  disabled={savingProduct}
+                >
+                  This is a different product, add it anyway
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className={`${lookupStyles.field} ${lookupStyles.fieldHalf}`}>
           <label className={lookupStyles.fieldLabel} htmlFor="product-erp">

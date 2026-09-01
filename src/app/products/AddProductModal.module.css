@@ -1,0 +1,88 @@
+/* Blocking duplicate dialog for /api/products/create's 409 response.
+   Distinct from DuplicateWarning (advisory, dismissible) because this one
+   requires a decision: use the existing product, or confirm it is different. */
+
+.duplicateBlock {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #f59e0b;
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.duplicateBlockTitle {
+  font-weight: 600;
+  color: #92400e;
+  margin-bottom: 6px;
+}
+
+.duplicateBlockList {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.duplicateBlockList strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.duplicateBlockSame {
+  color: #b45309;
+  font-style: italic;
+}
+
+.duplicateBlockDisabled {
+  color: #6b7280;
+}
+
+.duplicateBlockDesc {
+  color: #475569;
+  margin-top: 2px;
+}
+
+.duplicateBlockActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.duplicateBlockCancel,
+.duplicateBlockConfirm {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid #d1d5db;
+}
+
+.duplicateBlockCancel {
+  background: #ffffff;
+  color: #374151;
+}
+
+.duplicateBlockCancel:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+/* Deliberately the quieter of the two: creating a second product that shares a
+   part number should feel like the exception, not the default. */
+.duplicateBlockConfirm {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.duplicateBlockConfirm:hover:not(:disabled) {
+  background: #fde68a;
+}
+
+.duplicateBlockCancel:disabled,
+.duplicateBlockConfirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

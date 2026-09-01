@@ -44,3 +44,75 @@ export const clearPartModelNumber = (value: string): string =>
 
 export const clearPartModelNumberUpper = (value: string): string =>
   clearPartModelNumber(value).toUpperCase();
+
+// ---------------------------------------------------------------------------
+// Same product, or two different products that happen to share a key?
+//
+// Two part numbers with the same cleaned key can be either. The discriminator
+// that held across the whole catalog is separator POSITION:
+//
+//   same positions, different characters -> one product, two spellings
+//     GP_12LDLD002MX / GP-12LDLD002MX      (Belden's 2024/25 double-import)
+//     XLRK3M.SYU -   / XLRK3M.SYU          (a stray trailing separator)
+//
+//   different positions -> may be genuinely different products, ask a human
+//     XDR8419-312W   / XDR8419-312-W       (welded 1243.47 vs white 585.00)
+//     NO24FDW-A      / NO2-4FDW-A          (opticalCON MTP24 vs DUO)
+//     ALIF1102 T     / ALIF1102T           (was a duplicate, but only a human
+//                                           could know that)
+//
+// So import may auto-match the first kind, and must ask about the second.
+// ---------------------------------------------------------------------------
+
+// ONLY true separators count as positional noise here. '.', '+' and '=' are
+// deliberately EXCLUDED: they are SKU-significant (Shure SLXD vs SLXD+, Ross
+// KIVA vs KIVA+, Belden H126T01.01500 vs H126T01+01500, Klotz RCBEE0.75 vs
+// RCBEE075), so they must be treated as CONTENT and compared, not collapsed.
+// Getting this wrong is the worst available outcome: including '+' here made
+// "SLXD15-S50" and "SLXD15+-S50" look like one product, because "+-" collapsed
+// into a single separator at the same position.
+const POSITIONAL_SEPARATOR_REGEX = /[-_\s/\\,()"'&–—’]/;
+
+type SpellingShape = { content: string; separators: string };
+
+/**
+ * Splits a part number into the characters that carry meaning and the positions
+ * of the separators between them. Runs collapse and leading/trailing separators
+ * are dropped, since neither changes the reading ("XLRK3M.SYU -" is the same
+ * spelling as "XLRK3M.SYU").
+ */
+const spellingShape = (value: string): SpellingShape => {
+  const positions: number[] = [];
+  let content = "";
+  for (const ch of value.normalize("NFKD").replace(COMBINING_MARKS_REGEX, "")) {
+    if (POSITIONAL_SEPARATOR_REGEX.test(ch)) {
+      if (positions[positions.length - 1] !== content.length) positions.push(content.length);
+    } else {
+      content += ch;
+    }
+  }
+  return {
+    content: content.toUpperCase(),
+    separators: positions.filter((pos) => pos > 0 && pos < content.length).join(","),
+  };
+};
+
+/** Separator positions only. Exported for tests and diagnostics. */
+export const partModelSeparatorSignature = (value: string): string => spellingShape(value).separators;
+
+/**
+ * True when two part numbers are the same product written two ways: identical
+ * meaningful content, and separators in the same places, differing only in WHICH
+ * separator character was used ('_' vs '-' vs a space).
+ *
+ * Callers may auto-match on this. When it is false but the cleaned keys still
+ * collide, the two may be genuinely different products, so ask the user.
+ */
+export const isSameProductSpelling = (a: string, b: string): boolean => {
+  if (!a || !b) return false;
+  const left = spellingShape(a);
+  const right = spellingShape(b);
+  // content already implies the cleaned keys match, since the cleaned key is
+  // content minus '.', '+' and '='.
+  return left.content === right.content && left.separators === right.separators;
+};

@@ -9,7 +9,7 @@ import { handleApiError, createErrorResponse } from "../../../../lib/errorHandle
 import { logger } from "../../../../lib/logger";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { validateRequest, positiveIntSchema, stringSchema, urlSchema, partModelNumberSchema } from "../../../../lib/validation";
-import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
+import { clearPartModelNumberUpper, isSameProductSpelling } from "../../../../lib/partModelNumber";
 import {
   applyBrandPattern,
   hasPatternConfig,
@@ -38,6 +38,11 @@ const createProductSchema = z.object({
   weblink: urlSchema,
   comments: stringSchema(2000),
   enabled: z.boolean().optional().default(true),
+  // Set by the client after the user confirms, in the duplicate dialog, that a
+  // product sharing this cleaned part number is a genuinely DIFFERENT product
+  // (e.g. Belden XDR8419-312W vs XDR8419-312-W). Without it, a collision is
+  // refused with 409 and the colliding rows are returned.
+  acknowledgeDuplicate: z.boolean().optional().default(false),
 }).strict(); // Reject unknown fields
 
 export async function POST(req: NextRequest) {
@@ -96,6 +101,73 @@ export async function POST(req: NextRequest) {
 
     const modelNumberCleared = toClearedPartModel(modelNumber);
     const partNumberCleared = toClearedPartModel(partNumber);
+
+    // Duplicate gate. Enforced HERE rather than in the modal: the warning in
+    // AddProductModal is advisory and can be clicked past, which is how the
+    // Adder ALIF1102 T / ALIF1102T pair was created by hand. Any client,
+    // script included, has to pass acknowledgeDuplicate to create a product
+    // whose cleaned part number already exists in the same brand.
+    if (partNumberCleared && !body.acknowledgeDuplicate) {
+      const dupRequest = pool.request();
+      dupRequest.input("BrandID", sql.Int, brandId);
+      dupRequest.input("PartNumberCleared", sql.NVarChar(255), partNumberCleared);
+      const dupResult = await dupRequest.query<{
+        ID: number;
+        PartNumber: string | null;
+        ModelNumber: string | null;
+        Description: string | null;
+        Enabled: boolean | null;
+      }>(`
+        SELECT TOP (10) p.ID, p.PartNumber, p.ModelNumber, p.Description, p.Enabled
+        FROM dbo.Products p
+        WHERE p.BrandID = @BrandID
+          AND p.PartNumberCleared = @PartNumberCleared
+          -- Only LIVE products block creation. Disabled rows include the 93
+          -- retired merge losers, which still hold their old part numbers; being
+          -- unable to create a product because a retired twin exists would be
+          -- wrong, and resolve/search ignore them too. Exact raw duplicates are
+          -- still caught by the global unique index on PartNumber.
+          AND ISNULL(p.Enabled, 1) = 1
+        ORDER BY p.ID
+      `);
+      const collisions = dupResult.recordset ?? [];
+      if (collisions.length > 0) {
+        logger.info("Product create blocked by cleaned part number collision", {
+          requestId,
+          endpoint: "/api/products/create",
+          method: "POST",
+          userId,
+          partNumber,
+          collisionIds: collisions.map((c) => c.ID),
+        });
+        return NextResponse.json(
+          {
+            ok: false,
+            error: collisions.length === 1
+              ? `This brand already has a product with the same part number once separators are ignored: "${collisions[0].PartNumber ?? ''}". Use that product, or confirm this is a different product.`
+              : `This brand already has ${collisions.length} products with the same part number once separators are ignored. Use one of them, or confirm this is a different product.`,
+            duplicateCleanedPartNumber: {
+              partNumber,
+              partNumberCleared,
+              // sameSpelling means the existing row differs only in which
+              // separator characters were used, so it is almost certainly the
+              // same product rather than a new one.
+              matches: collisions.map((c) => ({
+                id: c.ID,
+                partNumber: c.PartNumber,
+                modelNumber: c.ModelNumber,
+                description: c.Description,
+                // always true given the Enabled filter above; kept so the
+                // client shape stays stable if the filter is ever relaxed.
+                enabled: c.Enabled !== false,
+                sameSpelling: isSameProductSpelling(partNumber ?? "", c.PartNumber ?? ""),
+              })),
+            },
+          },
+          { status: 409 },
+        );
+      }
+    }
     const erpCode = body.erpCode;
     const description = body.description;
     const weblink = body.weblink;

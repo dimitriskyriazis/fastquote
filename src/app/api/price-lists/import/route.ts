@@ -11,7 +11,7 @@ import { getRequestId } from "../../../../lib/requestId";
 import { logAddAuditDetails } from "../../../../lib/mutationAudit";
 import { requirePermission } from "../../../../lib/authz";
 import { sweepScheduledPriceListReplacements } from "../../../../lib/priceListReplacementSweep";
-import { clearPartModelNumberUpper } from "../../../../lib/partModelNumber";
+import { clearPartModelNumberUpper, isSameProductSpelling } from "../../../../lib/partModelNumber";
 import {
   applyBrandPattern,
   hasPatternConfig,
@@ -793,6 +793,40 @@ const loadBrandPatternConfig = async (
   });
 };
 
+// Fetch same-brand products whose stored cleaned part number matches one of the
+// incoming cleaned keys. This is the guard that stops a supplier respelling from
+// minting a twin: Belden switching GP-12LDLD002MX to GP_12LDLD002MX created 82
+// duplicate products in one 2024/25 import, priced at exactly 2x.
+// The column is compared directly (it is indexed) - never wrapped in functions.
+const fetchProductsByClearedPartKeys = async (
+  pool: ConnectionPool,
+  clearedKeys: readonly string[],
+  brandId: number,
+) => {
+  if (clearedKeys.length === 0) return [] as ProductRow[];
+  const rows: ProductRow[] = [];
+  const chunks = chunkArray(clearedKeys, 900);
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+    const chunk = chunks[chunkIdx];
+    const request = pool.request();
+    request.input("brandId", sql.Int, brandId);
+    const paramNames = chunk.map((val, idx) => {
+      const param = `pnc_${chunkIdx}_${idx}`;
+      request.input(param, sql.NVarChar(255), val);
+      return `@${param}`;
+    });
+    const result = await request.query(`
+      SELECT ID, PartNumber, ModelNumber, BrandID, Description
+      FROM dbo.Products
+      WHERE BrandID = @brandId
+        AND ISNULL(Enabled, 1) = 1
+        AND PartNumberCleared IN (${paramNames.join(", ")})
+    `);
+    rows.push(...((result.recordset ?? []) as ProductRow[]));
+  }
+  return rows;
+};
+
 const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPriceListRow[], brandId: number) => {
   const partKeys = Array.from(
     new Set(
@@ -817,15 +851,29 @@ const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPric
     ),
   );
 
-  if (partKeys.length === 0 && modelKeys.length === 0 && legacyKeys.length === 0) return [] as ProductRow[];
+  if (partKeys.length === 0 && modelKeys.length === 0 && legacyKeys.length === 0) {
+    return { products: [] as ProductRow[], clearedIds: [] as number[] };
+  }
 
-  const [partProducts, modelProducts, legacyProducts] = await Promise.all([
+  const clearedPartKeys = Array.from(
+    new Set(
+      parsedRows
+        .map((row) => (row.partNumber ? clearPartModelNumberUpper(row.partNumber) : null))
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+
+  const [partProducts, modelProducts, legacyProducts, clearedProducts] = await Promise.all([
     fetchProductsByKeys(pool, partKeys, "PartNumber", brandId),
     fetchProductsByKeys(pool, modelKeys, "ModelNumber", brandId),
     fetchProductsByKeys(pool, legacyKeys, "PartNumber", brandId),
+    fetchProductsByClearedPartKeys(pool, clearedPartKeys, brandId),
   ]);
 
-  const allProducts = [...partProducts, ...modelProducts, ...legacyProducts];
+  const allProducts = [...partProducts, ...modelProducts, ...legacyProducts, ...clearedProducts];
+  // Ids from the Enabled-filtered cleared fetch, so the caller can restrict the
+  // cleaned-key index to live products.
+  const clearedIds = clearedProducts.map((p) => p.ID);
   const seen = new Set<number>();
   const uniqueProducts: ProductRow[] = [];
   for (const product of allProducts) {
@@ -834,7 +882,7 @@ const loadExistingProducts = async (pool: ConnectionPool, parsedRows: ParsedPric
     uniqueProducts.push(product);
   }
 
-  return uniqueProducts;
+  return { products: uniqueProducts, clearedIds };
 };
 
 const createProduct = async (
@@ -1006,6 +1054,10 @@ export async function POST(req: NextRequest) {
     // committing. The user then re-submits with acknowledgeSwapWarnings=1 and,
     // optionally, swapCorrections=[rowIndex,...] for the rows to auto-swap back.
     const acknowledgeSwapWarnings = normalizeBool(formData.get("acknowledgeSwapWarnings")) === true;
+    // Set on re-submit once the user has reviewed rows whose cleaned part number
+    // collides with a differently-spelled existing product and confirmed they
+    // are different products.
+    const acknowledgeClearedCollisions = normalizeBool(formData.get("acknowledgeClearedCollisions")) === true;
     const swapCorrections: number[] = (() => {
       const raw = formData.get("swapCorrections");
       if (typeof raw !== "string") return [];
@@ -1194,7 +1246,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const existingProducts = await loadExistingProducts(pool, parsedRows, brandId!);
+    const { products: existingProducts, clearedIds: clearedProductIds } =
+      await loadExistingProducts(pool, parsedRows, brandId!);
 
     const byPartNumber = new Map<string, ProductRow>();
     const byModelNumber = new Map<string, ProductRow>();
@@ -1205,6 +1258,49 @@ export async function POST(req: NextRequest) {
       if (partKey && !byPartNumber.has(partKey)) byPartNumber.set(partKey, product);
       if (modelKey && !byModelNumber.has(modelKey)) byModelNumber.set(modelKey, product);
     });
+
+    // Cleaned-part-number index. Several existing products can share a cleaned
+    // key (Belden XDR8419-312W vs XDR8419-312-W are different products), so this
+    // maps to a LIST and the decision is made per incoming row below.
+    // Only LIVE products. existingProducts also holds rows from the three
+    // fetchProductsByKeys calls, which have NO Enabled filter, so without this
+    // the deliberate ISNULL(Enabled,1)=1 on fetchProductsByClearedPartKeys is
+    // defeated and a retired merge loser could capture an incoming row.
+    const liveProductIds = new Set(
+      clearedProductIds.length > 0 ? clearedProductIds : [],
+    );
+    const byClearedPartKey = new Map<string, ProductRow[]>();
+    existingProducts.forEach((product: ProductRow) => {
+      if (!liveProductIds.has(product.ID)) return;
+      const key = product.PartNumber ? clearPartModelNumberUpper(product.PartNumber) : null;
+      if (!key) return;
+      const list = byClearedPartKey.get(key);
+      if (list) {
+        if (!list.some((p) => p.ID === product.ID)) list.push(product);
+      } else {
+        byClearedPartKey.set(key, [product]);
+      }
+    });
+
+    type ClearedLookup =
+      | { kind: "none" }
+      // Same product written another way: separators sit in the same places, so
+      // the import may silently match it and just update its prices.
+      | { kind: "sameProduct"; product: ProductRow }
+      // Shares a cleaned key but the separators are laid out differently, so it
+      // may be a genuinely different product. Needs a human.
+      | { kind: "ask"; products: ProductRow[] };
+
+    const lookupCleared = (partNumber: string | null | undefined): ClearedLookup => {
+      if (!partNumber) return { kind: "none" };
+      const key = clearPartModelNumberUpper(partNumber);
+      if (!key) return { kind: "none" };
+      const candidates = byClearedPartKey.get(key);
+      if (!candidates || candidates.length === 0) return { kind: "none" };
+      const spellingMatches = candidates.filter((c) => isSameProductSpelling(partNumber, c.PartNumber ?? ""));
+      if (spellingMatches.length === 1) return { kind: "sameProduct", product: spellingMatches[0] };
+      return { kind: "ask", products: candidates };
+    };
 
     // Build a map from legacy part number -> existing product (keyed by existing PartNumber)
     // This allows matching when the import has a legacyPartNumber column
@@ -1285,6 +1381,10 @@ export async function POST(req: NextRequest) {
         const legacyKey = normalizeKey(row.legacyPartNumber);
 
         const sameBrandPartMatch = byPartNumber.has(partKey);
+        // A respelling that will match an existing product is not an insert, so
+        // it can never violate the global unique index on PartNumber.
+        const clearedSameProduct = !sameBrandPartMatch
+          && lookupCleared(row.partNumber).kind === "sameProduct";
         const legacyMatch = legacyKey ? byLegacyPartNumber.has(legacyKey) : false;
         let modelMatch = false;
         if (!sameBrandPartMatch && !legacyMatch && modelKey && byModelNumber.has(modelKey)) {
@@ -1292,7 +1392,7 @@ export async function POST(req: NextRequest) {
           const candidatePartKey = normalizeKey(candidate?.PartNumber);
           modelMatch = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
         }
-        if (sameBrandPartMatch || legacyMatch || modelMatch) return;
+        if (sameBrandPartMatch || clearedSameProduct || legacyMatch || modelMatch) return;
 
         const collision = globalCollisions.get(partKey);
         if (collision) {
@@ -1377,8 +1477,11 @@ export async function POST(req: NextRequest) {
         // the mirror a DIFFERENT product (so a clean re-import never warns about
         // itself) and to know whether a reversed duplicate ALREADY exists.
         let normalMatchId: number | null = null;
+        const swapCleared = partKey && !byPartNumber.has(partKey) ? lookupCleared(row.partNumber) : null;
         if (partKey && byPartNumber.has(partKey)) {
           normalMatchId = byPartNumber.get(partKey)?.ID ?? null;
+        } else if (swapCleared && swapCleared.kind === "sameProduct") {
+          normalMatchId = swapCleared.product.ID;
         } else if (legacyKey && byLegacyPartNumber.has(legacyKey)) {
           normalMatchId = byLegacyPartNumber.get(legacyKey)?.ID ?? null;
         } else if (modelKey && byModelNumber.has(modelKey)) {
@@ -1435,6 +1538,61 @@ export async function POST(req: NextRequest) {
     }
 
     // Load previous prices for import summary comparison
+    // Pre-flight: rows whose cleaned part number collides with an existing
+    // product spelled differently enough that it may be a DIFFERENT product
+    // (Belden XDR8419-312W vs XDR8419-312-W). Refuse before the transaction so
+    // the user can decide; dropping them mid-import would finalize a price list
+    // silently missing those products, with no way to complete the import.
+    if (!acknowledgeClearedCollisions) {
+      type ClearedCollision = {
+        rowIndex: number;
+        partNumber: string;
+        modelNumber: string | null;
+        description: string | null;
+        listPrice: number | null;
+        existing: Array<{ id: number; partNumber: string | null; description: string | null }>;
+      };
+      const clearedCollisions: ClearedCollision[] = [];
+      parsedRows.forEach((row, idx) => {
+        const partKey = normalizeKey(row.partNumber);
+        if (!partKey || byPartNumber.has(partKey)) return;
+        // An explicit legacy identification, or a model match, is a stronger
+        // signal than a separator-position guess: let those tiers handle it.
+        const legacyKey = normalizeKey(row.legacyPartNumber);
+        if (legacyKey && byLegacyPartNumber.has(legacyKey)) return;
+        const modelKey = normalizeKey(row.modelNumber);
+        if (modelKey && byModelNumber.has(modelKey)) {
+          const candidatePartKey = normalizeKey(byModelNumber.get(modelKey)?.PartNumber);
+          if (candidatePartKey != null && partKey === candidatePartKey) return;
+        }
+        const lookup = lookupCleared(row.partNumber);
+        if (lookup.kind !== "ask") return;
+        clearedCollisions.push({
+          rowIndex: idx,
+          partNumber: row.partNumber!.trim(),
+          modelNumber: row.modelNumber,
+          description: row.description,
+          listPrice: row.listPrice,
+          existing: lookup.products.map((c) => ({
+            id: c.ID,
+            partNumber: c.PartNumber,
+            description: c.Description,
+          })),
+        });
+      });
+
+      if (clearedCollisions.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `${clearedCollisions.length} row${clearedCollisions.length > 1 ? "s" : ""} have a part number that matches an existing product of this brand once separators are ignored, but spelled differently. Confirm whether each is the same product or a new one.`,
+            clearedPartNumberCollisions: clearedCollisions,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     const previousPriceMap = new Map<number, { listPrice: number | null; costPrice: number | null }>();
     {
       let comparePriceListId = previousPriceListId;
@@ -1607,6 +1765,12 @@ export async function POST(req: NextRequest) {
       } // end !isAppendMode branch
 
       const createdProducts = new Map<string, number>();
+      // A single file carrying BOTH spellings of one part must create one product.
+      // Keyed by cleaned key -> the part number as first written, so a LATER row
+      // is only folded in when it is the same spelling (separators in the same
+      // places). Two genuinely different products in one file that merely share a
+      // cleaned key must stay two products.
+      const createdByClearedKey = new Map<string, { productId: number; partNumber: string }>();
       const seenProducts = new Set<number>();
       let createdProductCount = 0;
       let matchedProductCount = 0;
@@ -1635,6 +1799,14 @@ export async function POST(req: NextRequest) {
         description: string | null;
         listPrice: number | null;
         reason: string;
+      }> = [];
+
+      // Rows matched to an existing product by the cleaned part number rather
+      // than an exact one: surfaced so a supplier respelling is visible.
+      const normalizedMatchDetails: Array<{
+        filePartNumber: string | null;
+        matchedPartNumber: string | null;
+        productId: number;
       }> = [];
 
       let legacyUpdatedCount = 0;
@@ -1671,10 +1843,25 @@ export async function POST(req: NextRequest) {
         let existingProduct: ProductRow | undefined;
         let matchedByLegacy = false;
 
+        const clearedLookup = partKey && !byPartNumber.has(partKey)
+          ? lookupCleared(row.partNumber)
+          : ({ kind: "none" } as ClearedLookup);
+
         if (partKey && byPartNumber.has(partKey)) {
           existingProduct = byPartNumber.get(partKey);
           productId = existingProduct?.ID ?? null;
           isExistingProduct = productId != null;
+        } else if (clearedLookup.kind === "sameProduct") {
+          // Supplier respelled the part number (GP-... -> GP_...). Same product,
+          // so update it rather than creating a twin.
+          existingProduct = clearedLookup.product;
+          productId = existingProduct.ID;
+          isExistingProduct = true;
+          normalizedMatchDetails.push({
+            filePartNumber: row.partNumber,
+            matchedPartNumber: existingProduct.PartNumber,
+            productId,
+          });
         } else if (legacyKey && byLegacyPartNumber.has(legacyKey)) {
           // Match by legacy part number: the existing product's current PartNumber matches the legacy key
           existingProduct = byLegacyPartNumber.get(legacyKey);
@@ -1694,8 +1881,12 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        const rowClearedKey = row.partNumber ? clearPartModelNumberUpper(row.partNumber) : null;
         if (!productId && partKey && createdProducts.has(partKey)) {
           productId = createdProducts.get(partKey) ?? null;
+        } else if (!productId && rowClearedKey && createdByClearedKey.has(rowClearedKey)
+          && isSameProductSpelling(row.partNumber ?? "", createdByClearedKey.get(rowClearedKey)!.partNumber)) {
+          productId = createdByClearedKey.get(rowClearedKey)!.productId;
         } else if (!productId && modelKey && !partKey && createdProducts.has(modelKey)) {
           productId = createdProducts.get(modelKey) ?? null;
         }
@@ -1839,6 +2030,17 @@ export async function POST(req: NextRequest) {
           createdProducts.set(partKey, productId);
           if (!byPartNumber.has(partKey)) byPartNumber.set(partKey, productRecord);
         }
+        if (rowClearedKey && !createdByClearedKey.has(rowClearedKey)) {
+          createdByClearedKey.set(rowClearedKey, { productId, partNumber: row.partNumber ?? "" });
+        }
+        if (rowClearedKey) {
+          const existingList = byClearedPartKey.get(rowClearedKey);
+          if (existingList) {
+            if (!existingList.some((p) => p.ID === productId)) existingList.push(productRecord);
+          } else {
+            byClearedPartKey.set(rowClearedKey, [productRecord]);
+          }
+        }
         if (modelKey) {
           createdProducts.set(modelKey, productId);
           if (!byModelNumber.has(modelKey)) byModelNumber.set(modelKey, productRecord);
@@ -1929,6 +2131,7 @@ export async function POST(req: NextRequest) {
         modelNumberMismatches,
         priceChanges: priceChangeDetails,
         newProducts: newProductDetails,
+        normalizedMatches: normalizedMatchDetails,
         skippedRowDetails,
         allCapsProductIds,
         allCapsDescriptionCount: allCapsProductIds.length,

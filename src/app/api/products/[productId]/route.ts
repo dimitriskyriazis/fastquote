@@ -8,7 +8,7 @@ import { handleApiError, createErrorResponse } from '../../../../lib/errorHandle
 import { logger } from '../../../../lib/logger';
 import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { logEditAuditDetails, type FieldChange } from '../../../../lib/mutationAudit';
-import { clearPartModelNumberUpper } from '../../../../lib/partModelNumber';
+import { clearPartModelNumberUpper, isSameProductSpelling } from '../../../../lib/partModelNumber';
 import {
   validateParams,
   validateRequest,
@@ -53,6 +53,10 @@ const updateProductSchema = z.object({
   enabled: booleanSchema,
   isService: booleanSchema,
   serviceType: stringSchema(20).optional(),
+  // Same contract as /api/products/create: set once the user has confirmed, in
+  // the duplicate dialog, that a product sharing this cleaned part number is a
+  // genuinely different product.
+  acknowledgeDuplicate: z.boolean().optional().default(false),
 }).strict().refine((data) => (
   data.partNumber !== undefined
   || data.modelNumber !== undefined
@@ -217,6 +221,58 @@ export async function PATCH(
       value: unknown;
       type: SqlInputType;
     }> = [];
+
+    // Editing a part number can walk around the create-time duplicate gate, so
+    // the same check applies here. Only when the part number actually changes,
+    // and only against OTHER live products of the same brand.
+    if (body.partNumber !== undefined && !body.acknowledgeDuplicate) {
+      const newCleared = toClearedPartModel(body.partNumber);
+      if (newCleared) {
+        const dupPool = await getPool();
+        const dupRequest = dupPool.request();
+        dupRequest.input('ProductID', sql.Int, normalized);
+        dupRequest.input('PartNumberCleared', sql.NVarChar(255), newCleared);
+        dupRequest.input('BrandID', sql.Int, body.brandId ?? null);
+        const dupResult = await dupRequest.query<{
+          ID: number;
+          PartNumber: string | null;
+          ModelNumber: string | null;
+          Description: string | null;
+        }>(`
+          SELECT TOP (10) p.ID, p.PartNumber, p.ModelNumber, p.Description
+          FROM dbo.Products p
+          WHERE p.ID <> @ProductID
+            AND p.PartNumberCleared = @PartNumberCleared
+            AND ISNULL(p.Enabled, 1) = 1
+            AND p.BrandID = ISNULL(@BrandID, (SELECT BrandID FROM dbo.Products WHERE ID = @ProductID))
+          ORDER BY p.ID
+        `);
+        const collisions = dupResult.recordset ?? [];
+        if (collisions.length > 0) {
+          return NextResponse.json(
+            {
+              ok: false,
+              error: collisions.length === 1
+                ? `This brand already has a product with the same part number once separators are ignored: "${collisions[0].PartNumber ?? ''}". Use that product, or confirm this is a different product.`
+                : `This brand already has ${collisions.length} products with the same part number once separators are ignored.`,
+              duplicateCleanedPartNumber: {
+                partNumber: body.partNumber,
+                partNumberCleared: newCleared,
+                matches: collisions.map((c) => ({
+                  id: c.ID,
+                  partNumber: c.PartNumber,
+                  modelNumber: c.ModelNumber,
+                  description: c.Description,
+                  enabled: true,
+                  sameSpelling: isSameProductSpelling(body.partNumber ?? '', c.PartNumber ?? ''),
+                })),
+              },
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
 
     if (body.partNumber !== undefined) {
       updates.push({ column: 'PartNumber', param: 'PartNumber', value: body.partNumber, type: sql.NVarChar(255) });
