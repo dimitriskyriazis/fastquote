@@ -152,8 +152,8 @@ export default function RecentOffersSection() {
           {offersToRender.map((offer) => {
             const encodedId = encodeURIComponent(offer.id);
             const descriptionValue = descriptionOverrides[offer.id] ?? offer.description?.trim();
-            const fallbackDescription = offer.label.includes(" – ")
-              ? offer.label.split(" – ")[0].trim()
+            const fallbackDescription = offer.label.includes(" - ")
+              ? offer.label.split(" - ")[0].trim()
               : offer.label.trim();
             const descriptionOnly = descriptionValue || fallbackDescription;
             return (

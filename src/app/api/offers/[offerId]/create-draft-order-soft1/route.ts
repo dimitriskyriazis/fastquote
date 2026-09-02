@@ -297,7 +297,7 @@ function requireIncludeOptions(
     return {
       ok: false,
       error:
-        `This offer has ${info.optionLineCount} option line(s). Choose whether they go on the order in the Options step before continuing — reload the page if you do not see that step.`,
+        `This offer has ${info.optionLineCount} option line(s). Choose whether they go on the order in the Options step before continuing. Reload the page if you do not see that step.`,
     };
   }
   return { ok: true, includeOptions: body.includeOptions };

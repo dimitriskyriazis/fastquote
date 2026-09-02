@@ -99,7 +99,7 @@ const resolvePriceListRowLabel = (row: PriceListProductRowGrid | null | undefine
     typeof value === "string" ? value.trim() : value ? String(value) : "";
   const partNumber = normalize(row.PartNumber);
   const description = normalize(row.Description);
-  if (partNumber && description) return `${partNumber} – ${description}`;
+  if (partNumber && description) return `${partNumber} - ${description}`;
   if (partNumber) return partNumber;
   if (description) return description;
   return fallback;

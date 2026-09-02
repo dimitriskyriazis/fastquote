@@ -197,11 +197,15 @@ const osaDistance = (a: string, b: string, max: number): number => {
  * live example, where the transposed pair of letters was the only thing keeping
  * two records of one company from being offered as a merge.
  */
-export const tokensMatch = (a: string, b: string): boolean => {
+export const tokensMatch = (a: string, b: string, maxEdits = Number.POSITIVE_INFINITY): boolean => {
   if (a === b) return true;
   const shorter = Math.min(a.length, b.length);
   if (shorter < MIN_FUZZY_TOKEN_LENGTH) return false;
-  const budget = editBudget(shorter);
+  // `maxEdits` lets a caller tighten the budget without changing the rule
+  // here: lib/similarNames passes 1, because a warning shown while typing
+  // cannot afford the double-edit matches (ΑΘΗΝΑΙΩΝ~ΘΗΒΑΙΩΝ) a reviewed merge
+  // suggestion can.
+  const budget = Math.min(editBudget(shorter), maxEdits);
   if (Math.abs(a.length - b.length) > budget) return false;
   return osaDistance(a, b, budget) <= budget;
 };
@@ -464,7 +468,7 @@ const enrich = (customer: DuplicateScanCustomer): Enriched => {
  * 'ΤΕΧΝΙΚΗ' (= "technical"). Both scored a perfect 1.0 on a single generic word.
  * Two or more shared words need no such test — the combination is the evidence.
  */
-const RARE_TOKEN_MAX_DF = 8;
+export const RARE_TOKEN_MAX_DF = 8;
 
 /**
  * How widely a word is used across the customer base. Defaults to treating
@@ -659,7 +663,7 @@ const UNCORROBORATED_MARKERS = [
 ] as const;
 
 const GENERIC_NAME_REASON =
-  'identical name repeated across many records, with nothing else in common — verify before merging';
+  'identical name repeated across many records, with nothing else in common; verify before merging';
 
 const pairKey = (a: number, b: number): string => (a < b ? `${a}:${b}` : `${b}:${a}`);
 
@@ -816,8 +820,8 @@ export const findDuplicateGroups = (
     linkHard(
       bucket,
       `same tax id (${taxKey})`,
-      `tax id ${taxKey} is shared by ${bucket.length} customers — likely a placeholder, verify`,
-      () => `same tax id (${taxKey}) but the names have nothing in common — one organisation`
+      `tax id ${taxKey} is shared by ${bucket.length} customers; likely a placeholder, verify`,
+      () => `same tax id (${taxKey}) but the names have nothing in common; one organisation`
         + ' with several accounts looks exactly like this, so check before merging',
     );
   }
@@ -825,8 +829,8 @@ export const findDuplicateGroups = (
     linkHard(
       bucket,
       `same ERP id (${erpId})`,
-      `ERP id ${erpId} is shared by ${bucket.length} customers — verify`,
-      () => `same ERP id (${erpId}) but the names have nothing in common — verify before merging`,
+      `ERP id ${erpId} is shared by ${bucket.length} customers; verify`,
+      () => `same ERP id (${erpId}) but the names have nothing in common; verify before merging`,
     );
   }
   for (const [, bucket] of byName) {

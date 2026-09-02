@@ -305,8 +305,8 @@ function renderEmail(
     : '';
   const bakedIntoPrices = discount?.allocation === 'lines';
   const discountAllocationLabel = bakedIntoPrices
-    ? 'Ενσωματώθηκε στις τιμές των ειδών — οι τιμές του πίνακα είναι μετά την έκπτωση.'
-    : 'Καταχωρήθηκε ως συνολική έκπτωση παραστατικού (discval) — οι τιμές του πίνακα είναι οι τιμές της προσφοράς.';
+    ? 'Ενσωματώθηκε στις τιμές των ειδών. Οι τιμές του πίνακα είναι μετά την έκπτωση.'
+    : 'Καταχωρήθηκε ως συνολική έκπτωση παραστατικού (discval). Οι τιμές του πίνακα είναι οι τιμές της προσφοράς.';
   // ── Option lines ─────────────────────────────────────────────────────────
   const optionsInfo = results.options ?? null;
   const showOptions = !!optionsInfo?.hasOptions;
@@ -315,8 +315,8 @@ function renderEmail(
       <p style="margin-top: 16px;">
         <strong>Γραμμές επιλογών (options):</strong>
         ${optionsInfo.includeOptions
-          ? `συμπεριλήφθηκαν στην προπαραγγελία — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`
-          : `ΔΕΝ συμπεριλήφθηκαν στην προπαραγγελία — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`}
+          ? `συμπεριλήφθηκαν στην προπαραγγελία, ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`
+          : `ΔΕΝ συμπεριλήφθηκαν στην προπαραγγελία, ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')}, αξία ${formatMoney(optionsInfo.optionValue)}.`}
       </p>
     `
     : '';
@@ -333,8 +333,8 @@ function renderEmail(
           αλλά το παραστατικό στο Soft1 δεν την έχει${discount.verification?.foundValue != null
             ? ` (βρέθηκε ${formatMoney(discount.verification.foundValue)})`
             : ''}.
-          Η προπαραγγελία είναι στην πλήρη αξία ${formatMoney(discount.subtotalBeforeDiscount)} —
-          καταχωρήστε την έκπτωση χειροκίνητα ή ξανα-εκδώστε την προπαραγγελία με την έκπτωση στις τιμές των ειδών.
+          Η προπαραγγελία είναι στην πλήρη αξία ${formatMoney(discount.subtotalBeforeDiscount)}.
+          Καταχωρήστε την έκπτωση χειροκίνητα ή ξανα-εκδώστε την προπαραγγελία με την έκπτωση στις τιμές των ειδών.
         </p>
       </div>
     `
@@ -569,7 +569,7 @@ function renderEmail(
       ? [
           '',
           `Γραμμές επιλογών (options): ${optionsInfo.includeOptions ? 'συμπεριλήφθηκαν' : 'ΔΕΝ συμπεριλήφθηκαν'}`
-            + ` — ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')},`
+            + `, ${optionsInfo.optionLineCount} ${pl(optionsInfo.optionLineCount, 'γραμμή', 'γραμμές')},`
             + ` αξία ${formatMoney(optionsInfo.optionValue)}`,
         ]
       : []),

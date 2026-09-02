@@ -136,8 +136,8 @@ const resolveProductLabel = (row: Record<string, unknown> | null | undefined, fa
   const model = typeof row.ModelNumber === "string" ? row.ModelNumber.trim() : "";
   const part = typeof row.PartNumber === "string" ? row.PartNumber.trim() : "";
   const segments = [part, model].filter((segment) => segment.length > 0);
-  const prefix = brand.length > 0 ? `${brand} – ` : "";
-  if (segments.length > 0) return `${prefix}${segments.join(" – ")}`;
+  const prefix = brand.length > 0 ? `${brand} - ` : "";
+  if (segments.length > 0) return `${prefix}${segments.join(" - ")}`;
   if (brand.length > 0) return brand;
   const description = typeof row.Description === "string" ? row.Description.trim() : "";
   if (description.length > 0) return description;

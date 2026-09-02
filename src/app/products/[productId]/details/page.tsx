@@ -19,7 +19,7 @@ export default function Page() {
   } catch {
     decodedId = rawId;
   }
-  const headingText = `${buildHeading(decodedId)} – Details`;
+  const headingText = `${buildHeading(decodedId)} - Details`;
   const encodedId = encodeURIComponent(decodedId);
 
   return (

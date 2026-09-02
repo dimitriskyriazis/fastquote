@@ -1593,7 +1593,7 @@ export default function ExportOfferProductsModal({ onClose, onRequestRows, templ
       }
       if (missingNotes.length > 0) {
         showToastMessage(
-          `Could not fill ${missingNotes.join('; ')} — please fill manually.`,
+          `Could not fill ${missingNotes.join('; ')}. Please fill manually.`,
           'error',
         );
       }

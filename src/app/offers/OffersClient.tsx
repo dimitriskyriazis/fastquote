@@ -145,7 +145,7 @@ const resolveOfferRowLabel = (
     typeof value === 'string' ? value.trim() : value ? String(value) : '';
   const description = normalize(row.Description);
   const title = normalize(row.Title);
-  if (description && title) return `${description} – ${title}`;
+  if (description && title) return `${description} - ${title}`;
   if (description) return description;
   if (title) return title;
   return fallback;
@@ -332,7 +332,7 @@ export default function OffersClient() {
   }, [handlePivotFilterChange]);
 
   const dateRangeLabel = pivotFilters.from && pivotFilters.to
-    ? `${isoToDMY(pivotFilters.from)} – ${isoToDMY(pivotFilters.to)}`
+    ? `${isoToDMY(pivotFilters.from)} - ${isoToDMY(pivotFilters.to)}`
     : pivotFilters.from
       ? `From ${isoToDMY(pivotFilters.from)}`
       : pivotFilters.to

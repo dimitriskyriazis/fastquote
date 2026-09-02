@@ -63,7 +63,7 @@ const resolvePriceListRowLabel = (
     typeof value === "string" ? value.trim() : value ? String(value) : "";
   const name = normalize(row.Name);
   const supplier = normalize(row.SupplierName);
-  if (name && supplier) return `${name} – ${supplier}`;
+  if (name && supplier) return `${name} - ${supplier}`;
   if (name) return name;
   if (supplier) return supplier;
   return fallback;

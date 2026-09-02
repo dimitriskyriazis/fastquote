@@ -1763,7 +1763,7 @@ export default function MatchRequestedProductsModal({
                 {farnellAmbiguousPartNumber
                   ? <> share manufacturer part no. <strong>{farnellAmbiguousPartNumber}</strong></>
                   : <> share this manufacturer part number</>}
-                {' '}— prices differ per order code, so Populate did not pick one.
+                {'. '}Prices differ per order code, so Populate did not pick one.
                 Choose the right listing from the pinned rows below.
               </div>
             ) : null}

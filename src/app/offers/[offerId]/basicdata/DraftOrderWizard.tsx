@@ -1791,7 +1791,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
           {offerDiscount.mode === 'abs' && (
             <div className={styles.discountNote}>
               The amount is spread proportionally across the offer, so this pre-order carries only the
-              share that belongs to its {lineCount} product line(s) — services are ordered separately.
+              share that belongs to its {lineCount} product line(s). Services are ordered separately.
             </div>
           )}
         </div>
@@ -1985,7 +1985,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
               <div>
                 <strong>{formatDiscountValue(summaryDiscount)}</strong>
                 {summaryDiscount.mode === 'abs' && <> ({percentFmt.format(summaryDiscount.fractionPct)}% of net)</>}
-                {' — '}
+                {': '}
                 {discountBakedIn
                   ? 'taken off every unit price below; no discount on the order header.'
                   : 'sent on the order header as the total document discount; unit prices below are as quoted.'}
@@ -2117,7 +2117,7 @@ export default function DraftOrderWizard({ offerId, open, onClose }: Props) {
             {executionResult.discount.allocation === 'lines'
               ? 'applied to the product prices'
               : 'sent as the document discount'}
-            {' '}&mdash; order value {formatCurrency(executionResult.discount.subtotalAfterDiscount)}
+            {', '}order value {formatCurrency(executionResult.discount.subtotalAfterDiscount)}
           </div>
         )}
         {(() => {

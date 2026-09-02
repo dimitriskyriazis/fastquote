@@ -6,6 +6,10 @@ export type DuplicateMatch = {
   taxId?: string | null;
   partNumber?: string | null;
   modelNumber?: string | null;
+  /** The record exists but is disabled; still worth knowing before creating another. */
+  disabled?: boolean;
+  /** Customers: the official name the match was made on, when not the name itself. */
+  officialName?: string | null;
 };
 
 export type DuplicateWarningGroup = {

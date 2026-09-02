@@ -339,6 +339,7 @@ export async function POST(req: NextRequest) {
         WindowsUserName: entry.WindowsUserName,
         Role1: roles[0] ?? "",
         Role2: roles[1] ?? "",
+        Role3: roles[2] ?? "",
         Enabled: enabledText,
       };
     });

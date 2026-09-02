@@ -93,6 +93,9 @@ const normalizeRequiredString = (value: unknown): string | null => {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 };
 
+const MAX_USER_ROLES = 3;
+const ROLE_FIELDS = new Set(["Role1", "Role2", "Role3"]);
+
 const normalizeRoleNames = (value: unknown): string[] => {
   const raw = Array.isArray(value) ? value : [];
   const deduped = new Map<string, string>();
@@ -183,7 +186,7 @@ const replaceUserRoles = async (
   userId: number,
   roleNames: string[],
 ) => {
-  const normalized = normalizeRoleNames(roleNames).slice(0, 2);
+  const normalized = normalizeRoleNames(roleNames).slice(0, MAX_USER_ROLES);
   if (normalized.length === 0) {
     throw new UserUpdateError("At least one role is required.");
   }
@@ -438,7 +441,7 @@ export async function PATCH(req: NextRequest) {
         const field = typeof entry?.field === "string" ? entry.field : null;
         const roles = normalizeRoleNames(entry?.roles);
 
-        if (roles.length > 0 || field === "Role1" || field === "Role2") {
+        if (roles.length > 0 || ROLE_FIELDS.has(field ?? "")) {
           const effectiveRoles = roles.length > 0 ? roles : normalizeRoleNames([entry?.value]);
           if (effectiveRoles.length === 0) {
             throw new UserUpdateError("At least one role is required.");

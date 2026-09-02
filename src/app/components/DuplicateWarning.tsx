@@ -36,14 +36,20 @@ export default function DuplicateWarning({ warnings }: Props) {
             {group.matches.map((match) => (
               <li key={match.id} className={styles.matchItem}>
                 <span className={styles.matchName}>{match.name}</span>
+                {match.officialName ? (
+                  <span className={styles.matchDetail}> (official name: {match.officialName})</span>
+                ) : null}
+                {match.disabled ? (
+                  <span className={styles.matchDetail}> (disabled)</span>
+                ) : null}
                 {match.taxId ? (
-                  <span className={styles.matchDetail}> &mdash; Tax ID: {match.taxId}</span>
+                  <span className={styles.matchDetail}> (Tax ID: {match.taxId})</span>
                 ) : null}
                 {match.partNumber ? (
-                  <span className={styles.matchDetail}> &mdash; PN: {match.partNumber}</span>
+                  <span className={styles.matchDetail}> (PN: {match.partNumber})</span>
                 ) : null}
                 {match.modelNumber ? (
-                  <span className={styles.matchDetail}> &mdash; MN: {match.modelNumber}</span>
+                  <span className={styles.matchDetail}> (MN: {match.modelNumber})</span>
                 ) : null}
               </li>
             ))}

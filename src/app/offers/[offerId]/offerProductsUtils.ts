@@ -1329,7 +1329,7 @@ export const resolveRowLabel = (row: Record<string, unknown> | null | undefined,
   const normalize = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
   const partNumber = normalize(partNumberRaw);
   const description = normalize(descriptionRaw);
-  if (partNumber && description) return `${partNumber} – ${description}`;
+  if (partNumber && description) return `${partNumber} - ${description}`;
   if (partNumber) return partNumber;
   if (description) return description;
   const brand = normalize(brandRaw);

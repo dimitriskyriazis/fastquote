@@ -83,7 +83,7 @@ export async function promptOfferExportRowTypes(
     items.push({
       key: 'nonPrintable',
       label: 'Non-printable comments and services',
-      hint: `${rowLabel(nonPrintableCount)} — internal lines that never reach the printed offer`,
+      hint: `${rowLabel(nonPrintableCount)}: internal lines that never reach the printed offer`,
       checked: prefs.nonPrintable,
     });
   }
@@ -91,7 +91,7 @@ export async function promptOfferExportRowTypes(
     items.push({
       key: 'options',
       label: 'Options',
-      hint: `${rowLabel(optionCount)} — optional lines (Item No ends in "o")`,
+      hint: `${rowLabel(optionCount)}: optional lines (Item No ends in "o")`,
       checked: prefs.options,
     });
   }

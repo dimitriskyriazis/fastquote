@@ -261,7 +261,7 @@ export async function runAddWebLinksFlow({
 
   const selected = await showWebLinkPreviewDialog(previewRows);
   if (selected === false) {
-    showToastMessage('Web link review cancelled — nothing was saved.', 'info');
+    showToastMessage('Web link review cancelled, nothing was saved.', 'info');
     return;
   }
 
@@ -272,7 +272,7 @@ export async function runAddWebLinksFlow({
         (r?.status === 'previewed' || r?.status === 'unverified') && !!r.webLink,
     );
   if (chosen.length === 0) {
-    showToastMessage('No links selected — nothing was saved.', 'info');
+    showToastMessage('No links selected, nothing was saved.', 'info');
     return;
   }
 
@@ -283,7 +283,7 @@ export async function runAddWebLinksFlow({
 
   if (applied.authFailed) {
     showToastMessage(
-      `Updated ${applied.updatedCount} web link(s) before the session expired — please log in again and retry the rest.`,
+      `Updated ${applied.updatedCount} web link(s) before the session expired. Please log in again and retry the rest.`,
       'error',
     );
   } else {

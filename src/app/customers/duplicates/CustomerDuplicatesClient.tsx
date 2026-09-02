@@ -331,7 +331,7 @@ export default function CustomerDuplicatesClient() {
                       </strong>
                       {secondaryIds.length > 0
                         ? `, merging ${secondaryIds.length} other${secondaryIds.length === 1 ? '' : 's'} in`
-                        : ' — nothing selected to merge'}
+                        : ', nothing selected to merge'}
                     </span>
                     <div className={styles.groupFootSpacer} />
                     <button
@@ -360,7 +360,7 @@ export default function CustomerDuplicatesClient() {
             <span className={styles.note}>
               {total === 0
                 ? '0'
-                : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${total}`}
+                : `${offset + 1}-${Math.min(offset + PAGE_SIZE, total)} of ${total}`}
             </span>
             <button
               type="button"
@@ -372,8 +372,8 @@ export default function CustomerDuplicatesClient() {
             </button>
             <div className={styles.footerSpacer} />
             <span className={styles.note}>
-              High = same tax id, ERP id or identical name. Medium and low are name similarity —
-              always open the records before merging.
+              High = same tax id, ERP id or identical name. Medium and low are name similarity.
+              Always open the records before merging.
             </span>
           </div>
         </div>

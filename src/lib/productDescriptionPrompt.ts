@@ -24,6 +24,7 @@ export const PRODUCT_DESCRIPTION_SYSTEM_PROMPT: string = [
   "- Explain what a spec means (e.g. 'for clear projection in confined spaces')",
   "- Add info not in the input or web context",
   "- Write the product's model number or part number anywhere in the output — always remove it, even if it appears at the start of the Current Description (including any ' - ' separator that follows it)",
+  "- Use an em dash or en dash (—, –) anywhere in the output; use a comma, colon, semicolon, or period instead",
   "",
   "FORMATTING RULES:",
   "- Start with the product type/category as the first term (e.g. 'PDU, ...' / 'Commercial ceiling speaker, ...' / 'Single-chip DLP projector, ...')",

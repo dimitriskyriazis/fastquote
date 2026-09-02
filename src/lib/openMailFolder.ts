@@ -83,7 +83,7 @@ export async function openMailFolder(mailId: number): Promise<void> {
 
   if (!exists) {
     showToastMessage(
-      `This list hasn't been exported yet — export it first to create the folder. ${pathNote}`,
+      `This list hasn't been exported yet. Export it first to create the folder. ${pathNote}`,
       "error",
     );
     return;

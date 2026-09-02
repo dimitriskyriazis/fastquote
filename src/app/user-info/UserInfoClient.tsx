@@ -172,7 +172,7 @@ export default function UserInfoClient() {
     <div key={def.id} className={styles.fieldBlock}>
       <label className={styles.fieldLabel}>{def.label}</label>
       <div className={styles.fieldReadonly}>
-        {getReadonlyValue(def) || '\u2014'}
+        {getReadonlyValue(def) || '-'}
       </div>
     </div>
   );
@@ -190,7 +190,7 @@ export default function UserInfoClient() {
             value={values[def.id] ?? ''}
             onChange={(e) => handleChange(def, e.target.value)}
           >
-            <option value="">{'\u2014'}</option>
+            <option value="">{'-'}</option>
             {salesDivisions.map((name) => (
               <option key={name} value={name}>{name}</option>
             ))}

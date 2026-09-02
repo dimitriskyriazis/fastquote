@@ -248,7 +248,7 @@ export default function FarnellPricingClient() {
                             key={`${tier.from}-${tier.to}`}
                             className={isMatched ? styles.matchedRow : undefined}
                           >
-                            <td>{isLast ? `${tier.from}+` : `${tier.from} – ${tier.to}`}</td>
+                            <td>{isLast ? `${tier.from}+` : `${tier.from} - ${tier.to}`}</td>
                             <td>
                               {formatPrice(tier.cost)}
                               {isMatched && (

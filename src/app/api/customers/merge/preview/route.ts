@@ -44,7 +44,7 @@ const buildWarnings = (params: {
 
   if (!(primary.Enabled === true || primary.Enabled === 1)) {
     warnings.push(
-      `The primary customer ${label(primary)} is disabled. The merge will not enable it — everything will be moved onto a disabled record.`,
+      `The primary customer ${label(primary)} is disabled. The merge will not enable it, so everything will be moved onto a disabled record.`,
     );
   }
 
@@ -53,7 +53,7 @@ const buildWarnings = (params: {
   secondaries.forEach((s) => { if (s.ERPID != null) erpIds.add(s.ERPID); });
   if (erpIds.size > 1) {
     warnings.push(
-      `These customers carry ${erpIds.size} different ERP ids (${Array.from(erpIds).join(', ')}). They may be separate accounts in Soft1 — only the value you pick survives here, and nothing is changed in the ERP.`,
+      `These customers carry ${erpIds.size} different ERP ids (${Array.from(erpIds).join(', ')}). They may be separate accounts in Soft1. Only the value you pick survives here, and nothing is changed in the ERP.`,
     );
   }
 
@@ -95,7 +95,7 @@ const buildWarnings = (params: {
     .filter((count) => count > 1).length;
   if (duplicateContactGroups > 0) {
     warnings.push(
-      `${duplicateContactGroups} contact${duplicateContactGroups === 1 ? ' looks' : 's look'} like they already exist on more than one of these customers. They are marked below — keep one of each.`,
+      `${duplicateContactGroups} contact${duplicateContactGroups === 1 ? ' looks' : 's look'} like they already exist on more than one of these customers. They are marked below, keep one of each.`,
     );
   }
 

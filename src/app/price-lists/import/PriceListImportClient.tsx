@@ -2401,7 +2401,7 @@ export default function PriceListImportClient({
                               })}
                             </div>
                             <div className={styles.helpText}>
-                              <strong>{activeSheet?.name || "Sheet"}</strong> — Choose columns for the fields below.
+                              <strong>{activeSheet?.name || "Sheet"}</strong>: Choose columns for the fields below.
                             </div>
                             <div className={styles.mappingGrid}>
                               {COLUMN_DISPLAY.filter((column) => !column.serviceOnly || values.isService).map((column) => {

@@ -37,7 +37,7 @@ const STATUS_BADGES: Record<WebLinkVerification | WebLinkStatus, Badge> = {
   family: { text: 'Family page only', color: '#9a3412', bg: '#fff7ed' },
   url: { text: 'URL match', color: '#92400e', bg: '#fffbeb' },
   // The site blocked automated verification — the link is a best guess; the user must open it.
-  unverified: { text: 'Unverified — open to check', color: '#b45309', bg: '#fff7ed' },
+  unverified: { text: 'Unverified, open to check', color: '#b45309', bg: '#fff7ed' },
   not_found: { text: 'No link found', color: '#6b7280', bg: 'transparent' },
   error: { text: 'Error', color: '#b91c1c', bg: 'transparent' },
 };
@@ -95,10 +95,10 @@ export const showWebLinkPreviewDialog = async (
     sub.textContent = [
       'Click a link to check the page.',
       unverifiedCount
-        ? '"Unverified" rows could not be checked automatically (the site blocked us) — open them to confirm.'
+        ? '"Unverified" rows could not be checked automatically (the site blocked us). Open them to confirm.'
         : '',
       weakCount
-        ? `${weakCount} row(s) start unchecked: a family page, or the same page found for several products — tick them only after checking.`
+        ? `${weakCount} row(s) start unchecked: a family page, or the same page found for several products. Tick them only after checking.`
         : '',
       'Uncheck anything you don’t want, then click "Apply". Nothing is saved until you apply.',
     ]

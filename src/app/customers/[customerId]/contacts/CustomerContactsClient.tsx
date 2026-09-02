@@ -669,7 +669,7 @@ export default function CustomerContactsClient({ customerId, customerName, statu
     [contactRowDeletion, customerId, router, userId],
   );
 
-  const heading = customerName ? `${customerName} – Contacts` : "Customer Contacts";
+  const heading = customerName ? `${customerName} - Contacts` : "Customer Contacts";
 
   return (
     <>

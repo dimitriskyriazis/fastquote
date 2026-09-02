@@ -3046,7 +3046,7 @@ const requestedColumnDefsMap = useMemo(
     }
     if (skippedRows > 0) {
       showToastMessage(
-        `${hex == null ? 'Cleared' : 'Filled'} the loaded rows. ${skippedRows} selected row${skippedRows === 1 ? ' was' : 's were'} not loaded yet — scroll to them and re-apply.`,
+        `${hex == null ? 'Cleared' : 'Filled'} the loaded rows. ${skippedRows} selected row${skippedRows === 1 ? ' was' : 's were'} not loaded yet. Scroll to them and re-apply.`,
         'info',
         7000,
       );
@@ -3909,8 +3909,8 @@ const requestedColumnDefsMap = useMemo(
         const uniqueParts = [...new Set(ambiguousFarnellMatchPartNumbers)];
         showToastMessage(
           uniqueParts.length === 1
-            ? `Several Farnell order codes share part no. ${uniqueParts[0]} — pick the right one in the matcher.`
-            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')} — pick the right ones in the matcher.`,
+            ? `Several Farnell order codes share part no. ${uniqueParts[0]}. Pick the right one in the matcher.`
+            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')}. Pick the right ones in the matcher.`,
           'info',
           8000,
         );
@@ -3919,8 +3919,8 @@ const requestedColumnDefsMap = useMemo(
         const uniqueParts = [...new Set(ambiguousFarnellPricePartNumbers)];
         showToastMessage(
           uniqueParts.length === 1
-            ? `Several Farnell order codes share part no. ${uniqueParts[0]}, each with a different price — no price was applied. Please set it manually.`
-            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')}, each with a different price — no prices were applied. Please set them manually.`,
+            ? `Several Farnell order codes share part no. ${uniqueParts[0]}, each with a different price. No price was applied, please set it manually.`
+            : `Several Farnell order codes share these part numbers: ${uniqueParts.join(', ')}, each with a different price. No prices were applied, please set them manually.`,
           'warning',
           8000,
         );
@@ -7561,7 +7561,7 @@ const requestedColumnDefsMap = useMemo(
     if (!Object.is(normalizedNewValue, typedValue)) {
       showToastMessage(
         allowsFractionalQuantity(rowServiceType)
-          ? `Quantity rounded to ${normalizedNewValue} — at most ${SERVICE_QUANTITY_DECIMALS} decimals.`
+          ? `Quantity rounded to ${normalizedNewValue}, at most ${SERVICE_QUANTITY_DECIMALS} decimals.`
           : `Only per-day service lines take a fractional quantity. Rounded to ${normalizedNewValue}.`,
       );
       // 'api' source so this correction doesn't re-enter as a second edit.

@@ -108,7 +108,7 @@ export default function UsersClient() {
   const handleCellEditingStarted = useCallback(
     (event: CellEditingStartedEvent<Record<string, unknown>>) => {
       const field = event.colDef.field;
-      if (field === 'SalesDivision' || field === 'SalesSeniority' || field === 'Role1' || field === 'Role2') {
+      if (field === 'SalesDivision' || field === 'SalesSeniority' || field === 'Role1' || field === 'Role2' || field === 'Role3') {
         void refreshOptions();
       }
     },
@@ -275,6 +275,21 @@ export default function UsersClient() {
         },
       },
       {
+        field: "Role3",
+        headerName: "Role 3",
+        filter: "agTextColumnFilter",
+        editable: true,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: () => ({
+          values: roleSelectOptionsRef.current,
+        }),
+        valueSetter: (params) => {
+          params.data = params.data ?? {};
+          (params.data as Record<string, unknown>).Role3 = params.newValue ?? "";
+          return true;
+        },
+      },
+      {
         field: "Enabled",
         headerName: "Enabled",
         filter: "agSetColumnFilter",
@@ -335,14 +350,17 @@ export default function UsersClient() {
       const userId = normalizeUserId((event.data as { UserID?: unknown } | undefined)?.UserID);
       if (userId == null) return;
 
-      if (field === "Role1" || field === "Role2") {
+      if (field === "Role1" || field === "Role2" || field === "Role3") {
         const role1 = normalizeTextValue(
           (event.data as Record<string, unknown> | undefined)?.Role1 ?? "",
         );
         const role2 = normalizeTextValue(
           (event.data as Record<string, unknown> | undefined)?.Role2 ?? "",
         );
-        const roles = [role1, role2].filter((value) => value.length > 0);
+        const role3 = normalizeTextValue(
+          (event.data as Record<string, unknown> | undefined)?.Role3 ?? "",
+        );
+        const roles = [role1, role2, role3].filter((value) => value.length > 0);
         if (roles.length === 0) {
           showToastMessage("At least one role is required.", "error");
           revertCell(event);

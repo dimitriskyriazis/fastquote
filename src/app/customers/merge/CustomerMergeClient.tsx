@@ -403,7 +403,7 @@ export default function CustomerMergeClient() {
       <div className={styles.card}>
         <h2 className={styles.cardTitle}>Which record survives?</h2>
         <p className={styles.cardHint}>
-          The primary keeps its id and receives everything else. The others are disabled — nothing
+          The primary keeps its id and receives everything else. The others are disabled. Nothing
           is deleted, so any contact you do not move stays on the record it is on today.
         </p>
         <div className={styles.sourceGrid}>
@@ -481,7 +481,7 @@ export default function CustomerMergeClient() {
         <h2 className={styles.cardTitle}>Pick the value that survives</h2>
         <p className={styles.cardHint}>
           Rows where the sources disagree are highlighted. ERP ID and ERP Code always come from the
-          same source — they are two halves of one Soft1 account.
+          same source: they are two halves of one Soft1 account.
         </p>
         <div className={styles.fieldTableWrap}>
           <table className={styles.fieldTable}>
@@ -551,7 +551,7 @@ export default function CustomerMergeClient() {
         <h2 className={styles.cardTitle}>Which contacts move to the primary?</h2>
         <p className={styles.cardHint}>
           Ticked contacts end up on the surviving customer. Unticking one switches it off
-          (Enabled = 0) wherever it lives — the mail exports go by the contact&apos;s own Enabled
+          (Enabled = 0) wherever it lives. The mail exports go by the contact&apos;s own Enabled
           flag, not its customer&apos;s, so simply leaving it on a disabled customer would keep it
           in your mailing lists. Nothing is deleted: the contact, its group memberships and its
           mail history all stay, and re-enabling it undoes this. Everything starts ticked except a
@@ -628,7 +628,7 @@ export default function CustomerMergeClient() {
                     onChange={() => toggleContact(contact.ContactID)}
                   />
                   <span className={styles.contactName}>{contactName(contact)}</span>
-                  <span className={styles.contactSub}>{contact.Email || '—'}</span>
+                  <span className={styles.contactSub}>{contact.Email || '-'}</span>
                   <span className={styles.contactSub}>{contact.Position || ''}</span>
                   <span className={styles.contactBadges}>
                     {isDuplicate(contact)
@@ -698,7 +698,7 @@ export default function CustomerMergeClient() {
                         onChange={() => toggleContact(contact.ContactID)}
                       />
                       <span className={styles.contactName}>{contactName(contact)}</span>
-                      <span className={styles.contactSub}>{contact.Email || '—'}</span>
+                      <span className={styles.contactSub}>{contact.Email || '-'}</span>
                       <span className={styles.contactSub}>{contact.Position || ''}</span>
                       <span className={styles.contactBadges}>
                         {isDuplicate(contact)
@@ -826,7 +826,7 @@ export default function CustomerMergeClient() {
             {preview.secondaries.length === 1 ? 'One customer' : `${preview.secondaries.length} customers`}
             {' '}will be disabled and their offers reassigned to{' '}
             <strong>{customerLabel(preview.primary)} (#{preview.primary.CustomerID})</strong>.
-            There is no undo button — reversing this means re-enabling the records and moving the
+            There is no undo button. Reversing this means re-enabling the records and moving the
             offers back by hand, using the record written to the log.
           </p>
           <label className={styles.confirmRow}>

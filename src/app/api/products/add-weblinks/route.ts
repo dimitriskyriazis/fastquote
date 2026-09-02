@@ -346,7 +346,7 @@ export async function POST(req: NextRequest) {
       // Old clients POSTed { productIds } expecting a direct write; refuse loudly rather
       // than silently searching (they would show "Updated undefined web link(s)").
       return NextResponse.json(
-        { ok: false, error: "The Add web links feature was updated — please hard-refresh the page (Ctrl+F5) and try again." },
+        { ok: false, error: "The Add web links feature was updated. Please hard-refresh the page (Ctrl+F5) and try again." },
         { status: 400 },
       );
     }
@@ -698,7 +698,7 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
           }
         } catch (err) {
           console.error(`[weblink] product ${product.ID}: web-search proposal failed:`, err);
-          return { ...base, webLink: null, status: "error", note: "Web search failed — please retry." };
+          return { ...base, webLink: null, status: "error", note: "Web search failed. Please retry." };
         }
 
         if (!domain) {
@@ -709,7 +709,7 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
             status: "not_found",
             note: brand
               ? `Could not resolve a website domain for brand "${brand}". Set it on the Brands page and retry.`
-              : "Product has no brand — cannot pick a manufacturer site.",
+              : "Product has no brand, cannot pick a manufacturer site.",
           };
         }
         console.log(`[weblink] product ${product.ID} (${brand}): domain=${domain}${curatedDomain ? " (curated)" : ""}`);
@@ -1650,7 +1650,7 @@ async function handleSearch(req: NextRequest, rawIds: unknown) {
           // dialog leave it unselected.
           note:
             verification === "family"
-              ? "Only the product family/range page was found — it does not identify this specific model. Check it before saving."
+              ? "Only the product family/range page was found. It does not identify this specific model. Check it before saving."
               : undefined,
         };
       } finally {
