@@ -11,6 +11,7 @@ import type {
   MenuItemDef,
 } from "ag-grid-community";
 import { GridRowDeletion, getContextMenuSelectionSnapshot } from "../../lib/gridRowDeletion";
+import { parseGridSearchParams } from "../../lib/gridUrlState";
 import { checkDeletePermissionForClient } from "../../lib/deletePermissions";
 import { coerceRoles, roleHasPermission } from "../../lib/roles";
 import { MAX_MERGE_SECONDARIES } from "./merge/customerMergeTypes";
@@ -32,6 +33,12 @@ const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ),
 });
 
+
+// Grid state (filters/sort/quick search) is namespaced in the URL and in
+// localStorage under this key. See AgGridAll's columnStateNamespace prop.
+const CUSTOMERS_GRID_NAMESPACE = "customers";
+// Hidden filter key behind "View Children Customers".
+const CHILDREN_FILTER_FIELD = "ParentCustomerID";
 
 const normalizeCustomerId = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
@@ -97,17 +104,35 @@ export default function CustomersClient() {
 
   const handleGridReady = useCallback((api: GridApi<Record<string, unknown>>) => {
     if (!api || defaultEnabledFilterAppliedRef.current) return;
-    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
-    const nextModel = existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
-    if ("Enabled" in nextModel) {
-      defaultEnabledFilterAppliedRef.current = true;
-      return;
-    }
-    api.setFilterModel({
-      ...nextModel,
-      Enabled: { filterType: "set", values: ["true"] },
-    });
     defaultEnabledFilterAppliedRef.current = true;
+    // AgGridAll has already restored the persisted (or URL-carried) filter model
+    // by the time this runs, so getFilterModel() is the restored state.
+    const existingModel = api.getFilterModel() as Record<string, unknown> | null;
+    const nextModel: Record<string, unknown> =
+      existingModel && typeof existingModel === "object" ? { ...existingModel } : {};
+
+    // "View Children Customers" writes a ParentCustomerID entry, and every filter
+    // change is persisted. ParentCustomerID is a hidden column, so a restored
+    // entry would leave the grid showing a handful of rows with no floating
+    // filter to explain why. Keep it only when the URL still carries it (a reload
+    // or a shared link of that view); otherwise drop it. Same hygiene as the
+    // ?customerId= deep link on the offers grid.
+    const urlFilterModel = typeof window === "undefined"
+      ? null
+      : parseGridSearchParams(window.location.search, CUSTOMERS_GRID_NAMESPACE).filterModel;
+    const hasStaleChildrenFilter =
+      CHILDREN_FILTER_FIELD in nextModel
+      && !(urlFilterModel && CHILDREN_FILTER_FIELD in urlFilterModel);
+    if (hasStaleChildrenFilter) {
+      delete nextModel[CHILDREN_FILTER_FIELD];
+    }
+
+    const needsEnabledDefault = !("Enabled" in nextModel);
+    if (!needsEnabledDefault && !hasStaleChildrenFilter) return;
+    if (needsEnabledDefault) {
+      nextModel.Enabled = { filterType: "set", values: ["true"] };
+    }
+    api.setFilterModel(nextModel);
   }, []);
 
   const columnDefs = useMemo<ColDef[]>(
@@ -148,6 +173,22 @@ export default function CustomersClient() {
         headerName: "Parent Customer",
         filter: "agTextColumnFilter",
         enableRowGroup: true,
+      },
+      // Hidden key column behind "View Children Customers" (right-click a row
+      // whose Is Parent is Yes). AG Grid drops filter-model entries whose colId
+      // isn't a registered column with a filter, so without this def
+      // setFilterModel({ ParentCustomerID: … }) is silently ignored and the grid
+      // keeps listing every customer. Filtering the visible Parent Customer NAME
+      // instead is not equivalent: names are not unique (two distinct customers
+      // are both named "OTSE Group") and the text filter folds accents and
+      // punctuation. Kept out of the columns tool panel: it's an internal key,
+      // not a column users pick, and the grid's filter chip clears it.
+      {
+        field: CHILDREN_FILTER_FIELD,
+        headerName: "Parent Customer ID",
+        filter: "agNumberColumnFilter",
+        hide: true,
+        suppressColumnsToolPanel: true,
       },
       {
         field: "PricingPolicy",
@@ -391,6 +432,31 @@ export default function CustomersClient() {
     [clearGridSelection],
   );
 
+  // Scope the grid to one parent's children. Deliberately NOT a merge onto the
+  // current model: the item promises "this parent's children", and an unrelated
+  // leftover column filter would quietly intersect with it and show nothing.
+  // The Enabled default is kept, so disabled (e.g. merged-away) children stay
+  // hidden exactly as they are everywhere else on this page.
+  // No navigation: /customers -> /customers is a soft navigation, so the grid
+  // would not remount and handleGridReady would not re-fire. Filtering in place
+  // also gets the header's "N rows with 1 filter ×" chip and its Clear button
+  // for free, and AgGridAll syncs the model into the URL so the view is
+  // shareable and survives a reload.
+  const showChildCustomers = useCallback((api: unknown, parentCustomerId: number) => {
+    const gridApi = api as GridApi<Record<string, unknown>> | null;
+    if (!gridApi || gridApi.isDestroyed?.()) return;
+    const currentModel = gridApi.getFilterModel() as Record<string, unknown> | null;
+    const enabledFilter = currentModel?.Enabled ?? { filterType: "set", values: ["true"] };
+    gridApi.setFilterModel({
+      Enabled: enabledFilter,
+      [CHILDREN_FILTER_FIELD]: {
+        filterType: "number",
+        type: "equals",
+        filter: parentCustomerId,
+      },
+    });
+  }, []);
+
   const customerContextMenuItems = useCallback(
     (params: GetContextMenuItemsParams<Record<string, unknown>>) => {
       const baseItems = customerRowDeletion.getContextMenuItems(params);
@@ -413,6 +479,7 @@ export default function CustomersClient() {
       const basicDataIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>';
       const contactsIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>';
       const newTabIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+      const childrenIcon = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>';
       const viewBasicDataItem: MenuItemDef<Record<string, unknown>> = {
         name: 'View Basic Data',
         icon: basicDataIcon,
@@ -431,7 +498,25 @@ export default function CustomersClient() {
           { name: 'Open in new tab', icon: newTabIcon, action: () => { window.open(contactsHref, '_blank', 'noopener,noreferrer'); } },
         ],
       };
-      items.unshift(viewBasicDataItem, viewContactsItem, 'separator');
+      // Only a parent record ("ΟΤΕ Group" and friends) has children to show.
+      // IsParent arrives as a nullable SQL bit, so normalize rather than testing
+      // truthiness. AG Grid row-group rows carry no CustomerID and are already
+      // filtered out by the guard above.
+      const clickedIsParent = normalizeBoolean(
+        (params.node?.data as { IsParent?: unknown } | null | undefined)?.IsParent ?? null,
+      );
+      const gridApiForChildren = params.api;
+      const viewChildrenItem: MenuItemDef<Record<string, unknown>> = {
+        name: 'View Children Customers',
+        icon: childrenIcon,
+        action: () => { showChildCustomers(gridApiForChildren, clickedCustomerId); },
+      };
+      items.unshift(
+        viewBasicDataItem,
+        viewContactsItem,
+        ...(clickedIsParent ? [viewChildrenItem] : []),
+        'separator',
+      );
 
       // Merge duplicates. The selection has to be read from the snapshot AgGridAll
       // captured on right-click: it wraps every context-menu action so that the
@@ -542,7 +627,7 @@ export default function CustomersClient() {
       return items;
     },
     [customerRowDeletion, router, userId, canMergeCustomers,
-      canEditPaymentTerms, paymentTerms, applyPaymentTerm],
+      canEditPaymentTerms, paymentTerms, applyPaymentTerm, showChildCustomers],
   );
 
   return (
@@ -591,7 +676,7 @@ export default function CustomersClient() {
               endpoint="/api/customers"
               columnDefs={columnDefs}
               rowGroupPanelShow="always"
-              columnStateNamespace="customers"
+              columnStateNamespace={CUSTOMERS_GRID_NAMESPACE}
               onGridReady={handleGridReady}
               onCellValueChanged={handleCellEdit}
               getContextMenuItems={customerContextMenuItems}

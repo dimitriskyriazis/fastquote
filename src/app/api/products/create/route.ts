@@ -126,7 +126,9 @@ export async function POST(req: NextRequest) {
           -- retired merge losers, which still hold their old part numbers; being
           -- unable to create a product because a retired twin exists would be
           -- wrong, and resolve/search ignore them too. Exact raw duplicates are
-          -- still caught by the global unique index on PartNumber.
+          -- still caught by UX_Products_PartNumber_BrandID, the per-brand unique
+          -- index (PartNumber is NOT globally unique: two brands may carry the
+          -- same manufacturer part number).
           AND ISNULL(p.Enabled, 1) = 1
         ORDER BY p.ID
       `);
@@ -275,7 +277,7 @@ export async function POST(req: NextRequest) {
     const sqlNumber = (err as { number?: number } | null)?.number;
     if (sqlNumber === 2627 || sqlNumber === 2601) {
       return await createErrorResponse(
-        "A product with this part number already exists.",
+        "This brand already has a product with this part number.",
         409,
         { requestId, endpoint: "/api/products/create", method: "POST", userId },
       );

@@ -24,6 +24,7 @@ import {
   type PriceListDecimalFormat,
 } from "../../../../lib/priceListDecimalFormats";
 import { parsePriceValue } from "../../../../lib/parsePriceValue";
+import { isLikelyBadlyCapitalised } from "../../../../lib/descriptionCapitalisation";
 
 export const runtime = "nodejs";
 
@@ -1345,114 +1346,6 @@ export async function POST(req: NextRequest) {
       }
     });
 
-    // Pre-flight: detect rows whose PartNumber would collide with the
-    // global UNIQUE constraint on dbo.Products.PartNumber.  A row is a
-    // blocker when it would INSERT a new product (no match found inside
-    // this brand) AND its PartNumber already exists under any brand.
-    {
-      const partNumbersToCheck = Array.from(
-        new Set(
-          parsedRows
-            .map((row) => row.partNumber?.trim() ?? null)
-            .filter((value): value is string => Boolean(value)),
-        ),
-      );
-
-      const globalCollisions = new Map<
-        string,
-        { id: number; brandId: number | null; brandName: string | null }
-      >();
-      if (partNumbersToCheck.length > 0) {
-        const chunks = chunkArray(partNumbersToCheck, 900);
-        for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
-          const chunk = chunks[chunkIdx];
-          const checkRequest = pool.request();
-          const paramNames = chunk.map((val, idx) => {
-            const param = `pn_${chunkIdx}_${idx}`;
-            checkRequest.input(param, sql.NVarChar(255), val);
-            return `@${param}`;
-          });
-          const result = await checkRequest.query<{
-            ID: number;
-            PartNumber: string | null;
-            BrandID: number | null;
-            BrandName: string | null;
-          }>(`
-            SELECT p.ID, p.PartNumber, p.BrandID, b.Name AS BrandName
-            FROM dbo.Products p
-            LEFT JOIN dbo.Brands b ON b.ID = p.BrandID
-            WHERE p.PartNumber IN (${paramNames.join(", ")})
-          `);
-          for (const r of result.recordset ?? []) {
-            const key = (r.PartNumber ?? "").trim().toLowerCase();
-            if (key && !globalCollisions.has(key)) {
-              globalCollisions.set(key, {
-                id: r.ID,
-                brandId: r.BrandID,
-                brandName: r.BrandName,
-              });
-            }
-          }
-        }
-      }
-
-      type ImportBlocker = {
-        rowIndex: number;
-        partNumber: string;
-        modelNumber: string | null;
-        description: string | null;
-        conflictProductId: number;
-        conflictBrandId: number | null;
-        conflictBrandName: string | null;
-      };
-      const blockers: ImportBlocker[] = [];
-
-      parsedRows.forEach((row, idx) => {
-        const partKey = normalizeKey(row.partNumber);
-        if (!partKey) return;
-        const modelKey = normalizeKey(row.modelNumber);
-        const legacyKey = normalizeKey(row.legacyPartNumber);
-
-        const sameBrandPartMatch = byPartNumber.has(partKey);
-        // A respelling that will match an existing product is not an insert, so
-        // it can never violate the global unique index on PartNumber.
-        const clearedSameProduct = !sameBrandPartMatch
-          && lookupCleared(row.partNumber).kind === "sameProduct";
-        const legacyMatch = legacyKey ? byLegacyPartNumber.has(legacyKey) : false;
-        let modelMatch = false;
-        if (!sameBrandPartMatch && !legacyMatch && modelKey && byModelNumber.has(modelKey)) {
-          const candidate = byModelNumber.get(modelKey);
-          const candidatePartKey = normalizeKey(candidate?.PartNumber);
-          modelMatch = !partKey || (candidatePartKey != null && partKey === candidatePartKey);
-        }
-        if (sameBrandPartMatch || clearedSameProduct || legacyMatch || modelMatch) return;
-
-        const collision = globalCollisions.get(partKey);
-        if (collision) {
-          blockers.push({
-            rowIndex: idx,
-            partNumber: row.partNumber!.trim(),
-            modelNumber: row.modelNumber,
-            description: row.description,
-            conflictProductId: collision.id,
-            conflictBrandId: collision.brandId,
-            conflictBrandName: collision.brandName,
-          });
-        }
-      });
-
-      if (blockers.length > 0) {
-        return NextResponse.json(
-          {
-            ok: false,
-            error: `Import cancelled: ${blockers.length} part number${blockers.length > 1 ? "s" : ""} already exist in the database under a different brand.`,
-            blockers,
-          },
-          { status: 409 },
-        );
-      }
-    }
-
     // Pre-flight: detect rows whose Part/Model columns look SWAPPED vs existing
     // products of this brand. A row that would CREATE a new product (no normal
     // match) but whose imported PartNumber equals an existing product's
@@ -2151,44 +2044,32 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Detect badly-capitalised descriptions.
+      // Detect descriptions that were typed in capitals and want fixing.
       //
-      // Strategy: look for alphabetic word tokens (punctuation/digits stripped) that are
-      // Detect descriptions that are predominantly ALL-CAPS and need fixing.
+      // The heuristic itself lives in lib/descriptionCapitalisation so it is unit
+      // tested and shared with the endpoint that does the fixing. It used to be
+      // inline here with a 5-letter-per-token floor, which threw away short words
+      // like HUB, PRO, BAR and WITH: "CLICKSHARE HUB PRO EU WITH 2 BUTTONS" was
+      // documented as a trigger but never actually reached the 3-token minimum,
+      // while acronym-heavy lines that were perfectly well written did.
       //
-      // We require that at least 40% of alphabetic tokens (≥5 chars) are fully uppercase
-      // AND at least 3 such tokens exist. This avoids false positives from descriptions
-      // that merely contain a single acronym (e.g. DANTE, HEVC, UPMAX) embedded in an
-      // otherwise correctly-capitalised sentence.
-      //
-      // Examples that DO trigger (>= 40% caps tokens, >= 3 caps tokens):
-      //   "CLICKSHARE HUB PRO EU WITH 2 BUTTONS"   → 4/4 tokens all-caps
-      //   "CLICKSHARE BAR CB Core EU WITH 1 BUTTON" → 3/4 tokens all-caps (75%)
-      //
-      // Examples that do NOT trigger:
-      //   "Supports the import of data from multiple file types"  → 0 caps tokens
-      //   "Linear Acoustic UPMAX downmix processor"               → 1/3 tokens caps (33%)
-      //   "Does NOT include 1st year Premium Support"             → 0 tokens ≥5 chars caps
-      const isLikelyBadlyCapitalised = (desc: string | null | undefined): boolean => {
-        if (!desc) return false;
-        // Split on whitespace and common separators, then strip non-alpha chars from each token
-        const tokens = desc
-          .split(/[\s|\/,;()\[\]]+/)
-          .map((t) => t.replace(/[^a-zA-Z]/g, ""))
-          .filter((t) => t.length >= 5);
-        if (tokens.length === 0) return false;
-        const capsCount = tokens.filter((t) => t === t.toUpperCase()).length;
-        // Require at least 3 all-caps tokens AND they make up ≥40% of qualifying tokens
-        return capsCount >= 3 && capsCount / tokens.length >= 0.4;
-      };
-
-      const allCapsEntries = processedProductDescriptions.filter(({ description }) =>
-        isLikelyBadlyCapitalised(description),
-      );
-      // Offer the fix when ≥2 descriptions are flagged
-      const allCapsProductIds = allCapsEntries.length >= 2
-        ? allCapsEntries.map(({ productId }) => productId)
-        : [];
+      // Every flagged product is returned, without a minimum: the client may still
+      // overwrite matched products' descriptions with the file's text (the
+      // "Description Mismatch" prompt), which changes what is shouted, so it
+      // reconciles this list against those overwrites and applies the threshold.
+      const seenAllCapsProductIds = new Set<number>();
+      const allCapsSamples: Array<{ productId: number; description: string }> = [];
+      for (const { productId, description } of processedProductDescriptions) {
+        if (!isLikelyBadlyCapitalised(description)) continue;
+        if (seenAllCapsProductIds.has(productId)) continue;
+        seenAllCapsProductIds.add(productId);
+        // A few real lines from this file, so the confirmation prompt can show the
+        // user what it is actually about to change.
+        if (allCapsSamples.length < 3 && description) {
+          allCapsSamples.push({ productId, description: description.trim().slice(0, 160) });
+        }
+      }
+      const allCapsProductIds = [...seenAllCapsProductIds];
 
       return NextResponse.json({
         ok: true,
@@ -2208,6 +2089,7 @@ export async function POST(req: NextRequest) {
         skippedRowDetails,
         allCapsProductIds,
         allCapsDescriptionCount: allCapsProductIds.length,
+        allCapsSamples,
       });
     } catch (err) {
       await transaction.rollback();
@@ -2222,7 +2104,7 @@ export async function POST(req: NextRequest) {
         {
           ok: false,
           error:
-            "Import cancelled: one or more part numbers in the file already exist in the database. Please remove or fix the duplicates and re-upload.",
+            "Import cancelled: one or more part numbers in the file already exist for this brand. Please remove or fix the duplicates and re-upload.",
         },
         { status: 409 },
       );

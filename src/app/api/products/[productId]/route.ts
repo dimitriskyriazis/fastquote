@@ -232,8 +232,8 @@ export async function PATCH(
     // possible: blocking on the cleaned key alone made a part-number UNDO
     // permanently fail, because restoring a previous value can land on a live
     // sibling that merely shares the key (Ross KIVA-AVC-1-01-HM vs
-    // KIVA+-AVC-1-01-HM). Byte-identical part numbers are still caught by the
-    // global unique index on PartNumber.
+    // KIVA+-AVC-1-01-HM). Byte-identical part numbers are still caught by
+    // UX_Products_PartNumber_BrandID, the per-brand unique index.
     if ((body.partNumber !== undefined || body.brandId !== undefined) && !body.acknowledgeDuplicate) {
       const gatePool = await getPool();
       const currentReq = gatePool.request();
@@ -419,7 +419,7 @@ export async function PATCH(
     const sqlNumber = (err as { number?: number } | null)?.number;
     if (sqlNumber === 2627 || sqlNumber === 2601) {
       return await createErrorResponse(
-        'A product with this part number already exists.',
+        'This brand already has a product with this part number.',
         409,
         { requestId, endpoint: req.nextUrl.pathname, method: 'PATCH', userId },
       );

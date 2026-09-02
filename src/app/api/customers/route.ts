@@ -34,6 +34,7 @@ type CustomerRow = {
   BrandName: string | null;
   TaxID: string | null;
   IsParent: boolean | number | null;
+  ParentCustomerID: number | null;
   ParentCustomer: string | null;
   PricingPolicy: string | null;
   CustomerGroup: string | null;
@@ -62,6 +63,11 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   BrandName: "dbo.Customers.BrandName",
   TaxID: "dbo.Customers.TaxID",
   IsParent: "dbo.Customers.IsParent",
+  // Filter key behind "View Children Customers" (right-click a parent on the
+  // customers grid). Must be qualified: the bare-identifier fallback below
+  // would emit [ParentCustomerID], which is ambiguous against the
+  // `parentCustomer` self-join and fails with SQL 209.
+  ParentCustomerID: "dbo.Customers.ParentCustomerID",
   ParentCustomer: "parentCustomer.Name",
   PricingPolicy: "dbo.PricingPolicies.Name",
   CustomerGroup: "customerGroup.Name",
@@ -89,10 +95,16 @@ const resolveFilterTargets = (col: string): CrossColumnTarget[] =>
   }));
 
 const ALLOWED_ROW_GROUP_FIELDS = new Set(["IsParent", "PricingPolicy", "ParentCustomer", "CustomerGroup", "PaymentTerm", "Importance"]);
-const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, expression]) => ({
-  colId,
-  expression,
-}));
+// ParentCustomerID is a surrogate key the UI filters on, never something a user
+// types into the global search box. Quick search would match it as a substring
+// ("1607" pulling in every child of parents 1607x) and add a LIKE per term.
+const QUICK_FILTER_EXCLUDED = new Set(["ParentCustomerID"]);
+const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS)
+  .filter(([colId]) => !QUICK_FILTER_EXCLUDED.has(colId))
+  .map(([colId, expression]) => ({
+    colId,
+    expression,
+  }));
 
 function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
   if (!filterModel || Object.keys(filterModel).length === 0) {
@@ -243,6 +255,7 @@ export async function POST(req: NextRequest) {
         dbo.Customers.BrandName,
         dbo.Customers.TaxID,
         dbo.Customers.IsParent,
+        dbo.Customers.ParentCustomerID,
         parentCustomer.Name AS ParentCustomer,
         dbo.PricingPolicies.Name AS PricingPolicy,
         customerGroup.Name AS CustomerGroup,

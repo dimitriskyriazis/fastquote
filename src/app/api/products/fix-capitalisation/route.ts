@@ -4,6 +4,13 @@ import sql from "mssql";
 import { getPool } from "../../../../lib/sql";
 import { resolveAuditUserId } from "../../../../lib/auditTrail";
 import { requirePermission } from "../../../../lib/authz";
+import {
+  CAPITALISATION_SINGLE_SYSTEM_PROMPT,
+  CAPITALISATION_SYSTEM_PROMPT,
+  buildCapitalisationUserMessage,
+  isCaseOnlyRewrite,
+  parseCapitalisationResponse,
+} from "../../../../lib/descriptionCapitalisation";
 import OpenAI from "openai";
 
 export const runtime = "nodejs";
@@ -17,6 +24,21 @@ const BATCH_SIZE = 20;
 
 // How many OpenAI batch-calls to run in parallel
 const OPENAI_CONCURRENCY = 8;
+
+// A hung call would otherwise hold a semaphore slot forever and the route would
+// never respond, leaving the caller's progress toast up with no way to tell
+// whether the writes landed.
+const OPENAI_TIMEOUT_MS = 60_000;
+
+const OPENAI_MODEL = "gpt-4o-mini";
+
+// dbo.Products.Description and dbo.OfferDetails.ProductDescription are NVARCHAR(2000)
+const MAX_DESCRIPTION_LENGTH = 2000;
+
+// Ceiling on the one-at-a-time repair pass. If the batched pass fails wholesale
+// (bad key, model outage, prompt regression) then retrying thousands of rows
+// individually just burns tokens, so the overflow is reported as skipped instead.
+const MAX_REPAIR_ITEMS = 500;
 
 class Semaphore {
   private queue: Array<() => void> = [];
@@ -59,46 +81,29 @@ type ProductRow = {
   Description: string | null;
 };
 
+type FixCapStatus = "updated" | "unchanged" | "previewed" | "skipped" | "error";
+
 type FixCapResult = {
   productId: number;
   offerDetailId?: number;
   oldDescription: string | null;
   oldOfferDescription?: string | null;
   newDescription: string | null;
-  status: "updated" | "skipped" | "error";
+  status: FixCapStatus;
 };
-
-const SYSTEM_PROMPT = [
-  "Fix the capitalisation of the numbered product descriptions below.",
-  "Output ONLY a valid JSON array of strings — one fixed description per input line, in the same order.",
-  "Do NOT include explanations, numbering, markdown, or any other text outside the JSON array.",
-  "",
-  "RULES:",
-  "- Convert ALL-CAPS text to proper title case.",
-  "- Major words (nouns, verbs, adjectives, adverbs) should be Title Case.",
-  "- Minor words (a, an, the, and, but, or, nor, for, so, yet, at, by, in, of, on, to, up, as, if, it, is, with, from, into, onto) should be lowercase UNLESS they are the first or last word.",
-  "- Preserve known acronyms and technical abbreviations exactly: EU, UK, US, EMEA, HD, 4K, 8K, HDMI, VGA, USB, USB-C, IP, AV, IT, LED, LCD, OLED, AC, DC, RF, IR, DECT, DANTE, PoE, SDI, NDI, HEVC, MJPEG, H.264, H.265, SFP, RJ45, XLR, TRS, WiFi, Wi-Fi, Bluetooth, UHF, VHF, UHD, QHD, FHD, WXGA, WUXGA, SXGA, XGA, SVGA, LAN, WAN, VLAN, HTTP, HTTPS, TCP, UDP, DNS, DHCP, SNMP, OSC.",
-  "- Preserve brand-specific capitalisation: ClickShare, BrightSign, ClearOne, QSC, Biamp, Crestron, AMX, Extron, Shure, Sennheiser, Beyerdynamic, Crown, JBL, Bose, Barco, Christie, NEC, Epson, Panasonic, Sony, LG, Samsung, Cisco, Polycom, Logitech, Microsoft, Huddly, Yealink, Zoom.",
-  "- Numbers and units stay unchanged (e.g. 4K, 1080p, 2.4GHz, 50W, 3m, 8-port).",
-  "- Preserve part numbers, model numbers, and alphanumeric codes exactly.",
-  "- Preserve all punctuation (hyphens, commas, slashes, brackets) exactly.",
-  "- If a description is already correctly capitalised, return it unchanged.",
-  "- Do NOT add, remove, or rearrange any words.",
-  "",
-  "EXAMPLE INPUT:",
-  "1. CLICKSHARE HUB PRO EU WITH 2 BUTTONS",
-  "2. BARCO G60-W10 SINGLE LAMP PROJECTOR 10000 LUMEN WUXGA",
-  "3. 4K HDMI DISTRIBUTION AMPLIFIER 1X4 WITH EDID",
-  "4. ClickShare Hub Pro EU with 2 Buttons",
-  "",
-  'EXAMPLE OUTPUT: ["ClickShare Hub Pro EU with 2 Buttons","Barco G60-W10 Single Lamp Projector 10000 Lumen WUXGA","4K HDMI Distribution Amplifier 1x4 with EDID","ClickShare Hub Pro EU with 2 Buttons"]',
-].join("\n");
 
 export async function POST(req: NextRequest) {
   logRequest(req, "/api/products/fix-capitalisation");
   try {
     const auth = await requirePermission(req, "manageBrandsSuppliers");
     if (!auth.ok) return auth.response;
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { ok: false, error: "AI capitalisation is not configured on this server (no OPENAI_API_KEY)." },
+        { status: 503 },
+      );
+    }
 
     const body = await req.json();
 
@@ -107,6 +112,10 @@ export async function POST(req: NextRequest) {
     // 2. offerDetailIds: { offerDetailId, productId }[] — from Offer Products page, update both
     const rawProductIds: unknown = body?.productIds;
     const rawOfferDetailIds: unknown = body?.offerDetailIds;
+
+    // dryRun: work out the fixes but write nothing, so a caller can show a
+    // before/after review first. Matches the sibling enhance-descriptions route.
+    const dryRun: boolean = body?.dryRun === true;
 
     let productIds: number[] = [];
     let offerDetailMap: Map<number, number> | null = null; // productId -> offerDetailId
@@ -182,7 +191,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: OPENAI_TIMEOUT_MS,
+      maxRetries: 2,
+    });
 
     // ── Build per-product work items ──────────────────────────────────────────
     type WorkItem = {
@@ -217,153 +230,254 @@ export async function POST(req: NextRequest) {
       workItems.push({ product, offerDetailId, offerDesc, descriptionToFix });
     }
 
-    // ── Split work items into batches of BATCH_SIZE ───────────────────────────
-    const batches: WorkItem[][] = [];
-    for (let i = 0; i < workItems.length; i += BATCH_SIZE) {
-      batches.push(workItems.slice(i, i + BATCH_SIZE));
-    }
+    // ── Resolve the fixes ─────────────────────────────────────────────────────
+    //
+    // Every answer has to survive isCaseOnlyRewrite before it is allowed anywhere
+    // near the database. Fixing capitalisation may only change letter case, and
+    // that is checkable, so a model that loses its place in a 20-line batch, copies
+    // an example out of its own prompt, or invents a plausible-sounding product
+    // description is caught here instead of stamping one product's text onto
+    // another. Rejected and unanswered lines get one more try on their own, where
+    // there is no batch to misalign.
+    const accepted: (string | null)[] = new Array(workItems.length).fill(null);
+    let guardRejections = 0;
 
-    // ── Process batches concurrently (controlled by semaphore) ────────────────
-    const batchSettled = await Promise.allSettled(
-      batches.map(async (batch): Promise<FixCapResult[]> => {
-        const numberedList = batch
-          .map((item, idx) => `${idx + 1}. ${item.descriptionToFix}`)
-          .join("\n");
+    const accept = (index: number, candidate: string | null): void => {
+      if (!candidate) return;
+      const original = workItems[index].descriptionToFix;
+      if (!isCaseOnlyRewrite(original, candidate)) {
+        guardRejections++;
+        console.warn(
+          `[fix-cap] discarded answer for product ${workItems[index].product.ID}: not a pure re-casing. ` +
+            `"${original.slice(0, 80)}" vs "${candidate.slice(0, 80)}"`,
+        );
+        return;
+      }
+      accepted[index] = candidate.slice(0, MAX_DESCRIPTION_LENGTH);
+    };
 
-        await openaiSemaphore.acquire();
-        let fixedArray: (string | null)[];
+    const askBatch = async (descriptions: string[]): Promise<(string | null)[]> => {
+      await openaiSemaphore.acquire();
+      try {
+        const res = await openai.responses.create({
+          model: OPENAI_MODEL,
+          temperature: 0,
+          input: [
+            { role: "system", content: CAPITALISATION_SYSTEM_PROMPT },
+            { role: "user", content: buildCapitalisationUserMessage(descriptions) },
+          ],
+          stream: false,
+        });
+        return parseCapitalisationResponse(res.output_text ?? "", descriptions.length);
+      } finally {
+        openaiSemaphore.release();
+      }
+    };
+
+    const askSingle = async (description: string): Promise<string | null> => {
+      await openaiSemaphore.acquire();
+      try {
+        const res = await openai.responses.create({
+          model: OPENAI_MODEL,
+          temperature: 0,
+          input: [
+            { role: "system", content: CAPITALISATION_SINGLE_SYSTEM_PROMPT },
+            { role: "user", content: description.replace(/\s+/gu, " ").trim() },
+          ],
+          stream: false,
+        });
+        return res.output_text?.trim() || null;
+      } finally {
+        openaiSemaphore.release();
+      }
+    };
+
+    const batchStarts: number[] = [];
+    for (let i = 0; i < workItems.length; i += BATCH_SIZE) batchStarts.push(i);
+
+    await Promise.all(
+      batchStarts.map(async (start) => {
+        const slice = workItems.slice(start, start + BATCH_SIZE);
         try {
-          const res = await openai.responses.create({
-            model: "gpt-4o-mini",
-            temperature: 0,
-            input: [
-              { role: "system", content: SYSTEM_PROMPT },
-              { role: "user", content: numberedList },
-            ],
-            stream: false,
-          });
-
-          const raw = res.output_text?.trim() ?? "";
-          try {
-            const parsed: unknown = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-              fixedArray = parsed.map((item) =>
-                typeof item === "string" && item.trim() ? item.trim() : null,
-              );
-            } else {
-              console.warn("[fix-cap] OpenAI returned non-array JSON, skipping batch");
-              fixedArray = new Array(batch.length).fill(null) as null[];
-            }
-          } catch {
-            console.warn("[fix-cap] Failed to parse OpenAI JSON response, skipping batch");
-            fixedArray = new Array(batch.length).fill(null) as null[];
-          }
-        } finally {
-          openaiSemaphore.release();
+          const answers = await askBatch(slice.map((item) => item.descriptionToFix));
+          answers.forEach((answer, offset) => accept(start + offset, answer));
+        } catch (err) {
+          console.error(`[fix-cap] batch at offset ${start} failed:`, err);
         }
-
-        // ── Write results for this batch ──────────────────────────────────────
-        const batchResults: FixCapResult[] = [];
-        for (let idx = 0; idx < batch.length; idx++) {
-          const { product, offerDetailId, offerDesc, descriptionToFix } = batch[idx];
-          const fixed = fixedArray[idx] ?? null;
-
-          if (!fixed) {
-            console.warn(`[fix-cap] No result for product ${product.ID}, skipping`);
-            batchResults.push({
-              productId: product.ID,
-              offerDetailId,
-              oldDescription: product.Description,
-              oldOfferDescription: offerDesc,
-              newDescription: null,
-              status: "skipped",
-            });
-            continue;
-          }
-
-          const newDescription = fixed.slice(0, 2000);
-
-          try {
-            const updateReq = pool.request();
-            updateReq.input("ProductID", sql.Int, product.ID);
-            updateReq.input("Description", sql.NVarChar(2000), newDescription);
-            updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-            await updateReq.query(`
-              UPDATE dbo.Products
-              SET Description = @Description,
-                  ModifiedOn = SYSUTCDATETIME(),
-                  ModifiedBy = @ModifiedBy
-              WHERE ID = @ProductID
-            `);
-
-            let oldOfferDescription: string | null | undefined = undefined;
-            if (offerDetailId && offerDetailMap) {
-              oldOfferDescription = offerDescriptions?.get(offerDetailId) ?? null;
-              const odUpdateReq = pool.request();
-              odUpdateReq.input("OfferDetailID", sql.Int, offerDetailId);
-              odUpdateReq.input("ProductDescription", sql.NVarChar(2000), newDescription);
-              odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
-              await odUpdateReq.query(`
-                UPDATE dbo.OfferDetails
-                SET ProductDescription = @ProductDescription,
-                    ModifiedOn = SYSUTCDATETIME(),
-                    ModifiedBy = @ModifiedBy
-                WHERE ID = @OfferDetailID
-              `);
-            }
-
-            console.log(
-              `[fix-cap] product ${product.ID}: "${descriptionToFix.slice(0, 50)}" → "${newDescription.slice(0, 50)}"`,
-            );
-
-            batchResults.push({
-              productId: product.ID,
-              offerDetailId,
-              oldDescription: product.Description,
-              oldOfferDescription,
-              newDescription,
-              status: "updated",
-            });
-          } catch (dbErr) {
-            console.error(`[fix-cap] DB update failed for product ${product.ID}:`, dbErr);
-            batchResults.push({
-              productId: product.ID,
-              offerDetailId,
-              oldDescription: product.Description,
-              oldOfferDescription: offerDesc,
-              newDescription: null,
-              status: "error",
-            });
-          }
-        }
-
-        return batchResults;
       }),
     );
 
-    // ── Flatten all results ───────────────────────────────────────────────────
-    const results: FixCapResult[] = [...skippedResults];
-    for (let i = 0; i < batchSettled.length; i++) {
-      const outcome = batchSettled[i];
-      if (outcome.status === "fulfilled") {
-        results.push(...outcome.value);
-      } else {
-        console.error(`[fix-cap] Batch ${i} failed entirely:`, outcome.reason);
-        for (const item of batches[i]) {
-          results.push({
-            productId: item.product.ID,
-            oldDescription: item.product.Description,
-            newDescription: null,
-            status: "error",
-          });
+    const unresolved = workItems.map((_, index) => index).filter((index) => accepted[index] === null);
+    const toRepair = unresolved.slice(0, MAX_REPAIR_ITEMS);
+    if (unresolved.length > 0) {
+      console.warn(
+        `[fix-cap] retrying ${toRepair.length} of ${unresolved.length} unresolved description(s) one at a time` +
+          (unresolved.length > toRepair.length
+            ? `; ${unresolved.length - toRepair.length} left unfixed (repair cap ${MAX_REPAIR_ITEMS})`
+            : ""),
+      );
+    }
+    await Promise.all(
+      toRepair.map(async (index) => {
+        try {
+          accept(index, await askSingle(workItems[index].descriptionToFix));
+        } catch (err) {
+          console.error(`[fix-cap] retry failed for product ${workItems[index].product.ID}:`, err);
         }
+      }),
+    );
+
+    // ── Write the accepted fixes ──────────────────────────────────────────────
+    // All AI work is finished by this point, so a request that dies mid-flight
+    // leaves nothing half-written.
+    const results: FixCapResult[] = [...skippedResults];
+
+    for (let index = 0; index < workItems.length; index++) {
+      const { product, offerDetailId, offerDesc, descriptionToFix } = workItems[index];
+      const newDescription = accepted[index];
+
+      if (!newDescription) {
+        results.push({
+          productId: product.ID,
+          offerDetailId,
+          oldDescription: product.Description,
+          oldOfferDescription: offerDesc,
+          newDescription: null,
+          status: "skipped",
+        });
+        continue;
+      }
+
+      if (dryRun) {
+        results.push({
+          productId: product.ID,
+          offerDetailId,
+          oldDescription: product.Description,
+          oldOfferDescription: offerDesc,
+          newDescription,
+          status: "previewed",
+        });
+        continue;
+      }
+
+      // Descriptions that were already right come back byte for byte identical, so
+      // writing them would only churn ModifiedOn/ModifiedBy and drown the real
+      // changes in the audit trail.
+      //
+      // In offer mode the text that was re-cased is the offer line's own snapshot.
+      // The master row only follows when it carries the same wording; if the offer
+      // line was reworded for that customer, re-casing it must not push those words
+      // into the catalogue. The master can be fixed from the Products page.
+      const masterDescription = product.Description ?? "";
+      const masterNeedsUpdate =
+        newDescription !== masterDescription && isCaseOnlyRewrite(masterDescription, newDescription);
+      const offerNeedsUpdate = offerDetailId !== undefined && newDescription !== (offerDesc ?? "");
+
+      if (!masterNeedsUpdate && !offerNeedsUpdate) {
+        results.push({
+          productId: product.ID,
+          offerDetailId,
+          oldDescription: product.Description,
+          oldOfferDescription: offerDesc,
+          newDescription,
+          status: "unchanged",
+        });
+        continue;
+      }
+
+      // When both rows change they go in one transaction, so a failure on the
+      // second UPDATE cannot leave a re-cased master row that the returned
+      // "error" status (and therefore the caller's undo) knows nothing about.
+      const transaction = masterNeedsUpdate && offerNeedsUpdate ? new sql.Transaction(pool) : null;
+      const requestFor = () => (transaction ? transaction.request() : pool.request());
+
+      try {
+        if (transaction) await transaction.begin();
+
+        if (masterNeedsUpdate) {
+          const updateReq = requestFor();
+          updateReq.input("ProductID", sql.Int, product.ID);
+          updateReq.input("Description", sql.NVarChar(MAX_DESCRIPTION_LENGTH), newDescription);
+          updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+          await updateReq.query(`
+            UPDATE dbo.Products
+            SET Description = @Description,
+                ModifiedOn = SYSUTCDATETIME(),
+                ModifiedBy = @ModifiedBy
+            WHERE ID = @ProductID
+          `);
+        }
+
+        if (offerNeedsUpdate && offerDetailId !== undefined) {
+          const odUpdateReq = requestFor();
+          odUpdateReq.input("OfferDetailID", sql.Int, offerDetailId);
+          odUpdateReq.input(
+            "ProductDescription",
+            sql.NVarChar(MAX_DESCRIPTION_LENGTH),
+            newDescription,
+          );
+          odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+          await odUpdateReq.query(`
+            UPDATE dbo.OfferDetails
+            SET ProductDescription = @ProductDescription,
+                ModifiedOn = SYSUTCDATETIME(),
+                ModifiedBy = @ModifiedBy
+            WHERE ID = @OfferDetailID
+          `);
+        }
+
+        if (transaction) await transaction.commit();
+
+        console.log(
+          `[fix-cap] product ${product.ID}: "${descriptionToFix.slice(0, 50)}" → "${newDescription.slice(0, 50)}"`,
+        );
+
+        results.push({
+          productId: product.ID,
+          offerDetailId,
+          oldDescription: product.Description,
+          oldOfferDescription: offerDetailId !== undefined ? offerDesc : undefined,
+          newDescription,
+          status: "updated",
+        });
+      } catch (dbErr) {
+        if (transaction) await transaction.rollback().catch(() => {});
+        console.error(`[fix-cap] DB update failed for product ${product.ID}:`, dbErr);
+        results.push({
+          productId: product.ID,
+          offerDetailId,
+          oldDescription: product.Description,
+          oldOfferDescription: offerDesc,
+          newDescription: null,
+          status: "error",
+        });
       }
     }
 
-    const updatedCount = results.filter((r) => r.status === "updated").length;
-    const failedCount = results.filter((r) => r.status !== "updated").length;
+    const countOf = (status: FixCapStatus) => results.filter((r) => r.status === status).length;
+    const updatedCount = countOf("updated");
+    const unchangedCount = countOf("unchanged");
+    const previewedCount = countOf("previewed");
+    // "failed" means the description still needs fixing. A line that was already
+    // correct is not a failure, so it must not be counted as one.
+    const failedCount = countOf("skipped") + countOf("error");
 
-    return NextResponse.json({ ok: true, updatedCount, failedCount, results });
+    if (guardRejections > 0) {
+      console.warn(
+        `[fix-cap] ${guardRejections} answer(s) discarded for changing more than capitalisation`,
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      updatedCount,
+      unchangedCount,
+      previewedCount,
+      failedCount,
+      guardRejections,
+      dryRun,
+      results,
+    });
   } catch (err) {
     console.error("[fix-cap] Failed to fix capitalisation", err);
     const message = err instanceof Error ? err.message : "Server error";
@@ -404,7 +518,11 @@ export async function PUT(req: NextRequest) {
       if (productId !== null && description !== null) {
         const updateReq = pool.request();
         updateReq.input("ProductID", sql.Int, productId);
-        updateReq.input("Description", sql.NVarChar(2000), description.slice(0, 2000));
+        updateReq.input(
+          "Description",
+          sql.NVarChar(MAX_DESCRIPTION_LENGTH),
+          description.slice(0, MAX_DESCRIPTION_LENGTH),
+        );
         updateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
         await updateReq.query(`
           UPDATE dbo.Products
@@ -419,7 +537,11 @@ export async function PUT(req: NextRequest) {
       if (offerDetailId !== null && offerDescription !== null) {
         const odUpdateReq = pool.request();
         odUpdateReq.input("OfferDetailID", sql.Int, offerDetailId);
-        odUpdateReq.input("ProductDescription", sql.NVarChar(2000), offerDescription.slice(0, 2000));
+        odUpdateReq.input(
+          "ProductDescription",
+          sql.NVarChar(MAX_DESCRIPTION_LENGTH),
+          offerDescription.slice(0, MAX_DESCRIPTION_LENGTH),
+        );
         odUpdateReq.input("ModifiedBy", sql.NVarChar(450), auditUserId);
         await odUpdateReq.query(`
           UPDATE dbo.OfferDetails

@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import type { DropdownOption } from "../../../lib/dropdownOptions";
 import { showToastMessage } from "../../../lib/toast";
 import { searchIncludes } from "../../../lib/textSearch";
+import { isLikelyBadlyCapitalised } from "../../../lib/descriptionCapitalisation";
 import { formatDateUK } from "../../lib/formatDateTime";
 import { showConfirmDialog, showRowResolutionDialog, showSelectableConfirmDialog } from "../../../lib/confirm";
 import layoutStyles from "../priceListDetail.module.css";
@@ -1324,15 +1325,6 @@ export default function PriceListImportClient({
         matchedProductCount?: number;
         skippedRows?: number;
         totalRows?: number;
-        blockers?: Array<{
-          rowIndex: number;
-          partNumber: string;
-          modelNumber: string | null;
-          description: string | null;
-          conflictProductId: number;
-          conflictBrandId: number | null;
-          conflictBrandName: string | null;
-        }>;
         descriptionMismatches?: { productId: number; partNumber: string; oldDescription: string; newDescription: string }[];
         modelNumberMismatches?: { productId: number; partNumber: string; oldModelNumber: string; newModelNumber: string }[];
         // 409 before any write: rows whose part number matches an existing product
@@ -1390,6 +1382,7 @@ export default function PriceListImportClient({
         }>;
         allCapsProductIds?: number[];
         allCapsDescriptionCount?: number;
+        allCapsSamples?: Array<{ productId: number; description: string }>;
       };
       let response!: Response;
       let raw = "";
@@ -1412,29 +1405,6 @@ export default function PriceListImportClient({
             return null;
           }
         })();
-
-        if (response.status === 409 && typedPayload?.blockers && typedPayload.blockers.length > 0) {
-          const blockers = typedPayload.blockers;
-          await showConfirmDialog({
-            title: "Import cancelled - duplicate part numbers",
-            message: `${blockers.length} row${blockers.length > 1 ? "s" : ""} in the file have part numbers that already exist in the database under a different brand. Fix or remove these rows and re-upload.`,
-            confirmLabel: "OK",
-            cancelLabel: "Close",
-            tone: "danger",
-            details: {
-              columns: ["Row", "Part Number", "Description", "Existing Brand", "Existing Product ID"],
-              rows: blockers.map((b) => [
-                String(b.rowIndex + 1),
-                b.partNumber || "-",
-                b.description || "-",
-                b.conflictBrandName || (b.conflictBrandId != null ? `#${b.conflictBrandId}` : "-"),
-                String(b.conflictProductId),
-              ]),
-            },
-          });
-          setError(typedPayload.error ?? "Import cancelled: duplicate part numbers.");
-          return;
-        }
 
         const clearedCollisions = typedPayload?.clearedPartNumberCollisions;
         if (
@@ -1599,6 +1569,10 @@ export default function PriceListImportClient({
 
       // Prompt user if product descriptions don't match
       const mismatches = typedPayload.descriptionMismatches;
+      // Overwrites the user accepts below change which descriptions are shouted, so the
+      // server's capitalisation flags (computed on the pre-import text) are reconciled
+      // against these before the capitalisation prompt.
+      let appliedDescriptionOverwrites: NonNullable<typeof mismatches> = [];
       if (mismatches && mismatches.length > 0) {
         const selected = await showSelectableConfirmDialog({
           title: "Description Mismatch",
@@ -1620,6 +1594,7 @@ export default function PriceListImportClient({
             });
             const updateData = await updateRes.json().catch(() => null);
             if (updateRes.ok && updateData?.ok) {
+              appliedDescriptionOverwrites = chosenMismatches;
               showToastMessage(`Updated ${updateData.updatedCount} product description(s).`);
             } else {
               showToastMessage(updateData?.error || "Failed to update descriptions.");
@@ -1663,47 +1638,144 @@ export default function PriceListImportClient({
         }
       }
 
-      // Prompt user to fix ALL CAPS descriptions detected in the import
-      const allCapsProductIds = typedPayload.allCapsProductIds;
-      const allCapsCount = typedPayload.allCapsDescriptionCount ?? 0;
-      if (allCapsProductIds && allCapsProductIds.length > 0 && allCapsCount >= 2) {
+      // Prompt user to fix ALL CAPS descriptions detected in the import.
+      //
+      // The server flagged products on the text it had at import time. Matched
+      // products whose description the user just chose to overwrite are re-judged on
+      // the file's text: a product that was shouted and is now fine drops out, and one
+      // that just received a shouted description from the file is added.
+      const flaggedIds = new Set(typedPayload.allCapsProductIds ?? []);
+      const sampleRows = [...(typedPayload.allCapsSamples ?? [])];
+      for (const overwrite of appliedDescriptionOverwrites) {
+        if (isLikelyBadlyCapitalised(overwrite.newDescription)) {
+          if (!flaggedIds.has(overwrite.productId)) {
+            flaggedIds.add(overwrite.productId);
+            sampleRows.push({
+              productId: overwrite.productId,
+              description: overwrite.newDescription.trim().slice(0, 160),
+            });
+          }
+        } else {
+          flaggedIds.delete(overwrite.productId);
+        }
+      }
+      const allCapsProductIds = [...flaggedIds];
+      const allCapsCount = allCapsProductIds.length;
+      // Offer the fix when at least two descriptions are flagged
+      if (allCapsCount >= 2) {
+        // Show real lines out of the file just imported. This used to quote two
+        // hardcoded ClickShare descriptions, so every import of every brand claimed
+        // to have found ClickShare products.
+        const samples = sampleRows
+          .filter((row) => flaggedIds.has(row.productId))
+          .slice(0, 3)
+          .map((row) => row.description);
         const confirmed = await showConfirmDialog({
           title: "Capitalisation Issues Detected",
-          message: `${allCapsCount} imported product${allCapsCount !== 1 ? "s" : ""} appear to have badly-capitalised descriptions (e.g. "CLICKSHARE HUB PRO EU WITH 2 BUTTONS" or "CLICKSHARE BAR CB Core EU WITH 1 BUTTON"). Would you like to use AI to fix the capitalisation for all of them?`,
+          message: `${allCapsCount} imported product${allCapsCount !== 1 ? "s" : ""} appear to have badly-capitalised descriptions. Would you like to use AI to fix the capitalisation for all of them? Only the letter case changes: no wording is added, removed or reworded.`,
+          details: samples.length
+            ? { columns: ["Examples from this file"], rows: samples.map((s) => [s]) }
+            : undefined,
           confirmLabel: "Yes, fix capitalisation",
           cancelLabel: "Skip",
         });
         if (confirmed) {
           const dismissCapsFix = showToastMessage("Fixing capitalisation…", "info", 300000);
           try {
-            // API handles up to 5000 per call; one call covers almost any real price list
-            const BATCH_SIZE = 5000;
+            // The API caps a single call at 5000 products, which covers any real price list.
+            const CAPS_CHUNK = 1000;
             let totalFixed = 0;
-            let batchError: string | null = null;
-            for (let i = 0; i < allCapsProductIds.length; i += BATCH_SIZE) {
-              const batch = allCapsProductIds.slice(i, i + BATCH_SIZE);
+            let totalUnchanged = 0;
+            let totalFailed = 0;
+            let capsError: string | null = null;
+            const undoItems: Array<{ productId: number; description: string }> = [];
+
+            for (let i = 0; i < allCapsProductIds.length; i += CAPS_CHUNK) {
+              const chunk = allCapsProductIds.slice(i, i + CAPS_CHUNK);
               const capsRes = await fetch("/api/products/fix-capitalisation", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productIds: batch }),
+                body: JSON.stringify({ productIds: chunk }),
               });
-              const capsData = await capsRes.json().catch(() => null);
+              const capsData = (await capsRes.json().catch(() => null)) as {
+                ok?: boolean;
+                updatedCount?: number;
+                unchangedCount?: number;
+                failedCount?: number;
+                error?: string;
+                results?: Array<{
+                  productId: number;
+                  oldDescription: string | null;
+                  status: string;
+                }>;
+              } | null;
               if (capsRes.ok && capsData?.ok) {
                 totalFixed += capsData.updatedCount ?? 0;
+                totalUnchanged += capsData.unchangedCount ?? 0;
+                totalFailed += capsData.failedCount ?? 0;
+                for (const row of capsData.results ?? []) {
+                  if (row.status === "updated") {
+                    undoItems.push({
+                      productId: row.productId,
+                      description: row.oldDescription ?? "",
+                    });
+                  }
+                }
               } else {
-                batchError = capsData?.error || "Failed to fix capitalisation.";
+                capsError = capsData?.error || "Failed to fix capitalisation.";
                 break;
               }
             }
             dismissCapsFix();
-            if (batchError) {
-              showToastMessage(batchError);
+
+            const undoAction = undoItems.length
+              ? {
+                  label: "Undo",
+                  onClick: () => {
+                    void fetch("/api/products/fix-capitalisation", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ items: undoItems }),
+                    })
+                      .then(() =>
+                        showToastMessage(
+                          `Reverted ${undoItems.length} description(s).`,
+                          "info",
+                        ),
+                      )
+                      .catch(() =>
+                        showToastMessage("Failed to revert descriptions.", "error"),
+                      );
+                  },
+                }
+              : undefined;
+
+            if (capsError) {
+              // Report what did land before the run stopped, so a partial fix is not
+              // mistaken for no fix at all.
+              showToastMessage(
+                totalFixed > 0
+                  ? `${capsError} ${totalFixed} description(s) were fixed before it stopped.`
+                  : capsError,
+                "error",
+                8000,
+                undoAction,
+              );
             } else {
-              showToastMessage(`Fixed capitalisation for ${totalFixed} description(s).`);
+              const extras = [
+                totalUnchanged > 0 ? `${totalUnchanged} already correct` : null,
+                totalFailed > 0 ? `${totalFailed} left unchanged` : null,
+              ].filter(Boolean);
+              showToastMessage(
+                `Fixed capitalisation for ${totalFixed} description(s)${extras.length ? ` (${extras.join(", ")})` : ""}.`,
+                totalFixed > 0 ? "success" : "info",
+                8000,
+                undoAction,
+              );
             }
           } catch {
             dismissCapsFix();
-            showToastMessage("Failed to fix capitalisation.");
+            showToastMessage("Failed to fix capitalisation.", "error");
           }
         }
       }
