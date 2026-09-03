@@ -946,10 +946,10 @@ export default function OfferBasicDataClient({
       setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
 
       // Changing the term made the server rewrite the printed text from the
-      // catalogue (snapshot in the offer's language). Mirror it locally so the
-      // text box shows what was actually saved without a reload. For OTHER the
-      // text is left exactly as it was: it is now the user's to type.
-      if (def.id === 'paymentTermId' && !isOtherPaymentTerm(resolvedDisplayValue)) {
+      // catalogue (snapshot in the offer's language); for OTHER it seeded OTHER's
+      // own wording, which the now-unlocked box lets the user edit. Mirror it
+      // locally so the box shows what was actually saved without a reload.
+      if (def.id === 'paymentTermId') {
         const derived = resolvePaymentTermText(
           paymentTermOptionMapRef.current.get(resolvedDisplayValue),
           savedOfferLanguage(),

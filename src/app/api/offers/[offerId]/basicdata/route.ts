@@ -205,7 +205,14 @@ export async function PATCH(
       const effectiveLanguage = normalizeOfferLanguage(
         langUpdate ? langUpdate.value : current?.OfferLanguage,
       );
-      if (effectiveTermId != null && !isOtherPaymentTerm(effectiveTermId)) {
+      // Switching TO OTHER seeds the box with OTHER's own wording ("Upon
+      // Agreement") in the offer's language, so the user starts from that and
+      // not from the previous term's sentence. Once on OTHER, the text is theirs:
+      // a later language change or a text edit leaves it alone.
+      const switchedToOther = Boolean(termUpdate)
+        && isOtherPaymentTerm(effectiveTermId)
+        && textUpdateIdx === -1;
+      if (effectiveTermId != null && (!isOtherPaymentTerm(effectiveTermId) || switchedToOther)) {
         const termRow = (await pool.request()
           .input('__ptTermId', sql.Int, effectiveTermId)
           .query<{ DescriptionGR: string | null; DescriptionEN: string | null }>(
@@ -232,7 +239,7 @@ export async function PATCH(
         if (textUpdateIdx !== -1) normalizedUpdates[textUpdateIdx] = derivedUpdate;
         else normalizedUpdates.push(derivedUpdate);
       }
-      // OTHER: the text is free and stays exactly as sent (or untouched).
+      // Already on OTHER: the text is free and stays exactly as sent (or untouched).
     }
 
     // Check if status/customer are being updated and store old values
