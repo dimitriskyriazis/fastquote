@@ -271,3 +271,8 @@
   font-weight: 600;
 }
 
+
+.cardExtraWide {
+  width: min(1100px, calc(100% - 32px));
+  max-height: 92vh;
+}

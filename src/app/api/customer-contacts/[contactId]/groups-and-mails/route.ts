@@ -3,6 +3,9 @@ import { logRequest } from '../../../../../lib/apiHelpers';
 import sql from "mssql";
 import { getPool } from "../../../../../lib/sql";
 import { requirePermission } from "../../../../../lib/authz";
+import { resolveAuditUserId } from "../../../../../lib/auditTrail";
+import { getRequestId } from "../../../../../lib/requestId";
+import { logEditAuditDetails } from "../../../../../lib/mutationAudit";
 
 export async function GET(
   req: NextRequest,
@@ -185,6 +188,95 @@ export async function POST(
     }
 
     return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+}
+
+const EDITABLE_GROUP_FIELDS = new Set(["Importance", "Note"]);
+const IMPORTANCE_VALUES = new Set(["High", "Med", "Low"]);
+
+/**
+ * Edit Importance / Note on one of this contact's group memberships.
+ * Body: { type: 'group', id: ContactGroupListID, field: 'Importance' | 'Note', value }.
+ * The UPDATE is scoped to ContactID so a membership row of another contact can
+ * never be edited through this contact's URL.
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ contactId: string }> },
+) {
+  logRequest(req, '/api/customer-contacts/[contactId]/groups-and-mails');
+  const requestId = await getRequestId(req);
+  const auditUserId = resolveAuditUserId(req);
+  try {
+    const auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) return auth.response;
+
+    const { contactId: rawId } = await params;
+    const contactId = Number.parseInt(rawId, 10);
+    if (!Number.isFinite(contactId)) {
+      return NextResponse.json({ ok: false, error: "Invalid contact ID" }, { status: 400 });
+    }
+
+    const body = (await req.json().catch(() => null)) as {
+      type?: string;
+      id?: number | string;
+      field?: string;
+      value?: unknown;
+    } | null;
+
+    if (body?.type !== 'group') {
+      return NextResponse.json({ ok: false, error: "Only group memberships can be edited" }, { status: 400 });
+    }
+
+    const id = Number(body.id);
+    if (!Number.isFinite(id)) {
+      return NextResponse.json({ ok: false, error: "Invalid id" }, { status: 400 });
+    }
+
+    const field = String(body.field ?? "");
+    if (!EDITABLE_GROUP_FIELDS.has(field)) {
+      return NextResponse.json({ ok: false, error: "Invalid field" }, { status: 400 });
+    }
+
+    const trimmed = body.value == null ? "" : String(body.value).trim();
+    const value = trimmed.length > 0 ? trimmed : null;
+    if (field === "Importance" && value !== null && !IMPORTANCE_VALUES.has(value)) {
+      return NextResponse.json({ ok: false, error: "Importance must be High, Med or Low" }, { status: 400 });
+    }
+
+    const pool = await getPool();
+    const request = pool.request();
+    request.input("id", sql.Int, id);
+    request.input("contactId", sql.Int, contactId);
+    request.input("value", field === "Importance" ? sql.NVarChar(50) : sql.NVarChar(sql.MAX), value);
+    // `field` is one of two literals validated above, so interpolating it is safe.
+    const result = await request.query<{ Before: string | null; After: string | null }>(`
+      UPDATE dbo.ContactsGroupLists
+      SET ${field} = @value
+      OUTPUT DELETED.${field} AS Before, INSERTED.${field} AS After
+      WHERE ID = @id AND ContactID = @contactId
+    `);
+    const row = result.recordset?.[0];
+    if (!row) {
+      return NextResponse.json({ ok: false, error: "Group membership not found for this contact" }, { status: 404 });
+    }
+
+    logEditAuditDetails({
+      endpoint: '/api/customer-contacts/[contactId]/groups-and-mails',
+      method: 'PATCH',
+      requestId,
+      userId: auditUserId,
+      targetEntity: 'contactGroupMembers',
+      targetIds: [id],
+      changes: [{ targetId: id, targetName: null, field, before: row.Before, after: row.After }],
+      message: 'Contact group member fields updated',
+    });
+
+    return NextResponse.json({ ok: true, value: row.After });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

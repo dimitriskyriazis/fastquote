@@ -23,6 +23,11 @@ type MailEntry = {
 
 type GroupOption = { value: string; label: string };
 
+type EditableGroupField = 'Importance' | 'Note';
+
+// Same value set the contact-group members grid offers (agSelectCellEditor).
+const IMPORTANCE_OPTIONS = ['High', 'Med', 'Low'];
+
 type Props = {
   contactId: number;
   contactName: string;
@@ -40,6 +45,12 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
   const [isAddGroupListOpen, setIsAddGroupListOpen] = useState(false);
   const [addGroupSaving, setAddGroupSaving] = useState(false);
   const addGroupListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Note text being typed per membership row (keyed by ContactGroupListID).
+  // Committed on blur / Enter, discarded on Escape.
+  const [noteDrafts, setNoteDrafts] = useState<Record<number, string>>({});
+  // "<ContactGroupListID>:<field>" keys with a PATCH in flight.
+  const [pendingEdits, setPendingEdits] = useState<Set<string>>(() => new Set());
 
   const fetchData = useCallback(async () => {
     try {
@@ -144,6 +155,68 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
     }
   }, [addGroupSelected, contactId]);
 
+  const updateGroupField = useCallback(async (
+    contactGroupListId: number,
+    field: EditableGroupField,
+    rawValue: string,
+  ) => {
+    const current = groups.find((g) => g.ContactGroupListID === contactGroupListId);
+    if (!current) return;
+    const previous = current[field];
+    const next = rawValue.trim() || null;
+    if (next === (previous ?? null)) return;
+
+    const key = `${contactGroupListId}:${field}`;
+    setPendingEdits((prev) => new Set(prev).add(key));
+    // Optimistic: show the new value straight away, revert if the save fails.
+    setGroups((prev) => prev.map((g) => (
+      g.ContactGroupListID === contactGroupListId ? { ...g, [field]: next } : g
+    )));
+    try {
+      const res = await fetch(`/api/customer-contacts/${encodeURIComponent(contactId)}/groups-and-mails`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'group', id: contactGroupListId, field, value: next }),
+      });
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? `Failed to update ${field.toLowerCase()}`);
+      }
+    } catch (err) {
+      setGroups((prev) => prev.map((g) => (
+        g.ContactGroupListID === contactGroupListId ? { ...g, [field]: previous } : g
+      )));
+      const message = err instanceof Error ? err.message : `Failed to update ${field.toLowerCase()}`;
+      showToastMessage(message, 'error');
+    } finally {
+      setPendingEdits((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(key);
+        return nextSet;
+      });
+    }
+  }, [contactId, groups]);
+
+  const commitNoteDraft = useCallback((contactGroupListId: number) => {
+    const draft = noteDrafts[contactGroupListId];
+    if (draft === undefined) return;
+    setNoteDrafts((prev) => {
+      const rest = { ...prev };
+      delete rest[contactGroupListId];
+      return rest;
+    });
+    void updateGroupField(contactGroupListId, 'Note', draft);
+  }, [noteDrafts, updateGroupField]);
+
+  const discardNoteDraft = useCallback((contactGroupListId: number) => {
+    setNoteDrafts((prev) => {
+      if (!(contactGroupListId in prev)) return prev;
+      const rest = { ...prev };
+      delete rest[contactGroupListId];
+      return rest;
+    });
+  }, []);
+
   const handleDeleteGroup = useCallback(async (contactGroupListId: number) => {
     try {
       const res = await fetch(`/api/customer-contacts/${encodeURIComponent(contactId)}/groups-and-mails`, {
@@ -183,14 +256,19 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
   }, [contactId]);
 
   const tableStyle: React.CSSProperties = {
-    width: '100%', borderCollapse: 'collapse', fontSize: '13px',
+    width: '100%', borderCollapse: 'collapse', fontSize: '13px', tableLayout: 'fixed',
   };
   const thStyle: React.CSSProperties = {
     padding: '6px 8px', textAlign: 'left', background: '#f1f5f9',
     borderBottom: '1px solid #e2e8f0', fontWeight: 600, fontSize: '12px',
+    position: 'sticky', top: 0, zIndex: 1,
   };
   const tdStyle: React.CSSProperties = {
-    padding: '4px 8px', borderBottom: '1px solid #f1f5f9',
+    padding: '4px 8px', borderBottom: '1px solid #f1f5f9', verticalAlign: 'middle',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  };
+  const listFrameStyle: React.CSSProperties = {
+    maxHeight: '320px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px',
   };
   const deleteBtnStyle: React.CSSProperties = {
     background: 'none', border: 'none', color: '#ef4444',
@@ -198,6 +276,9 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
   };
   const sectionStyle: React.CSSProperties = {
     fontWeight: 600, fontSize: '14px', marginBottom: '6px', color: '#334155',
+  };
+  const sectionHintStyle: React.CSSProperties = {
+    fontWeight: 400, fontSize: '12px', color: '#64748b', marginLeft: '8px',
   };
   const addRowStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '8px',
@@ -207,6 +288,10 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
   const addInputStyle: React.CSSProperties = {
     flex: 1, border: '1px solid #d1d5db', borderRadius: '8px',
     padding: '6px 10px', fontSize: '13px', color: '#0f172a', background: '#fff',
+  };
+  const cellControlStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box', border: '1px solid #d1d5db', borderRadius: '6px',
+    padding: '4px 8px', fontSize: '13px', color: '#0f172a', background: '#fff',
   };
   const addBtnStyle: React.CSSProperties = {
     border: 'none', borderRadius: '8px', padding: '6px 14px',
@@ -238,15 +323,20 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
       confirmLabel="Close"
       saving={false}
       error={null}
-      cardClassName={lookupStyles.cardWide}
+      cardClassName={lookupStyles.cardExtraWide}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: '500px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {loading ? (
           <div style={{ textAlign: 'center', padding: '20px', color: '#888' }}>Loading...</div>
         ) : (
           <>
             <div>
-              <div style={sectionStyle}>Contact Groups</div>
+              <div style={sectionStyle}>
+                Contact Groups
+                {groups.length > 0 ? (
+                  <span style={sectionHintStyle}>Importance and Note are editable; changes save immediately.</span>
+                ) : null}
+              </div>
               <div style={addRowStyle}>
                 <input
                   autoComplete="off"
@@ -311,34 +401,89 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
               {groups.length === 0 ? (
                 <div style={{ fontSize: '13px', color: '#888' }}>Not in any contact groups</div>
               ) : (
-                <div style={{ maxHeight: '200px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                <div style={listFrameStyle}>
                   <table style={tableStyle}>
+                    <colgroup>
+                      <col style={{ width: '38%' }} />
+                      <col style={{ width: '120px' }} />
+                      <col />
+                      <col style={{ width: '44px' }} />
+                    </colgroup>
                     <thead>
                       <tr>
                         <th style={thStyle}>Description</th>
-                        <th style={{ ...thStyle, width: '80px' }}>Importance</th>
+                        <th style={thStyle}>Importance</th>
                         <th style={thStyle}>Note</th>
-                        <th style={{ ...thStyle, width: '50px' }}></th>
+                        <th style={thStyle}></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {groups.map((g) => (
-                        <tr key={g.ContactGroupListID}>
-                          <td style={tdStyle}>{g.Description ?? ''}</td>
-                          <td style={tdStyle}>{g.Importance ?? ''}</td>
-                          <td style={tdStyle}>{g.Note ?? ''}</td>
-                          <td style={tdStyle}>
-                            <button
-                              type="button"
-                              style={deleteBtnStyle}
-                              title="Remove from group"
-                              onClick={() => handleDeleteGroup(g.ContactGroupListID)}
-                            >
-                              ✕
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {groups.map((g) => {
+                        const importanceValue = g.Importance ?? '';
+                        // Keep a legacy value that is not in the standard list selectable
+                        // so the dropdown never silently shows blank for it.
+                        const importanceOptions = importanceValue && !IMPORTANCE_OPTIONS.includes(importanceValue)
+                          ? [...IMPORTANCE_OPTIONS, importanceValue]
+                          : IMPORTANCE_OPTIONS;
+                        const importancePending = pendingEdits.has(`${g.ContactGroupListID}:Importance`);
+                        const notePending = pendingEdits.has(`${g.ContactGroupListID}:Note`);
+                        const noteValue = noteDrafts[g.ContactGroupListID] ?? (g.Note ?? '');
+                        return (
+                          <tr key={g.ContactGroupListID}>
+                            <td style={tdStyle} title={g.Description ?? ''}>{g.Description ?? ''}</td>
+                            <td style={tdStyle}>
+                              <select
+                                style={{ ...cellControlStyle, opacity: importancePending ? 0.6 : 1 }}
+                                value={importanceValue}
+                                disabled={importancePending}
+                                aria-label={`Importance for ${g.Description ?? 'group'}`}
+                                onChange={(e) => void updateGroupField(g.ContactGroupListID, 'Importance', e.target.value)}
+                              >
+                                <option value="">(none)</option>
+                                {importanceOptions.map((opt) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={tdStyle}>
+                              <input
+                                type="text"
+                                style={{ ...cellControlStyle, opacity: notePending ? 0.6 : 1 }}
+                                value={noteValue}
+                                disabled={notePending}
+                                placeholder="Add a note..."
+                                aria-label={`Note for ${g.Description ?? 'group'}`}
+                                onChange={(e) => {
+                                  const text = e.target.value;
+                                  setNoteDrafts((prev) => ({ ...prev, [g.ContactGroupListID]: text }));
+                                }}
+                                onBlur={() => commitNoteDraft(g.ContactGroupListID)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.currentTarget.blur();
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    discardNoteDraft(g.ContactGroupListID);
+                                    e.currentTarget.blur();
+                                  }
+                                }}
+                              />
+                            </td>
+                            <td style={tdStyle}>
+                              <button
+                                type="button"
+                                style={deleteBtnStyle}
+                                title="Remove from group"
+                                onClick={() => handleDeleteGroup(g.ContactGroupListID)}
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -349,22 +494,28 @@ export default function ContactGroupsMailsModal({ contactId, contactName, onClos
               {mails.length === 0 ? (
                 <div style={{ fontSize: '13px', color: '#888' }}>Not in any mails</div>
               ) : (
-                <div style={{ maxHeight: '200px', overflow: 'auto', border: '1px solid #e2e8f0', borderRadius: '6px' }}>
+                <div style={listFrameStyle}>
                   <table style={tableStyle}>
+                    <colgroup>
+                      <col style={{ width: '80px' }} />
+                      <col style={{ width: '38%' }} />
+                      <col />
+                      <col style={{ width: '44px' }} />
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th style={{ ...thStyle, width: '60px' }}>Mail ID</th>
+                        <th style={thStyle}>Mail ID</th>
                         <th style={thStyle}>Description</th>
                         <th style={thStyle}>Note</th>
-                        <th style={{ ...thStyle, width: '50px' }}></th>
+                        <th style={thStyle}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {mails.map((m) => (
                         <tr key={m.MailContactID}>
                           <td style={tdStyle}>{m.MailID}</td>
-                          <td style={tdStyle}>{m.Description ?? ''}</td>
-                          <td style={tdStyle}>{m.Note ?? ''}</td>
+                          <td style={tdStyle} title={m.Description ?? ''}>{m.Description ?? ''}</td>
+                          <td style={tdStyle} title={m.Note ?? ''}>{m.Note ?? ''}</td>
                           <td style={tdStyle}>
                             <button
                               type="button"
