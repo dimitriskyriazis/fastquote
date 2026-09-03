@@ -1,4 +1,5 @@
 import sql from 'mssql';
+import type { PaymentTermOption } from './OfferBasicDataTypes';
 import { getPool } from '../../../lib/sql';
 import { toDropdownOptions, type RawDropdownRow } from '../../../lib/dropdownOptions';
 import styles from './OfferBasicDataPanel.module.css';
@@ -24,6 +25,8 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.Description,
         o.OfferDescription,
         o.PaymentTerms,
+        o.PaymentTermID,
+        pt.Name AS PaymentTermName,
         o.InstallationSchedule,
         o.OfferNotesClosing,
         o.OfferValidity,
@@ -84,6 +87,7 @@ async function fetchOfferBasicRecord(offerId: number) {
         o.IsTelvin
       FROM dbo.Offer AS o
       LEFT JOIN dbo.Customers AS c ON o.CustomerID = c.ID
+      LEFT JOIN dbo.PaymentTerms AS pt ON o.PaymentTermID = pt.ID
       LEFT JOIN dbo.OfferStatus AS os ON o.StatusID = os.ID
       LEFT JOIN dbo.PricingPolicies AS pp ON o.PricingPolicyID = pp.ID
       LEFT JOIN dbo.Markets AS m ON o.MarketID = m.ID
@@ -137,6 +141,31 @@ async function fetchPricingPolicies() {
     return mapLookupRows(result.recordset);
   } catch (err) {
     console.error('Failed to load pricing policies', err);
+    return [];
+  }
+}
+
+type PaymentTermLookupRow = LookupRow & { DescriptionGR?: string | null; DescriptionEN?: string | null };
+
+async function fetchPaymentTerms(): Promise<PaymentTermOption[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<PaymentTermLookupRow>(`
+      SELECT ID, Name, DescriptionGR, DescriptionEN
+      FROM dbo.PaymentTerms
+      WHERE ISNULL(Enabled, 0) = 1
+      ORDER BY ID
+    `);
+    return (result.recordset ?? [])
+      .filter((row) => row?.ID != null)
+      .map((row) => ({
+        value: String(row.ID),
+        label: (row.Name ?? '').trim() || `Option ${row.ID}`,
+        descriptionGr: (row.DescriptionGR ?? '').trim(),
+        descriptionEn: (row.DescriptionEN ?? '').trim(),
+      }));
+  } catch (err) {
+    console.error('Failed to load payment terms', err);
     return [];
   }
 }
@@ -317,6 +346,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     users,
     fwcProjects,
     currencies,
+    paymentTerms,
   ] = await Promise.all([
     fetchCustomerContacts(record.CustomerID ?? null),
     fetchCustomers(),
@@ -327,6 +357,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
     fetchAspNetUsers(),
     fetchFwcProjects(),
     fetchCurrencies(),
+    fetchPaymentTerms(),
   ]);
 
   return (
@@ -342,6 +373,7 @@ export default async function OfferBasicDataPanel({ offerId }: Props) {
       users={users}
       fwcProjects={fwcProjects}
       currencies={currencies}
+      paymentTerms={paymentTerms}
     />
   );
 }

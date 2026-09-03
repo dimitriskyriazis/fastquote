@@ -106,12 +106,12 @@ export async function POST(req: NextRequest) {
 
     // Mirrors ADMIN_ONLY_FIELDS in api/customers/[customerId]/basicdata: creating
     // a customer must not be the way round the edit restriction.
-    if (paymentTermId != null && !roleHasPermission(auth.roles, 'manageCustomerPaymentTerms')) {
+    if (paymentTermId != null && !roleHasPermission(auth.roles, 'managePaymentTerms')) {
       return NextResponse.json(
         {
           ok: false,
           error: 'Only Administrators can set payment terms.',
-          requiredPermission: 'manageCustomerPaymentTerms',
+          requiredPermission: 'managePaymentTerms',
         },
         { status: 403 },
       );

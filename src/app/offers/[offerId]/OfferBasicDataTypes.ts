@@ -15,6 +15,10 @@ export type OfferBasicRecord = {
   Description: string | null;
   OfferDescription: string | null;
   PaymentTerms: string | null;
+  // WHICH catalogue term applies (dbo.PaymentTerms.ID). PaymentTerms above is
+  // the printed snapshot of its description, or free text when the term is OTHER.
+  PaymentTermID: number | null;
+  PaymentTermName: string | null;
   InstallationSchedule: string | null;
   OfferNotesClosing: string | null;
   OfferValidity: string | null;
@@ -86,6 +90,7 @@ export type OfferBasicUpdateField =
   | 'Description'
   | 'OfferDescription'
   | 'PaymentTerms'
+  | 'PaymentTermID'
   | 'InstallationSchedule'
   | 'OfferNotesClosing'
   | 'OfferValidity'
@@ -124,3 +129,11 @@ export type OfferBasicUpdateField =
   | 'ExtraNetDiscount'
   | 'ExtraNetDiscountMode'
   | 'IsTelvin';
+
+// A payment-term dropdown option. Both descriptions travel with it so the form
+// can show the text that will be printed, in the offer's language, without a
+// round trip.
+export type PaymentTermOption = OfferDropdownOption & {
+  descriptionGr: string;
+  descriptionEn: string;
+};

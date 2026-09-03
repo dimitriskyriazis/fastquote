@@ -7,6 +7,8 @@ import { getRequestId } from '../../../../../lib/requestId';
 import { logEditAuditDetails, type FieldChange } from '../../../../../lib/mutationAudit';
 import type { OfferBasicUpdateField } from '../../../../offers/[offerId]/OfferBasicDataTypes';
 import { requirePermission } from '../../../../../lib/authz';
+import { normalizeOfferLanguage } from '../../../../../lib/offerLanguage';
+import { isOtherPaymentTerm, resolvePaymentTermText } from '../../../../../lib/paymentTermText';
 import { PROBABILITY_MIN, PROBABILITY_MAX } from '../../../../../lib/constants';
 import { clampPercentSql } from '../../../../../lib/sqlPercentClamp';
 import { priceListInEffectSql } from '../../../../../lib/priceListSql';
@@ -47,6 +49,7 @@ const FIELD_CONFIG: Record<OfferBasicUpdateField, FieldConfig> = {
   Description: { column: 'Description', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferDescription: { column: 'OfferDescription', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   PaymentTerms: { column: 'PaymentTerms', type: 'string', sqlType: sql.NVarChar, length: 500 },
+  PaymentTermID: { column: 'PaymentTermID', type: 'number', sqlType: sql.Int },
   InstallationSchedule: { column: 'InstallationSchedule', type: 'string', sqlType: sql.NVarChar, length: 500 },
   OfferNotesClosing: { column: 'OfferNotesClosing', type: 'string', sqlType: sql.NVarChar, length: 2000 },
   OfferValidity: { column: 'OfferValidity', type: 'string', sqlType: sql.NVarChar, length: 500 },
@@ -175,6 +178,62 @@ export async function PATCH(
     }
 
     const pool = await getPool();
+
+    // ---- payment terms ------------------------------------------------------
+    // PaymentTermID says WHICH term; PaymentTerms is the text that prints. For
+    // any term but OTHER the text is a snapshot of the catalogue description in
+    // the offer's language, written here whenever the term OR the language is
+    // set, and never re-derived after the fact. Whatever text the client sent in
+    // that case is replaced rather than rejected, so a batch that also carries
+    // Title / DeliveryTime (the language-switch sync) is not failed over it.
+    // Changing the term itself needs nothing beyond editOffers (this route's own
+    // permission): the term on an offer is a sales decision. managePaymentTerms
+    // guards the customer's standing term and the catalogue, not this.
+    const termUpdate = normalizedUpdates.find((u) => u.field === 'PaymentTermID');
+    const langUpdate = normalizedUpdates.find((u) => u.field === 'OfferLanguage');
+    const textUpdateIdx = normalizedUpdates.findIndex((u) => u.field === 'PaymentTerms');
+    if (termUpdate || langUpdate || textUpdateIdx !== -1) {
+      if (termUpdate && (typeof termUpdate.value !== 'number' || !Number.isInteger(termUpdate.value))) {
+        return NextResponse.json({ ok: false, error: 'A payment term is required.' }, { status: 400 });
+      }
+      const current = (await pool.request()
+        .input('__ptOfferId', sql.Int, offerId)
+        .query<{ PaymentTermID: number | null; OfferLanguage: string | null }>(
+          'SELECT PaymentTermID, OfferLanguage FROM dbo.Offer WHERE ID = @__ptOfferId',
+        )).recordset?.[0];
+      const effectiveTermId = termUpdate ? (termUpdate.value as number) : (current?.PaymentTermID ?? null);
+      const effectiveLanguage = normalizeOfferLanguage(
+        langUpdate ? langUpdate.value : current?.OfferLanguage,
+      );
+      if (effectiveTermId != null && !isOtherPaymentTerm(effectiveTermId)) {
+        const termRow = (await pool.request()
+          .input('__ptTermId', sql.Int, effectiveTermId)
+          .query<{ DescriptionGR: string | null; DescriptionEN: string | null }>(
+            'SELECT DescriptionGR, DescriptionEN FROM dbo.PaymentTerms WHERE ID = @__ptTermId AND ISNULL(Enabled, 0) = 1',
+          )).recordset?.[0];
+        if (!termRow) {
+          return NextResponse.json({ ok: false, error: 'Unknown or disabled payment term.' }, { status: 400 });
+        }
+        const derived = resolvePaymentTermText(
+          { descriptionGr: termRow.DescriptionGR, descriptionEn: termRow.DescriptionEN },
+          effectiveLanguage,
+        );
+        if (!derived) {
+          return NextResponse.json(
+            { ok: false, error: `The selected payment term has no ${effectiveLanguage} description.` },
+            { status: 400 },
+          );
+        }
+        const derivedUpdate: NormalizedUpdate = {
+          field: 'PaymentTerms',
+          config: FIELD_CONFIG.PaymentTerms,
+          value: normalizeValue(derived, FIELD_CONFIG.PaymentTerms.type),
+        };
+        if (textUpdateIdx !== -1) normalizedUpdates[textUpdateIdx] = derivedUpdate;
+        else normalizedUpdates.push(derivedUpdate);
+      }
+      // OTHER: the text is free and stays exactly as sent (or untouched).
+    }
 
     // Check if status/customer are being updated and store old values
     const statusUpdate = normalizedUpdates.find((u) => u.field === 'StatusID');

@@ -6,6 +6,7 @@ import type { DropdownOption } from '../../../lib/dropdownOptions';
 import { showToastMessage } from '../../../lib/toast';
 import { searchIncludes } from '../../../lib/textSearch';
 import { useAuditUser } from '../../components/AuditUserProvider';
+import { DEFAULT_OFFER_PAYMENT_TERM_ID, isOtherPaymentTerm, resolvePaymentTermText } from '../../../lib/paymentTermText';
 import { useFormDraft } from '../../hooks/useFormDraft';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import panelStyles from '../[offerId]/OfferBasicDataPanel.module.css';
@@ -27,6 +28,7 @@ type FormValues = {
   title: string;
   description: string;
   paymentTerms: string;
+  paymentTermId: string;
   deliveryTime: string;
   offerValidity: string;
   installationSchedule: string;
@@ -83,10 +85,13 @@ type OfferCreateDefaults = {
 export type MarketOption = DropdownOption & { salesDivisionId: string | null };
 // Each customer carries its own pricing policy ('' when it has none) so the offer's Pricing
 // Policy can default from whoever is selected.
-export type CustomerOption = DropdownOption & { pricingPolicyId?: string };
+export type CustomerOption = DropdownOption & { pricingPolicyId?: string; paymentTermId?: string };
 // enabled/hasRules mirror the two checks POST /api/offers/create runs. They gate only the
 // AUTO-selected default: every policy stays pickable by hand, exactly as before.
 export type PricingPolicyOption = DropdownOption & { enabled?: boolean; hasRules?: boolean };
+// Both descriptions ride along so the form can show the text that will print,
+// in the offer's language, the moment a term or the language changes.
+export type PaymentTermOption = DropdownOption & { descriptionGr?: string; descriptionEn?: string };
 type UserOption = DropdownOption & { salesSeniorityName?: string | null };
 type LookupKey =
   | 'customers'
@@ -96,7 +101,8 @@ type LookupKey =
   | 'salesDivisions'
   | 'users'
   | 'fwcProjects'
-  | 'currencies';
+  | 'currencies'
+  | 'paymentTerms';
 type OfferLookupPayload = {
   customers?: CustomerOption[];
   statuses?: DropdownOption[];
@@ -106,10 +112,12 @@ type OfferLookupPayload = {
   users?: UserOption[];
   fwcProjects?: DropdownOption[];
   currencies?: DropdownOption[];
+  paymentTerms?: PaymentTermOption[];
 };
 
 type Props = {
   customers: CustomerOption[];
+  paymentTerms: PaymentTermOption[];
   statuses: DropdownOption[];
   pricingPolicies: PricingPolicyOption[];
   markets: MarketOption[];
@@ -224,6 +232,7 @@ export default function OfferCreateClient({
   users,
   fwcProjects,
   currencies,
+  paymentTerms,
   defaultValues,
   formId = 'offer-create-form',
 }: Props) {
@@ -245,6 +254,7 @@ export default function OfferCreateClient({
   const [localUsers, setLocalUsers] = useState(users);
   const [localFwcProjects, setLocalFwcProjects] = useState(fwcProjects);
   const [localCurrencies, setLocalCurrencies] = useState(currencies);
+  const [localPaymentTerms, setLocalPaymentTerms] = useState(paymentTerms);
   const lastCustomerRef = useRef<string>('');
   const listCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const appliedCustomerParamRef = useRef(false);
@@ -273,6 +283,51 @@ export default function OfferCreateClient({
     });
     return map;
   }, [localCustomers]);
+
+  const customerTermMap = useMemo(() => {
+    const map = new Map<string, string>();
+    localCustomers.forEach((customer) => {
+      if (!customer?.value) return;
+      map.set(customer.value, (customer.paymentTermId ?? '').trim());
+    });
+    return map;
+  }, [localCustomers]);
+
+  const paymentTermOptionMap = useMemo(() => {
+    const map = new Map<string, PaymentTermOption>();
+    localPaymentTerms.forEach((term) => {
+      if (!term?.value) return;
+      map.set(term.value, term);
+    });
+    return map;
+  }, [localPaymentTerms]);
+  // handleChange is memoised on its own deps; read the map through a ref so a
+  // late-arriving lookup never leaves it holding a stale, empty map.
+  const paymentTermOptionMapRef = useRef(paymentTermOptionMap);
+  useEffect(() => { paymentTermOptionMapRef.current = paymentTermOptionMap; }, [paymentTermOptionMap]);
+
+  // The text an offer prints for a given term and language. For OTHER the text
+  // is the user's own: keep whatever is there unless it is blank or is a text
+  // this form itself derived, in which case fall back to the language default.
+  const paymentTextFor = useCallback(
+    (termId: string, language: OfferLanguage, currentText: string): string => {
+      const map = paymentTermOptionMapRef.current;
+      if (!isOtherPaymentTerm(termId)) {
+        return resolvePaymentTermText(map.get(termId), language) || currentText;
+      }
+      const derivedTexts = new Set<string>();
+      map.forEach((t) => {
+        if (t.descriptionGr) derivedTexts.add(t.descriptionGr);
+        if (t.descriptionEn) derivedTexts.add(t.descriptionEn);
+      });
+      Object.values(OFFER_LANGUAGE_DEFAULTS).forEach((d) => derivedTexts.add(d.paymentTerms));
+      const trimmed = currentText.trim();
+      return trimmed === '' || derivedTexts.has(trimmed)
+        ? OFFER_LANGUAGE_DEFAULTS[language].paymentTerms
+        : currentText;
+    },
+    [],
+  );
 
   const policyOptionMap = useMemo(() => {
     const map = new Map<string, PricingPolicyOption>();
@@ -340,7 +395,10 @@ export default function OfferCreateClient({
     return {
       title: langDefaults.title,
       description: '',
-      paymentTerms: langDefaults.paymentTerms,
+      // A new offer starts on the house default term, with its printed text in
+      // the default language; picking a customer with its own term replaces both.
+      paymentTerms: paymentTextFor(String(DEFAULT_OFFER_PAYMENT_TERM_ID), DEFAULT_OFFER_LANGUAGE, langDefaults.paymentTerms),
+      paymentTermId: String(DEFAULT_OFFER_PAYMENT_TERM_ID),
       deliveryTime: langDefaults.deliveryTime,
       offerValidity: langDefaults.offerValidity,
       installationSchedule: '',
@@ -374,7 +432,7 @@ export default function OfferCreateClient({
       currencyId: eurCurrencyId,
       currencyModifier: '',
     };
-  }, [
+  }, [paymentTextFor, 
     defaultPricingPolicyId,
     defaultStatusId,
     defaultSuggestedUserId,
@@ -408,7 +466,7 @@ export default function OfferCreateClient({
       ) {
         policyTouchedRef.current = true;
       }
-      setValues(restoredValues);
+      setValues({ ...initialValuesRef.current, ...restoredValues });
       showToastMessage('Draft restored', 'info', 5500, {
         label: 'Discard',
         onClick: () => {
@@ -461,6 +519,9 @@ export default function OfferCreateClient({
   useEffect(() => {
     setLocalCurrencies(currencies);
   }, [currencies]);
+  useEffect(() => {
+    setLocalPaymentTerms(paymentTerms);
+  }, [paymentTerms]);
 
   useEffect(() => {
     if (!eurCurrencyId) return;
@@ -490,6 +551,7 @@ export default function OfferCreateClient({
       if (payload.lookups.users) setLocalUsers(payload.lookups.users);
       if (payload.lookups.fwcProjects) setLocalFwcProjects(payload.lookups.fwcProjects);
       if (payload.lookups.currencies) setLocalCurrencies(payload.lookups.currencies);
+      if (payload.lookups.paymentTerms) setLocalPaymentTerms(payload.lookups.paymentTerms);
     } catch (err) {
       console.error(err);
       showToastMessage('Unable to refresh latest dropdown values.', 'warning');
@@ -627,6 +689,27 @@ export default function OfferCreateClient({
     [policyOptionMap, resolvePolicyForCustomer],
   );
 
+  // The offer's payment term defaults from the customer (dbo.Customers.PaymentTermID),
+  // falling back to the house default, 30% DEPOSIT & BALANCE ON DELIVERY, when the
+  // customer has none. Applied on every pick: it is the customer's standing
+  // agreement. Any sales person may then change it for this offer.
+  const applyCustomerPaymentTerm = useCallback((customerId: string) => {
+    const trimmed = customerId.trim();
+    if (!trimmed) return;
+    const fromCustomer = customerTermMap.get(trimmed) ?? '';
+    const nextTermId = fromCustomer && paymentTermOptionMapRef.current.has(fromCustomer)
+      ? fromCustomer
+      : String(DEFAULT_OFFER_PAYMENT_TERM_ID);
+    setValues((prev) => {
+      if (prev.paymentTermId === nextTermId) return prev;
+      return {
+        ...prev,
+        paymentTermId: nextTermId,
+        paymentTerms: paymentTextFor(nextTermId, prev.offerLanguage, prev.paymentTerms),
+      };
+    });
+  }, [customerTermMap, paymentTextFor]);
+
   // Every path that picks a customer funnels through here (list click, Enter, typing an exact
   // match, blur, the ?customerId deep link), which is why the pricing-policy default hangs off
   // this callback rather than an effect on values.customerId: restoring a draft sets customerId
@@ -643,7 +726,8 @@ export default function OfferCreateClient({
       return next;
     });
     applyCustomerPricingPolicy(nextCustomerId, option?.label ?? rawText);
-  }, [applyCustomerPricingPolicy]);
+    applyCustomerPaymentTerm(nextCustomerId);
+  }, [applyCustomerPricingPolicy, applyCustomerPaymentTerm]);
 
   useEffect(() => {
     if (appliedCustomerParamRef.current) return;
@@ -787,6 +871,13 @@ export default function OfferCreateClient({
       policyTouchedRef.current = true;
     }
     setValues((prev) => {
+      if (field === 'paymentTermId') {
+        return {
+          ...prev,
+          paymentTermId: value,
+          paymentTerms: paymentTextFor(value, prev.offerLanguage, prev.paymentTerms),
+        };
+      }
       if (field === 'offerLanguage' && (value === 'Greek' || value === 'English') && prev.offerLanguage !== value) {
         const prevDefaults = OFFER_LANGUAGE_DEFAULTS[prev.offerLanguage];
         const nextDefaults = OFFER_LANGUAGE_DEFAULTS[value];
@@ -796,7 +887,11 @@ export default function OfferCreateClient({
           ...prev,
           offerLanguage: value,
           title: swap(prev.title, prevDefaults.title, nextDefaults.title),
-          paymentTerms: swap(prev.paymentTerms, prevDefaults.paymentTerms, nextDefaults.paymentTerms),
+          // A catalogue term re-derives its text in the new language; OTHER keeps
+          // the user's own text unless it was still the default.
+          paymentTerms: isOtherPaymentTerm(prev.paymentTermId)
+            ? swap(prev.paymentTerms, prevDefaults.paymentTerms, nextDefaults.paymentTerms)
+            : paymentTextFor(prev.paymentTermId, value, prev.paymentTerms),
           deliveryTime: swap(prev.deliveryTime, prevDefaults.deliveryTime, nextDefaults.deliveryTime),
           offerValidity: swap(prev.offerValidity, prevDefaults.offerValidity, nextDefaults.offerValidity),
           closingNote: swap(prev.closingNote, prevDefaults.closingNote, nextDefaults.closingNote),
@@ -814,7 +909,7 @@ export default function OfferCreateClient({
       delete next[field];
       return next;
     });
-  }, []);
+  }, [paymentTextFor, ]);
 
   const handleSubmit = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -840,6 +935,7 @@ export default function OfferCreateClient({
       title: values.title,
       description: values.description,
       paymentTerms: values.paymentTerms,
+      paymentTermId: toNumberOrNull(values.paymentTermId),
       deliveryTime: values.deliveryTime,
       offerValidity: values.offerValidity,
       customerId: toNumberOrNull(values.customerId),
@@ -903,7 +999,9 @@ export default function OfferCreateClient({
     () => [
       { id: 'title', label: 'Title', section: 'general', required: true },
       { id: 'description', label: 'Telmaco Description', section: 'general', required: true, type: 'textarea' },
-      { id: 'paymentTerms', label: 'Payment Terms', section: 'general', required: true, type: 'textarea' },
+      // The text that prints. Derived from the term (read-only) for every term
+      // except OTHER, where anyone editing the offer may type it.
+      { id: 'paymentTerms', label: 'Payment Terms Text', section: 'general', required: true, type: 'textarea', readOnly: !isOtherPaymentTerm(values.paymentTermId) },
       { id: 'installationSchedule', label: 'Installation Schedule', section: 'general', type: 'textarea' },
       { id: 'closingNote', label: 'Closing Note', section: 'general', type: 'textarea' },
       { id: 'offerValidity', label: 'Offer Validity', section: 'general', required: true },
@@ -926,6 +1024,11 @@ export default function OfferCreateClient({
       { id: 'salesPersonId', label: 'Sales Person', section: 'commercial', required: true, type: 'select', options: salesUsers },
       { id: 'approvalUserId', label: 'Approval User', section: 'commercial', required: true, type: 'select', options: approvalUsers },
       { id: 'offerLanguage', label: 'Offer Language', section: 'commercial', required: true, type: 'select', options: OFFER_LANGUAGES.map((l) => ({ value: l, label: l })), hideEmptyOption: true },
+      // The catalogue payment term. Lives with the other commercial settings so
+      // it takes one grid cell, not a full-width row under the text areas.
+      // Defaults from the customer; any sales person may change it for this
+      // offer. Its printed text is the "Payment Terms Text" area in General.
+      { id: 'paymentTermId', label: 'Payment Term', section: 'commercial', type: 'select', options: localPaymentTerms, hideEmptyOption: true },
 
       { id: 'projectCode', label: 'ERP Project Code', section: 'code' },
       { id: 'erpFwcProjectId', label: 'ERP FWC Project', section: 'code', type: 'select', options: localFwcProjects },
@@ -942,7 +1045,7 @@ export default function OfferCreateClient({
       { id: 'possibleOrderDate', label: 'Possible Order', section: 'dates', type: 'date' },
       { id: 'deliveryDue', label: 'Delivery Due', section: 'dates', type: 'date' },
     ],
-    [
+    [localPaymentTerms, values.paymentTermId, 
       contactOptions,
       localCustomers,
       localMarkets,
@@ -986,6 +1089,10 @@ export default function OfferCreateClient({
   );
 
   const refreshFieldLookups = useCallback((fieldId: keyof FormValues) => {
+    if (fieldId === 'paymentTermId') {
+      void refreshLookups(['paymentTerms']);
+      return;
+    }
     if (fieldId === 'customerId') {
       void refreshLookups(['customers']);
       return;

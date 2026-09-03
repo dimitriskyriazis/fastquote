@@ -2,6 +2,12 @@ export type AppRole =
   | 'Developer'
   | 'Administrator'
   | 'Back Office User'
+  // Additive role: sits in Role 2/3 next to a real job role and grants exactly
+  // one capability, managePaymentTerms. Somebody holding ONLY this role can do
+  // nothing else in the app. Exists so payment terms can be trusted to named
+  // people without handing out Administrator or opening it to every Sales
+  // Manager. dbo.AspNetRoles row 32, created 2026-09-02.
+  | 'Finance Manager'
   | 'Sales Manager'
   | 'Sales Team'
   | 'Simple User';
@@ -20,17 +26,17 @@ export type Permission =
   | 'createOffers'
   | 'editOffers'
   | 'manageCustomersContacts'
-  // Payment terms agreed with a customer are a commercial commitment, so they
-  // are deliberately NOT part of manageCustomersContacts (which every role from
-  // Simple User up holds). This permission has no case in the switch below, so
-  // it falls through to `default: return false` and lands on Administrator +
-  // Developer only — which is what was asked for.
-  // Also gates the /payment-terms catalogue (dbo.PaymentTerms rows themselves),
-  // not just Customers.PaymentTermID: adding a `case` here would open BOTH.
-  | 'manageCustomerPaymentTerms'
+  // A customer's STANDING payment terms are a commercial commitment, so they are
+  // deliberately NOT part of manageCustomersContacts (which every role from
+  // Simple User up holds). This permission covers the two places that standing
+  // term is set: the /payment-terms catalogue (dbo.PaymentTerms rows) and
+  // Customers.PaymentTermID. Held by Finance Manager plus the Administrator /
+  // Developer bypass. The term on an individual OFFER is a sales decision and is
+  // NOT gated by this: anyone with createOffers / editOffers may change it.
+  | 'managePaymentTerms'
   // Merging duplicate customers repoints offers and contacts onto a survivor and
-  // disables the records that lost. It is not reversible from the UI, so like
-  // manageCustomerPaymentTerms it deliberately has NO case in the switch below
+  // disables the records that lost. It is not reversible from the UI, so it
+  // deliberately has NO case in the switch below
   // and falls through to `default: return false` — landing on Administrator +
   // Developer only.
   | 'mergeCustomers'
@@ -40,6 +46,7 @@ export const APP_ROLE_ORDER: readonly AppRole[] = [
   'Developer',
   'Administrator',
   'Back Office User',
+  'Finance Manager',
   'Sales Manager',
   'Sales Team',
   'Simple User',
@@ -51,6 +58,8 @@ const ROLE_ALIASES: Record<string, AppRole> = {
   'back office user': 'Back Office User',
   'backoffice user': 'Back Office User',
   'back office': 'Back Office User',
+  'finance manager': 'Finance Manager',
+  finance: 'Finance Manager',
   'sales manager': 'Sales Manager',
   'sales team': 'Sales Team',
   sales: 'Sales Team',
@@ -143,6 +152,8 @@ export const roleHasPermission = (roles: readonly AppRole[], permission: Permiss
         roles.includes('Sales Manager') ||
         roles.includes('Sales Team')
       );
+    case 'managePaymentTerms':
+      return roles.includes('Finance Manager');
     case 'manageUsers':
       return false;
     case 'dangerousOps':

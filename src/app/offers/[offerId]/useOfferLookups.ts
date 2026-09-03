@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { OfferDropdownOption, MarketOption } from './OfferBasicDataTypes';
+import type { OfferDropdownOption, MarketOption, PaymentTermOption } from './OfferBasicDataTypes';
 
 type UserOption = OfferDropdownOption & { salesSeniorityName?: string | null };
 
@@ -11,7 +11,8 @@ export type LookupKey =
   | 'salesDivisions'
   | 'users'
   | 'fwcProjects'
-  | 'currencies';
+  | 'currencies'
+  | 'paymentTerms';
 
 export type LookupState = {
   customers: OfferDropdownOption[];
@@ -22,6 +23,7 @@ export type LookupState = {
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
   currencies: OfferDropdownOption[];
+  paymentTerms: PaymentTermOption[];
 };
 
 type OfferLookupPayload = {
@@ -42,6 +44,7 @@ export function useOfferLookups(props: LookupState) {
       users: props.users,
       fwcProjects: props.fwcProjects,
       currencies: props.currencies,
+      paymentTerms: props.paymentTerms,
     });
   }, [
     props.customers,
@@ -52,6 +55,7 @@ export function useOfferLookups(props: LookupState) {
     props.users,
     props.fwcProjects,
     props.currencies,
+    props.paymentTerms,
   ]);
 
   const updateLookup = useCallback(<K extends LookupKey>(
@@ -86,6 +90,7 @@ export function useOfferLookups(props: LookupState) {
         if (payload.lookups!.users) next.users = payload.lookups!.users as UserOption[];
         if (payload.lookups!.fwcProjects) next.fwcProjects = payload.lookups!.fwcProjects;
         if (payload.lookups!.currencies) next.currencies = payload.lookups!.currencies;
+        if (payload.lookups!.paymentTerms) next.paymentTerms = payload.lookups!.paymentTerms;
         return next;
       });
     } catch (err) {

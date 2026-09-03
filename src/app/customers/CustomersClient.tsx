@@ -355,7 +355,7 @@ export default function CustomersClient() {
   // rows and never changes during a session.
   const [paymentTerms, setPaymentTerms] = React.useState<Array<{ value: string; label: string }>>([]);
   const canEditPaymentTerms = useMemo(
-    () => roleHasPermission(coerceRoles([...roles]), 'manageCustomerPaymentTerms'),
+    () => roleHasPermission(coerceRoles([...roles]), 'managePaymentTerms'),
     [roles],
   );
   React.useEffect(() => {
@@ -363,10 +363,14 @@ export default function CustomersClient() {
     let active = true;
     void (async () => {
       try {
-        const res = await fetch('/api/customers/lookups?keys=paymentTerms', { cache: 'no-store' });
-        const payload = await res.json().catch(() => null);
+        // Fed by the feature's own endpoint, NOT /api/customers/lookups: that one
+        // needs manageCustomersContacts, which a Finance Manager does not hold, so
+        // the list came back 403 for them and the menu item was never built.
+        const res = await fetch('/api/customers/payment-term', { cache: 'no-store' });
+        const payload = await res.json().catch(() => null) as
+          { ok?: boolean; terms?: Array<[number, string]> } | null;
         if (!active || !payload?.ok) return;
-        setPaymentTerms(Array.isArray(payload.lookups?.paymentTerms) ? payload.lookups.paymentTerms : []);
+        setPaymentTerms((payload.terms ?? []).map(([id, name]) => ({ value: String(id), label: name })));
       } catch {
         // A failed lookup just means the submenu is empty; nothing else breaks.
       }

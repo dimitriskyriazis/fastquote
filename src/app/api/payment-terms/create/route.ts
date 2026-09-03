@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   // Hoisted so the duplicate-name branch in the catch can name the term.
   let name: string | null = null;
   try {
-    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    const auth = await requirePermission(req, 'managePaymentTerms');
     if (!auth.ok) return auth.response;
 
     const payload = (await req.json().catch(() => null)) as

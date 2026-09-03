@@ -6,6 +6,7 @@ import { resolveAuditUserId } from '../../../../lib/auditTrail';
 import { getRequestId } from '../../../../lib/requestId';
 import { logAddAuditDetails } from '../../../../lib/mutationAudit';
 import { requirePermission } from '../../../../lib/authz';
+import { DEFAULT_OFFER_PAYMENT_TERM_ID, isOtherPaymentTerm, resolvePaymentTermText } from '../../../../lib/paymentTermText';
 import { normalizeString, normalizeInt, normalizeUserId, normalizeDate, normalizeProbability, normalizeDecimal } from '../../../../lib/normalize';
 import { normalizeOfferLanguage, OFFER_LANGUAGE_DEFAULTS } from '../../../../lib/offerLanguage';
 
@@ -13,6 +14,11 @@ type CreateOfferRequestBody = {
   title?: string | null;
   description?: string | null;
   paymentTerms?: string | null;
+  // Which catalogue term. Omitted = the customer's own, or the house default
+  // (30% DEPOSIT & BALANCE ON DELIVERY) when the customer has none. Any offer
+  // creator may pick another. The free paymentTerms text above is only honoured
+  // when the resolved term is OTHER; otherwise the text is derived server-side.
+  paymentTermId?: number | string | null;
   deliveryTime?: string | null;
   offerValidity?: string | null;
   customerId?: number | string | null;
@@ -78,6 +84,7 @@ export async function POST(req: NextRequest) {
     const deliveryTime = normalizeString(body?.deliveryTime, 500);
     const offerValidity = normalizeString(body?.offerValidity, 500);
     const customerId = normalizeInt(body?.customerId);
+    const requestedPaymentTermId = normalizeInt(body?.paymentTermId);
     const statusId = normalizeInt(body?.statusId);
     const contactId = normalizeInt(body?.contactId);
     const pricingPolicyId = normalizeInt(body?.pricingPolicyId);
@@ -130,7 +137,6 @@ export async function POST(req: NextRequest) {
     const errors: string[] = [];
     if (!title) errors.push('Title is required.');
     if (!description) errors.push('Description is required.');
-    if (!paymentTerms) errors.push('Payment terms are required.');
     if (!deliveryTime) errors.push('Delivery time is required.');
     if (!offerValidity) errors.push('Offer validity is required.');
     if (!customerId) errors.push('Customer is required.');
@@ -154,6 +160,45 @@ export async function POST(req: NextRequest) {
     }
 
     const pool = await getPool();
+
+    // ---- payment term -------------------------------------------------------
+    // The offer inherits the customer's term, or the house default when the
+    // customer has none. The term on an OFFER is a sales decision, so anyone who
+    // may create the offer may pick a different one; managePaymentTerms guards
+    // the customer's STANDING term and the catalogue, not this.
+    const customerTermRow = (await pool.request()
+      .input('__custId', sql.Int, customerId)
+      .query<{ PaymentTermID: number | null }>(
+        'SELECT PaymentTermID FROM dbo.Customers WHERE ID = @__custId',
+      )).recordset?.[0];
+    const customerDefaultTermId = customerTermRow?.PaymentTermID ?? DEFAULT_OFFER_PAYMENT_TERM_ID;
+    const paymentTermId = requestedPaymentTermId ?? customerDefaultTermId;
+    let paymentTermsText: string | null = paymentTerms;
+    if (paymentTermId != null && !isOtherPaymentTerm(paymentTermId)) {
+      const termRow = (await pool.request()
+        .input('__termId', sql.Int, paymentTermId)
+        .query<{ ID: number; DescriptionGR: string | null; DescriptionEN: string | null }>(
+          'SELECT ID, DescriptionGR, DescriptionEN FROM dbo.PaymentTerms WHERE ID = @__termId AND ISNULL(Enabled, 0) = 1',
+        )).recordset?.[0];
+      if (!termRow) {
+        return NextResponse.json({ ok: false, error: 'Unknown or disabled payment term.' }, { status: 400 });
+      }
+      // Snapshot: the printed text is fixed now, in the offer's language, and is
+      // never re-derived later if the catalogue wording changes.
+      paymentTermsText = resolvePaymentTermText(
+        { descriptionGr: termRow.DescriptionGR, descriptionEn: termRow.DescriptionEN },
+        offerLanguage,
+      );
+      if (!paymentTermsText) {
+        return NextResponse.json(
+          { ok: false, error: `The selected payment term has no ${offerLanguage} description.` },
+          { status: 400 },
+        );
+      }
+    } else if (!paymentTermsText) {
+      // OTHER (or no term at all): the text is whatever was typed, and it is required.
+      return NextResponse.json({ ok: false, error: 'Payment terms are required.' }, { status: 400 });
+    }
 
     let resolvedCurrencyId = requestedCurrencyId;
     if (resolvedCurrencyId == null) {
@@ -259,7 +304,8 @@ export async function POST(req: NextRequest) {
     request.input('ModifiedBy', sql.NVarChar(450), salesCreationPersonId);
     request.input('Title', sql.NVarChar(512), title);
     request.input('Description', sql.NVarChar(2000), description);
-    request.input('PaymentTerms', sql.NVarChar(500), paymentTerms);
+    request.input('PaymentTerms', sql.NVarChar(500), paymentTermsText);
+    request.input('PaymentTermID', sql.Int, paymentTermId);
     request.input('InstallationSchedule', sql.NVarChar(500), installationSchedule);
     request.input('OfferNotesClosing', sql.NVarChar(2000), closingNote);
     request.input('OfferValidity', sql.NVarChar(500), offerValidity);
@@ -304,6 +350,7 @@ export async function POST(req: NextRequest) {
         Title,
         Description,
         PaymentTerms,
+        PaymentTermID,
         InstallationSchedule,
         OfferNotesClosing,
         OfferValidity,
@@ -352,6 +399,7 @@ export async function POST(req: NextRequest) {
         @Title,
         @Description,
         @PaymentTerms,
+        @PaymentTermID,
         @InstallationSchedule,
         @OfferNotesClosing,
         @OfferValidity,

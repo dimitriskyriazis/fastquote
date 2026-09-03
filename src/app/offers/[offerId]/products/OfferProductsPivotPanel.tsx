@@ -10,6 +10,7 @@ import type {
   ColDef,
   GridApi,
   GridReadyEvent,
+  IAggFuncParams,
   RowClassParams,
   ValueFormatterParams,
   ValueSetterParams,
@@ -121,6 +122,62 @@ const numericFieldValueGetter = (field: string) => (params: { data?: RowData | n
   return toFiniteNumber((data as Record<string, unknown>)[field]);
 };
 
+// "Total Cost (Other Currency)" is NetCostOtherCurrency x Quantity summed per group.
+// Values are per-currency maps so a brand costed in one foreign currency shows a single
+// amount, while a group that mixes currencies lists each one instead of adding unlike
+// currencies together.
+type ForeignCostTotals = Record<string, number>;
+
+const FOREIGN_COST_AGG_FUNC = 'foreignCostSum';
+
+const foreignCostValueGetter = (params: { data?: RowData | null }): ForeignCostTotals | null => {
+  const data = params.data ?? null;
+  if (!data) return null;
+  const currency = typeof data.OtherCurrencyName === 'string' ? data.OtherCurrencyName.trim() : '';
+  if (!currency) return null;
+  const unitCost = toFiniteNumber(data.NetCostOtherCurrency);
+  if (unitCost == null || unitCost === 0) return null;
+  const quantity = toFiniteNumber(data.Quantity) ?? 0;
+  return { [currency]: unitCost * quantity };
+};
+
+const foreignCostAggFunc = (params: IAggFuncParams<RowData, ForeignCostTotals | null>): ForeignCostTotals | null => {
+  let merged: ForeignCostTotals | null = null;
+  for (const value of params.values) {
+    if (!value || typeof value !== 'object') continue;
+    for (const [currency, amount] of Object.entries(value)) {
+      if (!Number.isFinite(amount)) continue;
+      if (!merged) merged = {};
+      merged[currency] = (merged[currency] ?? 0) + amount;
+    }
+  }
+  return merged;
+};
+
+const foreignCostTotal = (value: unknown): number => {
+  if (!value || typeof value !== 'object') return 0;
+  return Object.values(value as ForeignCostTotals)
+    .reduce((sum, amount) => sum + (Number.isFinite(amount) ? amount : 0), 0);
+};
+
+const foreignCostValueFormatter = ({ value }: ValueFormatterParams<RowData, unknown>) => {
+  if (!value || typeof value !== 'object') return '';
+  return Object.entries(value as ForeignCostTotals)
+    .filter(([, amount]) => Number.isFinite(amount) && !Object.is(amount, 0))
+    .map(([currency, amount]) => placeCurrencySymbol(currencyFormatter.format(amount), currency))
+    .join(' + ');
+};
+
+// Stable reference: a new aggFuncs object on every render would reset the grid layout.
+const PIVOT_AGG_FUNCS = { [FOREIGN_COST_AGG_FUNC]: foreignCostAggFunc };
+
+// In pivot mode a column is displayed iff it is an active value column, so visibility is
+// driven through aggFunc; `hide` covers the brandPartNo layout (plain row grouping).
+const foreignCostColumnState = (visible: boolean): Partial<ColumnState> => ({
+  aggFunc: visible ? FOREIGN_COST_AGG_FUNC : null,
+  hide: !visible,
+});
+
 if (!(globalThis as unknown as { __AG_GRID_PIVOT_MODULES_REGISTERED__?: boolean }).__AG_GRID_PIVOT_MODULES_REGISTERED__) {
   ModuleRegistry.registerModules([
     ClientSideRowModelModule,
@@ -158,6 +215,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
   const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const lastFetchSignatureRef = useRef<string>('');
   const suppressPivotExitRef = useRef(false);
+  const hasForeignCostRef = useRef(false);
   const [gridReady, setGridReady] = useState(false);
   const [rowData, setRowData] = useState<RowData[]>([]);
   const [loading, setLoading] = useState(false);
@@ -232,6 +290,23 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       { field: 'TelmacoDiscount', headerName: 'Telmaco Discount', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TelmacoDiscount'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 180 },
       { field: 'Margin', headerName: 'Margin %', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('Margin'), valueFormatter: percentValueFormatter, aggFunc: 'avg', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
       { field: 'GrossProfit', headerName: 'Gross Profit', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('GrossProfit'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color: '#dc2626' }, width: 150 },
+      {
+        field: 'NetCostOtherCurrency',
+        headerName: 'Total Cost (Other Currency)',
+        // Hidden until the loaded rows prove a foreign cost exists (see hasForeignCost).
+        hide: true,
+        cellDataType: false,
+        filter: 'agNumberColumnFilter',
+        filterValueGetter: (params) => foreignCostTotal(foreignCostValueGetter(params)),
+        valueGetter: foreignCostValueGetter,
+        valueFormatter: foreignCostValueFormatter,
+        comparator: (a, b) => foreignCostTotal(a) - foreignCostTotal(b),
+        allowedAggFuncs: [FOREIGN_COST_AGG_FUNC],
+        defaultAggFunc: FOREIGN_COST_AGG_FUNC,
+        cellClass: panelStyles.redDataCell,
+        cellStyle: { color: '#dc2626' },
+        width: 210,
+      },
       { field: 'TotalCost', headerName: 'Total Cost', filter: 'agNumberColumnFilter', valueGetter: numericFieldValueGetter('TotalCost'), valueFormatter: moneyValueFormatter, aggFunc: 'sum', cellClass: panelStyles.redDataCell, cellStyle: { color:'#dc2626' }, width : 150},
       {
         field: 'Installation',
@@ -339,6 +414,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
       set('TotalNet', { aggFunc: 'sum' });
       set('TotalCost', { aggFunc: 'sum' });
       set('GrossProfit', { aggFunc: 'sum' });
+      set('NetCostOtherCurrency', foreignCostColumnState(hasForeignCostRef.current));
     };
 
     switch (layout) {
@@ -624,6 +700,23 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
     api.refreshCells({ force: true });
   }, [currencySymbol]);
 
+  // Mirror the main grid: the foreign-cost column only appears when at least one loaded
+  // row carries a cost in another currency. The ref lets applyLayout (memoised on layout)
+  // read the current answer without being re-created.
+  const hasForeignCost = useMemo(
+    () => rowData.some((row) => typeof row.OtherCurrencyName === 'string' && row.OtherCurrencyName.trim().length > 0),
+    [rowData],
+  );
+  useEffect(() => {
+    hasForeignCostRef.current = hasForeignCost;
+    const api = gridApiRef.current;
+    if (!gridReady || !api || api.isDestroyed?.()) return;
+    api.applyColumnState({
+      state: [{ colId: 'NetCostOtherCurrency', ...foreignCostColumnState(hasForeignCost) }],
+      applyOrder: false,
+    });
+  }, [hasForeignCost, gridReady]);
+
   const defaultColDef = useMemo<ColDef<RowData>>(() => ({
     sortable: true,
     filter: true,
@@ -731,6 +824,7 @@ export default function OfferProductsPivotPanel({ offerId, refreshToken = 0, onE
             rowGroupPanelShow="always"
             pivotPanelShow="always"
             suppressAggFuncInHeader
+            aggFuncs={PIVOT_AGG_FUNCS}
             onGridReady={onGridReady}
             onColumnPivotModeChanged={handlePivotModeChanged}
             overlayNoRowsTemplate={

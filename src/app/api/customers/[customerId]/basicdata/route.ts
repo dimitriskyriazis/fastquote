@@ -81,7 +81,7 @@ const ADMIN_ONLY_FIELDS: ReadonlySet<CustomerBasicUpdateField> = new Set([
   'PaymentTermID',
 ]);
 
-const ADMIN_ONLY_FIELD_PERMISSION: Permission = 'manageCustomerPaymentTerms';
+const ADMIN_ONLY_FIELD_PERMISSION: Permission = 'managePaymentTerms';
 
 const normalizeValue = (value: unknown, type: FieldType): NormalizedValue => {
   if (value === null || value === undefined) return null;
@@ -202,8 +202,19 @@ export async function PATCH(
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, "manageCustomersContacts");
-    if (!auth.ok) return auth.response;
+    // Two doors in. manageCustomersContacts (every job role) edits any field;
+    // managePaymentTerms alone (a Finance Manager with no other role) is also
+    // let through here, and the field filter further down then confines that
+    // caller to the payment-term field. Denial has no side effects, so asking
+    // twice is free.
+    let paymentTermsOnly = false;
+    let auth = await requirePermission(req, "manageCustomersContacts");
+    if (!auth.ok) {
+      const finance = await requirePermission(req, ADMIN_ONLY_FIELD_PERMISSION);
+      if (!finance.ok) return auth.response;
+      auth = finance;
+      paymentTermsOnly = true;
+    }
 
     const parsedId = await parseCustomerId(params);
     if (!parsedId) {
@@ -245,11 +256,26 @@ export async function PATCH(
       return NextResponse.json(
         {
           ok: false,
-          error: `Only Administrators can change ${attemptedAdminFields.join(', ')}.`,
+          error: `Only a Finance Manager or Administrator can change ${attemptedAdminFields.join(', ')}.`,
           requiredPermission: ADMIN_ONLY_FIELD_PERMISSION,
         },
         { status: 403 },
       );
+    }
+    if (paymentTermsOnly) {
+      const outside = normalizedUpdates
+        .map((u) => u.field)
+        .filter((field) => !ADMIN_ONLY_FIELDS.has(field));
+      if (outside.length > 0) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: `A Finance Manager can only change payment terms here, not ${outside.join(', ')}.`,
+            requiredPermission: 'manageCustomersContacts',
+          },
+          { status: 403 },
+        );
+      }
     }
 
     // A non-numeric ERPID normalizes to null; erroring beats silently clearing the TRDR.

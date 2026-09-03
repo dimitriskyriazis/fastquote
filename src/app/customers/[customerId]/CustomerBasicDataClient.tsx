@@ -71,7 +71,7 @@ type FieldDefinition = {
   hint?: string;
   comboBox?: boolean;
   required?: boolean;
-  // Rendered read-only unless the user holds 'manageCustomerPaymentTerms'.
+  // Rendered read-only unless the user holds 'managePaymentTerms'.
   // UX only — the server rejects the field independently (see
   // ADMIN_ONLY_FIELDS in api/customers/[customerId]/basicdata/route.ts).
   adminOnly?: boolean;
@@ -339,7 +339,7 @@ export default function CustomerBasicDataClient({
   const { roles } = useAuditUser();
   const canEditPaymentTerms = roleHasPermission(
     coerceRoles([...roles]),
-    'manageCustomerPaymentTerms',
+    'managePaymentTerms',
   );
   const [localCustomerGroups, setLocalCustomerGroups] = useState(customerGroups);
   const [localParentCustomers, setLocalParentCustomers] = useState(parentCustomers);

@@ -26,6 +26,8 @@ import { formatDisplayValue } from '../../lib/formatDisplayValue';
 import { normalizeValueForApi } from '../../lib/normalizeValueForApi';
 import { formatDateInputValue } from '../../lib/formatDateInputValue';
 import { useOfferLookups, type LookupKey } from './useOfferLookups';
+import type { PaymentTermOption } from './OfferBasicDataTypes';
+import { isOtherPaymentTerm, resolvePaymentTermText } from '../../../lib/paymentTermText';
 import { useCustomerSearch } from './useCustomerSearch';
 import { OFFER_LANGUAGE_DEFAULTS, type OfferLanguage } from '../../../lib/offerLanguage';
 
@@ -43,6 +45,7 @@ type Props = {
   users: UserOption[];
   fwcProjects: OfferDropdownOption[];
   currencies: OfferDropdownOption[];
+  paymentTerms: PaymentTermOption[];
 };
 
 const isEurOption = (option: OfferDropdownOption): boolean => {
@@ -180,12 +183,17 @@ const buildFieldDefinitions = (
   contacts: OfferDropdownOption[],
   fwcProjects: OfferDropdownOption[],
   currencies: OfferDropdownOption[],
+  paymentTerms: PaymentTermOption[],
   showCurrencyModifier: boolean,
 ): FieldDefinition[] => [
   { id: 'title', label: 'Title', section: 'general', recordKey: 'Title', updateField: 'Title' },
   { id: 'offerDescription', label: 'Offer Description', section: 'printing', recordKey: 'OfferDescription', updateField: 'OfferDescription' },
   { id: 'description', label: 'Telmaco Description', section: 'general', recordKey: 'Description', updateField: 'Description', multiline: true },
-  { id: 'paymentTerms', label: 'Payment Terms', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms', multiline: true },
+  // WHAT PRINTS. Derived from the term and locked for every term except OTHER,
+  // where anyone who can edit the offer may type it. Deliberately NOT readOnly:
+  // a readOnly field is dropped from editableFields and never seeded, and it
+  // must stay live so a term change can update it in place.
+  { id: 'paymentTerms', label: 'Payment Terms Text', section: 'general', recordKey: 'PaymentTerms', updateField: 'PaymentTerms', multiline: true },
   { id: 'install', label: 'Installation Schedule', section: 'general', recordKey: 'InstallationSchedule', updateField: 'InstallationSchedule', multiline: true },
   { id: 'closingNote', label: 'Closing Note', section: 'general', recordKey: 'OfferNotesClosing', updateField: 'OfferNotesClosing', multiline: true },
   { id: 'offerValidity', label: 'Offer Validity', section: 'general', recordKey: 'OfferValidity', updateField: 'OfferValidity' },
@@ -342,6 +350,12 @@ const buildFieldDefinitions = (
     options: approvalUsers,
     valueType: 'string',
   },
+  // WHICH payment term. Sits with the other commercial settings (one grid cell,
+  // not a full-width row under the text areas). Any user who can edit the offer
+  // may change it: the term on an offer is a sales decision. hideEmptyOption:
+  // a term can be changed, never cleared. Its printed text is the
+  // "Payment Terms Text" area in General.
+  { id: 'paymentTermId', label: 'Payment Term', section: 'commercial', recordKey: 'PaymentTermID', updateField: 'PaymentTermID', valueType: 'number', options: paymentTerms, hideEmptyOption: true },
   {
     id: 'erpProjectCode',
     label: 'ERP Project Code',
@@ -412,13 +426,23 @@ export default function OfferBasicDataClient({
   users,
   fwcProjects,
   currencies,
+  paymentTerms,
 }: Props) {
   const { lookups, updateLookup, refreshLookups: refreshLookupsRaw } = useOfferLookups({
-    customers, statuses, pricingPolicies, markets, salesDivisions, users, fwcProjects, currencies,
+    customers, statuses, pricingPolicies, markets, salesDivisions, users, fwcProjects, currencies, paymentTerms,
   });
   const { customers: localCustomers, statuses: localStatuses, pricingPolicies: localPricingPolicies,
     markets: localMarkets, salesDivisions: localSalesDivisions, users: localUsers,
-    fwcProjects: localFwcProjects, currencies: localCurrencies } = lookups;
+    fwcProjects: localFwcProjects, currencies: localCurrencies, paymentTerms: localPaymentTerms } = lookups;
+
+  // Read through a ref from memoised callbacks (saveField, the language sync) so
+  // a lookup that arrives late is still seen.
+  const paymentTermOptionMapRef = useRef(new Map<string, PaymentTermOption>());
+  useEffect(() => {
+    const map = new Map<string, PaymentTermOption>();
+    localPaymentTerms.forEach((term) => { if (term?.value) map.set(term.value, term); });
+    paymentTermOptionMapRef.current = map;
+  }, [localPaymentTerms]);
 
   const eurCurrencyId = useMemo(() => {
     const match = localCurrencies.find(isEurOption);
@@ -612,9 +636,11 @@ export default function OfferBasicDataClient({
         contactOptions,
         fwcProjectOptions,
         localCurrencies,
+        localPaymentTerms,
         true,
       ),
     [
+      localPaymentTerms,
       customerOptions,
       localStatuses,
       localPricingPolicies,
@@ -669,6 +695,9 @@ export default function OfferBasicDataClient({
   const [showCustomerList, setShowCustomerList] = useState(false);
   const customerListCloseTimerRef = useRef<NodeJS.Timeout | null>(null);
   const savedValuesRef = useRef(savedValues);
+  // The offer's language as last saved, in the form the text helpers expect.
+  const savedOfferLanguage = (): OfferLanguage =>
+    (savedValuesRef.current.offerLanguage === 'English' ? 'English' : 'Greek');
   savedValuesRef.current = savedValues;
 
   // The Print Offer button can set the Offer date to today before printing
@@ -916,6 +945,25 @@ export default function OfferBasicDataClient({
       });
       setValues((prev) => ({ ...prev, [def.id]: resolvedDisplayValue }));
 
+      // Changing the term made the server rewrite the printed text from the
+      // catalogue (snapshot in the offer's language). Mirror it locally so the
+      // text box shows what was actually saved without a reload. For OTHER the
+      // text is left exactly as it was: it is now the user's to type.
+      if (def.id === 'paymentTermId' && !isOtherPaymentTerm(resolvedDisplayValue)) {
+        const derived = resolvePaymentTermText(
+          paymentTermOptionMapRef.current.get(resolvedDisplayValue),
+          savedOfferLanguage(),
+        );
+        if (derived) {
+          setSavedValues((prev) => {
+            const next = { ...prev, paymentTerms: derived };
+            savedValuesRef.current = next;
+            return next;
+          });
+          setValues((prev) => ({ ...prev, paymentTerms: derived }));
+        }
+      }
+
       if (def.id === 'orderSigned') {
         window.dispatchEvent(
           new CustomEvent('fastquote:order-signed-date-changed', {
@@ -953,6 +1001,20 @@ export default function OfferBasicDataClient({
             const current = (savedValuesRef.current[f.id] ?? '').trim();
             return current === '' || current === f.prev;
           });
+          // A catalogue term prints its description in the NEW language, whatever
+          // the text was before; the default-swap rule above only fits OTHER.
+          const savedTermId = savedValuesRef.current.paymentTermId ?? '';
+          if (!isOtherPaymentTerm(savedTermId)) {
+            const derived = resolvePaymentTermText(paymentTermOptionMapRef.current.get(savedTermId), nextLang);
+            const at = changes.findIndex((c) => c.id === 'paymentTerms');
+            if (at !== -1) changes.splice(at, 1);
+            if (derived) {
+              changes.push({
+                id: 'paymentTerms', updateField: 'PaymentTerms',
+                prev: savedValuesRef.current.paymentTerms ?? '', next: derived,
+              });
+            }
+          }
           if (changes.length > 0) {
             try {
               const res = await fetch(`/api/offers/${encodeURIComponent(offerId)}/basicdata`, {
@@ -1204,6 +1266,10 @@ export default function OfferBasicDataClient({
       void refreshLookups(['customers']);
       return;
     }
+    if (fieldId === 'paymentTermId') {
+      void refreshLookups(['paymentTerms']);
+      return;
+    }
     if (fieldId === 'status') {
       void refreshLookups(['statuses']);
       return;
@@ -1292,6 +1358,11 @@ export default function OfferBasicDataClient({
   record: OfferBasicRecord,
 ) => {
   const isEditable = Boolean(def.updateField && !def.readOnly);
+  // A lock that depends on another field's value. It cannot live on the
+  // definition, which is built before values exist, so it is applied here: the
+  // field stays "editable" (seeded, live) but renders disabled. The printed text
+  // is derived from the term for every term but OTHER.
+  const locked = def.id === 'paymentTerms' && !isOtherPaymentTerm(valueMap.paymentTermId ?? '');
   const controlId = `offer-field-${def.id}`;
   const value = isEditable ? (valueMap[def.id] ?? '') : resolveFieldValue(record, def);
   // Required-and-missing highlight (set by feature buttons); clears once filled.
@@ -1380,6 +1451,7 @@ export default function OfferBasicDataClient({
         name={def.id}
         className={`${styles.fieldControl} ${pending ? styles.fieldControlPending : ''} ${missingHighlight ? styles.fieldControlError : ''}`}
         value={valueMap[def.id] ?? ''}
+        disabled={locked}
         onMouseDown={() => refreshFieldLookups(def.id)}
         onFocus={() => refreshFieldLookups(def.id)}
         onChange={(event) => handleSelectChange(def, event.target.value)}
@@ -1430,6 +1502,7 @@ export default function OfferBasicDataClient({
           name={def.id}
           className={`${styles.fieldControl} ${styles.fieldControlMultiline} ${pending ? styles.fieldControlPending : ''} ${isPdfTermMissing || missingHighlight ? styles.fieldControlError : ''}`}
           value={currentValue}
+          disabled={locked}
           placeholder={placeholder}
           onChange={(event) => handleValueChange(def.id, event.target.value)}
           onBlur={() => handleBlur(def)}

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { cookies, headers } from 'next/headers';
 import OfferCreateClient, {
+  type PaymentTermOption,
   type CustomerOption,
   type MarketOption,
   type PricingPolicyOption,
@@ -17,7 +18,8 @@ type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
 type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
 // Customers.PricingPolicyID is nvarchar(100) NOT NULL, not an int FK: the overwhelming
 // majority of rows hold '' (no policy), and the rest hold the ID as text.
-type CustomerLookupRow = LookupRow & { PricingPolicyID?: number | string | null };
+type CustomerLookupRow = LookupRow & { PricingPolicyID?: number | string | null; PaymentTermID?: number | null };
+type PaymentTermLookupRow = LookupRow & { DescriptionGR?: string | null; DescriptionEN?: string | null };
 type PricingPolicyLookupRow = LookupRow & {
   Enabled?: boolean | number | null;
   HasRules?: boolean | number | null;
@@ -35,7 +37,7 @@ async function fetchCustomers(): Promise<CustomerOption[]> {
   try {
     const pool = await getPool();
     const result = await pool.request().query<CustomerLookupRow>(`
-      SELECT ID, Name, PricingPolicyID
+      SELECT ID, Name, PricingPolicyID, PaymentTermID
       FROM dbo.Customers
       WHERE ISNULL(IsParent, 0) = 0
         AND ISNULL(Enabled, 0) = 1
@@ -49,10 +51,35 @@ async function fetchCustomers(): Promise<CustomerOption[]> {
           value: stringId,
           label: normalizeDropdownLabel(row.Name) ?? `Option ${stringId}`,
           pricingPolicyId: row.PricingPolicyID != null ? String(row.PricingPolicyID).trim() : '',
+          // The offer's payment term defaults from the customer the same way.
+          paymentTermId: row.PaymentTermID != null ? String(row.PaymentTermID) : '',
         };
       });
   } catch (err) {
     console.error('Failed to load customers', err);
+    return [];
+  }
+}
+
+async function fetchPaymentTerms(): Promise<PaymentTermOption[]> {
+  try {
+    const pool = await getPool();
+    const result = await pool.request().query<PaymentTermLookupRow>(`
+      SELECT ID, Name, DescriptionGR, DescriptionEN
+      FROM dbo.PaymentTerms
+      WHERE ISNULL(Enabled, 0) = 1
+      ORDER BY ID
+    `);
+    return (result.recordset ?? [])
+      .filter((row): row is PaymentTermLookupRow & { ID: number } => row?.ID != null)
+      .map((row) => ({
+        value: String(row.ID),
+        label: (row.Name ?? '').trim() || `Option ${row.ID}`,
+        descriptionGr: (row.DescriptionGR ?? '').trim(),
+        descriptionEn: (row.DescriptionEN ?? '').trim(),
+      }));
+  } catch (err) {
+    console.error('Failed to load payment terms', err);
     return [];
   }
 }
@@ -232,6 +259,7 @@ export default async function Page() {
     users,
     fwcProjects,
     currencies,
+    paymentTerms,
   ] = await Promise.all([
     fetchCustomers(),
     fetchOfferStatuses(),
@@ -241,6 +269,7 @@ export default async function Page() {
     fetchUsers(),
     fetchFwcProjects(),
     fetchCurrencies(),
+    fetchPaymentTerms(),
   ]);
 
   const fallbackUserId = getAuditFallbackUserId();
@@ -281,6 +310,7 @@ export default async function Page() {
           users={users}
           fwcProjects={fwcProjects}
           currencies={currencies}
+          paymentTerms={paymentTerms}
           defaultValues={{
             suggestedUserId,
           }}

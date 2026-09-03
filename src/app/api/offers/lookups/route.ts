@@ -11,7 +11,11 @@ type MarketLookupRow = LookupRow & { SalesDivisionID?: number | null };
 type UserLookupRow = LookupRow & { SalesSeniorityName?: string | null };
 // Customers.PricingPolicyID is nvarchar(100) NOT NULL, not an int FK: the overwhelming
 // majority of rows hold '' (no policy), and the rest hold the ID as text.
-type CustomerLookupRow = LookupRow & { PricingPolicyID?: number | string | null };
+type CustomerLookupRow = LookupRow & {
+  PricingPolicyID?: number | string | null;
+  PaymentTermID?: number | null;
+};
+type PaymentTermLookupRow = LookupRow & { DescriptionGR?: string | null; DescriptionEN?: string | null };
 type PricingPolicyLookupRow = LookupRow & {
   Enabled?: boolean | number | null;
   HasRules?: boolean | number | null;
@@ -21,7 +25,12 @@ type PricingPolicyLookupRow = LookupRow & {
 // customer option carries that customer's own PricingPolicyID, and every pricing-policy
 // option carries the two flags POST /api/offers/create validates (enabled + has rules) so
 // the client never auto-selects a policy the create call would reject.
-type CustomerOption = DropdownOption & { pricingPolicyId: string };
+// paymentTermId rides along for the same reason as pricingPolicyId: the Create
+// Offer form defaults the offer's term from the selected customer.
+type CustomerOption = DropdownOption & { pricingPolicyId: string; paymentTermId: string };
+// Both descriptions travel with the option so the form can show the printed
+// text in the offer's language without another round trip.
+type PaymentTermOption = DropdownOption & { descriptionGr: string; descriptionEn: string };
 type PricingPolicyOption = DropdownOption & { enabled: boolean; hasRules: boolean };
 
 type LookupKey =
@@ -32,7 +41,8 @@ type LookupKey =
   | 'salesDivisions'
   | 'users'
   | 'fwcProjects'
-  | 'currencies';
+  | 'currencies'
+  | 'paymentTerms';
 
 type OfferLookupPayload = {
   customers?: CustomerOption[];
@@ -43,6 +53,7 @@ type OfferLookupPayload = {
   users?: Array<DropdownOption & { salesSeniorityName?: string | null }>;
   fwcProjects?: DropdownOption[];
   currencies?: DropdownOption[];
+  paymentTerms?: PaymentTermOption[];
 };
 
 const LOOKUP_KEYS: LookupKey[] = [
@@ -54,6 +65,7 @@ const LOOKUP_KEYS: LookupKey[] = [
   'users',
   'fwcProjects',
   'currencies',
+  'paymentTerms',
 ];
 
 const toLookupOptions = (rows: LookupRow[] | undefined | null): DropdownOption[] =>
@@ -95,6 +107,20 @@ const toCustomerOptions = (rows: CustomerLookupRow[] | undefined | null): Custom
         value: stringId,
         label: normalizeLabel(row.Name) ?? `Option ${stringId}`,
         pricingPolicyId: row.PricingPolicyID != null ? String(row.PricingPolicyID).trim() : '',
+        paymentTermId: row.PaymentTermID != null ? String(row.PaymentTermID) : '',
+      };
+    });
+
+const toPaymentTermOptions = (rows: PaymentTermLookupRow[] | undefined | null): PaymentTermOption[] =>
+  (rows ?? [])
+    .filter((row): row is PaymentTermLookupRow & { ID: number } => row?.ID != null)
+    .map((row) => {
+      const stringId = String(row.ID);
+      return {
+        value: stringId,
+        label: normalizeLabel(row.Name) ?? `Option ${stringId}`,
+        descriptionGr: (row.DescriptionGR ?? '').trim(),
+        descriptionEn: (row.DescriptionEN ?? '').trim(),
       };
     });
 
@@ -120,7 +146,7 @@ async function fetchCustomers(search?: string) {
     const req = pool.request();
     req.input('customerSearch', sql.NVarChar(200), `%${needle}%`);
     const result = await req.query<CustomerLookupRow>(`
-      SELECT TOP 50 ID, Name, PricingPolicyID
+      SELECT TOP 50 ID, Name, PricingPolicyID, PaymentTermID
       FROM dbo.Customers
       WHERE ${collateSearch('Name')} LIKE @customerSearch
         AND ISNULL(IsParent, 0) = 0
@@ -130,7 +156,7 @@ async function fetchCustomers(search?: string) {
     return toCustomerOptions(result.recordset);
   }
   const result = await pool.request().query<CustomerLookupRow>(`
-    SELECT ID, Name, PricingPolicyID
+    SELECT ID, Name, PricingPolicyID, PaymentTermID
     FROM dbo.Customers
     WHERE ISNULL(IsParent, 0) = 0
       AND ISNULL(Enabled, 0) = 1
@@ -163,6 +189,17 @@ async function fetchPricingPolicies() {
     ORDER BY pp.Name
   `);
   return toPricingPolicyOptions(result.recordset);
+}
+
+async function fetchPaymentTerms() {
+  const pool = await getPool();
+  const result = await pool.request().query<PaymentTermLookupRow>(`
+    SELECT ID, Name, DescriptionGR, DescriptionEN
+    FROM dbo.PaymentTerms
+    WHERE ISNULL(Enabled, 0) = 1
+    ORDER BY ID
+  `);
+  return toPaymentTermOptions(result.recordset);
 }
 
 async function fetchMarkets() {
@@ -259,6 +296,10 @@ export async function GET(req: NextRequest) {
         }
         if (key === 'pricingPolicies') {
           payload.pricingPolicies = await fetchPricingPolicies();
+          return;
+        }
+        if (key === 'paymentTerms') {
+          payload.paymentTerms = await fetchPaymentTerms();
           return;
         }
         if (key === 'markets') {

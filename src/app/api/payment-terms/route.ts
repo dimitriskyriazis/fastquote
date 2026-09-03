@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    const auth = await requirePermission(req, 'managePaymentTerms');
     if (!auth.ok) return auth.response;
 
     const requestPayload = await readGridRequest(req);
@@ -230,7 +230,7 @@ export async function PATCH(req: NextRequest) {
   const requestId = await getRequestId(req);
   const userId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    const auth = await requirePermission(req, 'managePaymentTerms');
     if (!auth.ok) return auth.response;
 
     const body = await req.json().catch(() => null);

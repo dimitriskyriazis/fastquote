@@ -88,6 +88,7 @@ type OfferRow = {
   CreatedOn: string | null;
   Probability: number | null;
   PaymentTerms: string | null;
+  PaymentTermName: string | null;
   InstallationSchedule: string | null;
   OfferNotesClosing: string | null;
   OfferValidity: string | null;
@@ -162,6 +163,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   CreatedOn: 'dbo.Offer.CreatedOn',
   Probability: 'dbo.Offer.Probability',
   PaymentTerms: 'dbo.Offer.PaymentTerms',
+  PaymentTermName: 'offerPaymentTerm.Name',
   InstallationSchedule: 'dbo.Offer.InstallationSchedule',
   OfferNotesClosing: 'dbo.Offer.OfferNotesClosing',
   OfferValidity: 'dbo.Offer.OfferValidity',
@@ -187,6 +189,7 @@ const ALLOWED_ROW_GROUP_FIELDS = new Set([
   'CustomerName',
   'CustomerGroup',
   'PricingPolicyName',
+  'PaymentTermName',
   'SalesMarket',
   'SalesDivision',
   'SalesPerson',
@@ -406,6 +409,7 @@ export async function POST(req: NextRequest) {
         ${LATEST_MODIFIED_EXPRESSION} AS ModifiedOn,
         ${LATEST_MODIFIED_ANY_EXPRESSION} AS ModifiedOnAny,
         dbo.Offer.PaymentTerms,
+        offerPaymentTerm.Name AS PaymentTermName,
         dbo.Offer.InstallationSchedule,
         dbo.Offer.OfferNotesClosing,
         dbo.Offer.OfferValidity,
@@ -446,6 +450,7 @@ export async function POST(req: NextRequest) {
 	        LEFT JOIN dbo.Contacts AS contact ON dbo.Offer.ContactID = contact.ID
 	        LEFT JOIN dbo.AspNetUsers AS approval ON dbo.Offer.ApprovalUserId = approval.Id
 	        LEFT JOIN dbo.Currencies AS offerCurrency ON offerCurrency.ID = dbo.Offer.CurrencyID
+	        LEFT JOIN dbo.PaymentTerms AS offerPaymentTerm ON offerPaymentTerm.ID = dbo.Offer.PaymentTermID
 	        OUTER APPLY (
 	          SELECT MAX(od.ModifiedOn) AS DetailsModifiedOn
 	          FROM dbo.OfferDetails od

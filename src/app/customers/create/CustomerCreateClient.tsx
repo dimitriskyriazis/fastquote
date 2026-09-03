@@ -309,7 +309,7 @@ export default function CustomerCreateClient({
   const [paymentTermOptions, setPaymentTermOptions] = useState<CustomerDropdownOption[]>([]);
   const { userId, roles } = useAuditUser();
   const canEditPaymentTerms = useMemo(
-    () => roleHasPermission(coerceRoles([...roles]), 'manageCustomerPaymentTerms'),
+    () => roleHasPermission(coerceRoles([...roles]), 'managePaymentTerms'),
     [roles],
   );
   const [isAddCountryOpen, setIsAddCountryOpen] = useState(false);
@@ -748,7 +748,7 @@ export default function CustomerCreateClient({
         profession: toNullableString(values.profession),
         customerGroupId: toNumberOrNull(values.customerGroup),
         // Omitted entirely for non-admins: the create API 403s on a non-null
-        // paymentTermId without 'manageCustomerPaymentTerms'.
+        // paymentTermId without 'managePaymentTerms'.
         paymentTermId: canEditPaymentTerms ? toNumberOrNull(values.paymentTerm) : null,
 
         erpId: erpText ? Number.parseInt(erpText, 10) : null,

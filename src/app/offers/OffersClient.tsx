@@ -835,6 +835,7 @@ export default function OffersClient() {
       { ...dimension, field: 'SalesDivision',          headerName: 'Sales Division' },
       { ...dimension, field: 'SalesMarket',            headerName: 'Market' },
       { ...dimension, field: 'PricingPolicyName',      headerName: 'Pricing Policy' },
+      { ...dimension, field: 'PaymentTermName',        headerName: 'Payment Term' },
       { ...dimension, field: 'ERPFWCProjectShortName', headerName: 'FWC Project' },
       { ...dimension, field: 'ERPProjectCode',         headerName: 'ERP Project Code' },
       { ...dimension, field: 'Title',                  headerName: 'Title' },
@@ -1020,6 +1021,9 @@ export default function OffersClient() {
     },
     { field: 'CustomerRef', headerName: 'Customer Ref', filter: 'agTextColumnFilter', hide: true },
     { field: 'ProtocolNo', headerName: 'Protocol No', filter: 'agNumberColumnFilter', type: 'numericColumn', hide: true },
+    // The catalogue term (30 DAYS, CONTRACT, ...). PaymentTerms below is the
+    // free/derived text that is actually printed; this is the classification.
+    { field: 'PaymentTermName', headerName: 'Payment Term', filter: 'agTextColumnFilter', enableRowGroup: true, hide: true },
     { field: 'PaymentTerms', headerName: 'Payment Terms', filter: 'agTextColumnFilter', hide: true },
     { field: 'InstallationSchedule', headerName: 'Installation Schedule', filter: 'agTextColumnFilter', hide: true },
     { field: 'OfferNotesClosing', headerName: 'Offer Notes Closing', filter: 'agTextColumnFilter', hide: true },

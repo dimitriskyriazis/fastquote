@@ -9,9 +9,9 @@ import { logEditAuditDetails } from '../../../../lib/mutationAudit';
 
 // Bulk-set Customers.PaymentTermID from the customers grid.
 //
-// Gated by 'manageCustomerPaymentTerms' (Administrator + Developer only), the
-// same permission that guards the single-customer PATCH and the /payment-terms
-// catalogue. Payment terms are a commercial commitment, so this deliberately
+// Gated by 'managePaymentTerms' (Finance Manager, plus the Administrator /
+// Developer bypass), the same permission that guards the single-customer PATCH,
+// the create form's field and the /payment-terms catalogue. Payment terms are a commercial commitment, so this deliberately
 // does NOT ride on 'manageCustomersContacts', which every role from Simple User
 // up already holds.
 type BulkBody = {
@@ -30,7 +30,7 @@ const MAX_BULK = 500;
 export async function GET(req: NextRequest) {
   logRequest(req, '/api/customers/payment-term');
   try {
-    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    const auth = await requirePermission(req, 'managePaymentTerms');
     if (!auth.ok) return auth.response;
 
     const pool = await getPool();
@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest) {
   const userId = resolveAuditUserId(req);
 
   try {
-    const auth = await requirePermission(req, 'manageCustomerPaymentTerms');
+    const auth = await requirePermission(req, 'managePaymentTerms');
     if (!auth.ok) return auth.response;
 
     let body: BulkBody | null = null;

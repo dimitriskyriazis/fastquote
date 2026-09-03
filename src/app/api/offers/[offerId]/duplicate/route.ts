@@ -44,6 +44,7 @@ type ExistingOfferRecord = {
   Title: string | null;
   Description: string | null;
   PaymentTerms: string | null;
+  PaymentTermID: number | null;
   InstallationSchedule: string | null;
   OfferNotesClosing: string | null;
   OfferValidity: string | null;
@@ -373,6 +374,7 @@ export async function POST(
         Title,
         Description,
         PaymentTerms,
+        PaymentTermID,
         InstallationSchedule,
         OfferNotesClosing,
         OfferValidity,
@@ -506,6 +508,10 @@ export async function POST(
       insertRequest.input('Title', sql.NVarChar(512), existingOffer.Title);
       insertRequest.input('Description', sql.NVarChar(2000), existingOffer.Description);
       insertRequest.input('PaymentTerms', sql.NVarChar(500), existingOffer.PaymentTerms);
+      // A duplicate keeps both the term and its printed snapshot: a new version
+      // of the same offer carries the same commercial terms until somebody with
+      // managePaymentTerms changes them.
+      insertRequest.input('PaymentTermID', sql.Int, existingOffer.PaymentTermID);
       insertRequest.input('InstallationSchedule', sql.NVarChar(500), existingOffer.InstallationSchedule);
       insertRequest.input('OfferNotesClosing', sql.NVarChar(2000), existingOffer.OfferNotesClosing);
       insertRequest.input('OfferValidity', sql.NVarChar(500), existingOffer.OfferValidity);
@@ -556,6 +562,7 @@ export async function POST(
           Title,
           Description,
           PaymentTerms,
+          PaymentTermID,
           InstallationSchedule,
           OfferNotesClosing,
           OfferValidity,
@@ -608,6 +615,7 @@ export async function POST(
           @Title,
           @Description,
           @PaymentTerms,
+          @PaymentTermID,
           @InstallationSchedule,
           @OfferNotesClosing,
           @OfferValidity,
