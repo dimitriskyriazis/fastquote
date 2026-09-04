@@ -682,6 +682,11 @@ type Props = {
   serverSideHeaderSelectMode?: 'loaded' | 'all';
   suppressColumnMoveAnimation?: boolean;
   onColumnStateRestored?: () => void;
+  /** Called after a header-menu column action (Hide Column, Move Column
+   *  Left/Right). Those go through the grid API, so the column events they
+   *  raise carry source 'api'; a page that auto-saves its layout only on
+   *  UI-sourced events (Offer Products) needs this hook to persist them. */
+  onHeaderMenuColumnAction?: (detail: { action: 'hide' | 'moveLeft' | 'moveRight'; colId: string }) => void;
   /** Called for each row returned by the server before it enters the grid.
    *  Return false to exclude the row. Uses a ref internally so the callback
    *  identity does not need to be stable. */
@@ -1659,6 +1664,7 @@ export default function AgGridAll({
   serverSideHeaderSelectMode = 'all',
   suppressColumnMoveAnimation = false,
   onColumnStateRestored,
+  onHeaderMenuColumnAction,
   filterServerRow,
   syncStateToUrl = true,
   prefetchedFirstPage = null,
@@ -4243,6 +4249,8 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
     return wrapActions(replaceExportItem(replaceDeleteItem(itemsWithFilter)));
   }, [clearContextMenuRow, deleteSelectionValues, getContextMenuItems, resolveAutoSizeMenuItems, endpoint, allowQuickSearch, hasServerSideSelectAll]);
 
+  const onHeaderMenuColumnActionRef = useRef(onHeaderMenuColumnAction);
+  onHeaderMenuColumnActionRef.current = onHeaderMenuColumnAction;
   const headerMenuItemsHandler = useCallback<GetMainMenuItems<RowData>>((params) => {
     const column = params.column;
     if (!column) {
@@ -4264,22 +4272,35 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
       && currentIndex >= 0
       && visibleColumns.length > 1;
 
-    const moveColumnToIndex = (index: number) => {
+    // `moveColumns` indexes into ALL grid columns (hidden ones included), while
+    // currentIndex is a position among displayed columns. Resolve the target from
+    // the displayed neighbour's position in the full list, otherwise a hidden
+    // column sitting between the two makes the move land in the wrong place.
+    const moveColumnToIndex = (index: number, action: 'moveLeft' | 'moveRight') => {
       if (!api || !allowMove) return;
       const clamped = Math.max(0, Math.min(visibleColumns.length - 1, index));
       if (clamped === currentIndex) return;
-      api.moveColumns([colId], clamped);
+      const neighbour = visibleColumns[clamped];
+      const allColumns = typeof api.getAllGridColumns === 'function' ? api.getAllGridColumns() : [];
+      const neighbourIndex = allColumns.findIndex((col: Column) => col.getColId() === neighbour.getColId());
+      if (neighbourIndex < 0) return;
+      // The column is removed before it is re-inserted. Moving right past the
+      // neighbour: the neighbour shifts left by one, so inserting at its original
+      // index lands right after it. Moving left: the neighbour does not shift, so
+      // inserting at its index lands right before it. Both resolve to neighbourIndex.
+      api.moveColumns([colId], neighbourIndex);
+      onHeaderMenuColumnActionRef.current?.({ action, colId });
     };
 
     const moveLeftItem: MenuItemDef<RowData> = {
       name: 'Move Column Left',
       disabled: !allowMove || currentIndex <= 0,
-      action: () => moveColumnToIndex(currentIndex - 1),
+      action: () => moveColumnToIndex(currentIndex - 1, 'moveLeft'),
     };
     const moveRightItem: MenuItemDef<RowData> = {
       name: 'Move Column Right',
       disabled: !allowMove || currentIndex < 0 || currentIndex >= visibleColumns.length - 1,
-      action: () => moveColumnToIndex(currentIndex + 1),
+      action: () => moveColumnToIndex(currentIndex + 1, 'moveRight'),
     };
 
     const hideColumnItem: MenuItemDef<RowData> = {
@@ -4292,7 +4313,10 @@ if (lastPrefetchedBlocksIdentityRef.current !== prefetchedBlocks) {
           </svg>
         </span>
       `,
-      action: () => params.api.setColumnsVisible([colId], false),
+      action: () => {
+        params.api.setColumnsVisible([colId], false);
+        onHeaderMenuColumnActionRef.current?.({ action: 'hide', colId });
+      },
     };
 
     const customDefaults =

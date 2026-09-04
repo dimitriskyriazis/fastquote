@@ -205,6 +205,30 @@ const MARKUP_SOURCE_FIELDS = new Set([
   'CurrencyCostModifier',
 ]);
 
+// Cost-analysis columns whose visibility is decided from the offer's data on
+// every response (handleGridResponse), not by the user. The table-layout effect
+// must not treat a saved hide flag on these as a user choice.
+const DATA_DRIVEN_COST_COLUMNS = new Set<string>(['NetCostOtherCurrency', 'CurrencyCostModifier']);
+
+// Column ids the user has hidden in the saved layout behind `storageKey`
+// (the same localStorage entry saveLayout writes). Read on demand so it
+// reflects hides made after mount, unlike the savedHiddenMap snapshot.
+const readSavedHiddenColumnIds = (storageKey: string): Set<string> => {
+  const hidden = new Set<string>();
+  if (typeof window === 'undefined' || !storageKey) return hidden;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return hidden;
+    const parsed = JSON.parse(raw) as { columns?: Array<{ colId?: unknown; hide?: unknown }> } | null;
+    parsed?.columns?.forEach((entry) => {
+      if (typeof entry?.colId === 'string' && entry.hide === true) hidden.add(entry.colId);
+    });
+  } catch {
+    /* noop */
+  }
+  return hidden;
+};
+
 const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
   offerId,
   endpoint,
@@ -1491,10 +1515,20 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     const widthSnapshot = captureColumnWidths(api);
 
     const showCostAnalysis = tableLayout !== 'cust';
+    // The cost layouts reveal the cost-analysis block, but a column the user
+    // explicitly hid (saved layout for this table layout) must stay hidden,
+    // otherwise every offer open would undo the hide. Read the saved state
+    // fresh: savedHiddenMap is snapshotted at mount and can be stale. The two
+    // currency columns are data-driven (see handleGridResponse) and are left
+    // to that effect: their persisted hide flag may just mirror the auto-hide.
+    const savedHidden = showCostAnalysis
+      ? readSavedHiddenColumnIds(columnStateStorageKey)
+      : new Set<string>();
     try {
       const state = COST_ANALYSIS_COLUMNS.map((colId) => ({
         colId,
-        hide: !showCostAnalysis,
+        hide: !showCostAnalysis
+          || (!DATA_DRIVEN_COST_COLUMNS.has(colId) && savedHidden.has(colId)),
       }));
       // Markup is a cost-derived, opt-in column (hidden by default). The customer
       // ('cust') layout must never expose it, but the cost layouts must NOT force
@@ -1511,7 +1545,7 @@ const OfferProductsPanel = React.forwardRef<OfferProductsPanelHandle, Props>(({
     syncMarkupColumnVisibleRef.current();
 
     appliedTableLayoutRef.current = tableLayout;
-  }, [captureColumnWidths, requestedColumnsReady, restoreColumnWidths, tableLayout]);
+  }, [captureColumnWidths, columnStateStorageKey, requestedColumnsReady, restoreColumnWidths, tableLayout]);
 
   const flashIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const flashPhaseRef = useRef<'paint' | 'fade' | null>(null);
@@ -10352,6 +10386,7 @@ const requestedColumnDefsMap = useMemo(
             onTotalsChange={handleTotalsChange}
             onResponse={handleGridResponse}
             onColumnStateRestored={handleColumnStateRestored}
+            onHeaderMenuColumnAction={queueAutoSaveLayout}
             onServerRequest={handleServerRequest}
             requestPayload={standardPackageRequestPayload}
             getExportValueResolver={getExportValueResolver}
