@@ -220,20 +220,24 @@ function buildOrder(sortModel: GridRequest['sortModel']) {
   return `ORDER BY ${parts.join(', ')}`;
 }
 
-async function readGridRequest(req: NextRequest): Promise<{ request: GridRequest }> {
+async function readGridRequest(
+  req: NextRequest,
+): Promise<{ request: GridRequest; latestVersionOnly: boolean }> {
   try {
     const payload = await req.json();
     if (payload && typeof payload === 'object') {
+      // "Filter only last version" toggle on the Offered Products page (sent via requestPayload).
+      const latestVersionOnly = (payload as { latestVersionOnly?: unknown }).latestVersionOnly === true;
       const inner = (payload as { request?: GridRequest }).request;
       if (inner && typeof inner === 'object') {
-        return { request: inner };
+        return { request: inner, latestVersionOnly };
       }
-      return { request: { startRow: 0, endRow: 100 } };
+      return { request: { startRow: 0, endRow: 100 }, latestVersionOnly };
     }
   } catch {
     /* fall back to defaults */
   }
-  return { request: { startRow: 0, endRow: 100 } };
+  return { request: { startRow: 0, endRow: 100 }, latestVersionOnly: false };
 }
 
 // No COUNT_BIG(1) OVER (): that windowed count made every page wait for the
@@ -311,10 +315,43 @@ const baseFilter = `
   AND ISNULL(o.IsStandardPackage, 0) = 0
 `;
 
+// "Filter only last version": keep only the lines of the highest OfferVersion in each offer's
+// version group. Groups follow the ParentOfferID chain and the max is taken over every version
+// regardless of Enabled — the same VersionTree / IsLatestVersion definition the Offers page and
+// /api/offers/summary use, so both pages agree on which version is "last". The CTE is prepended
+// to the statement and the join appended to the FROM only when the toggle is on, so the default
+// (all versions) query is untouched.
+const versionTreeCte = `
+  WITH VersionTree AS (
+    SELECT ID, ParentOfferID, ID AS RootOfferID
+    FROM dbo.Offer
+    WHERE ParentOfferID IS NULL
+    UNION ALL
+    SELECT vo.ID, vo.ParentOfferID, vt.RootOfferID
+    FROM dbo.Offer vo
+    INNER JOIN VersionTree vt ON vo.ParentOfferID = vt.ID
+  )
+`;
+
+const versionStatsJoin = `
+    LEFT JOIN VersionTree versionTree ON versionTree.ID = o.ID
+    LEFT JOIN (
+      SELECT vt.RootOfferID, MAX(vo.OfferVersion) AS MaxOfferVersion
+      FROM VersionTree vt
+      INNER JOIN dbo.Offer vo ON vo.ID = vt.ID
+      GROUP BY vt.RootOfferID
+    ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
+`;
+
+const latestVersionFilter = 'o.OfferVersion = COALESCE(versionStats.MaxOfferVersion, o.OfferVersion)';
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/offered-products');
   try {
-    const { request: gridRequest } = await readGridRequest(req);
+    const { request: gridRequest, latestVersionOnly } = await readGridRequest(req);
+    const sqlPrefix = latestVersionOnly ? versionTreeCte : '';
+    const scopedFrom = latestVersionOnly ? `${fromClause} ${versionStatsJoin}` : fromClause;
+    const scopedBaseFilter = latestVersionOnly ? `${baseFilter} AND ${latestVersionFilter}` : baseFilter;
     const startRow = gridRequest.startRow ?? 0;
     const endRow = gridRequest.endRow ?? startRow + 100;
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
@@ -323,7 +360,7 @@ export async function POST(req: NextRequest) {
     const { where, params: whereParams } = buildWhereAndParams(gridRequest.filterModel);
     const quickFilterClause = buildQuickFilterClause(gridRequest.quickFilterText, QUICK_FILTER_COLUMNS);
     const combinedWhere = mergeWhereClauses(where, quickFilterClause.clause);
-    const combinedWhereWithBase = mergeWhereClauses(combinedWhere, `AND ${baseFilter}`);
+    const combinedWhereWithBase = mergeWhereClauses(combinedWhere, `AND ${scopedBaseFilter}`);
     const combinedParams = [...whereParams, ...quickFilterClause.params];
     const defaultOrder = 'ORDER BY o.ID DESC, od.ID';
     const paging = 'OFFSET @__offset ROWS FETCH NEXT @__limit ROWS ONLY';
@@ -346,8 +383,9 @@ export async function POST(req: NextRequest) {
       const groupWhere = combineWhereClauses(combinedWhereWithBase, parentFilter.clause);
       const countReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
       const countSql = `
+        ${sqlPrefix}
         SELECT COUNT(DISTINCT ${groupingFields[groupLevel].expression}) AS __groupCount
-        ${fromClause}
+        ${scopedFrom}
         ${groupWhere}
       `;
       const countRes = await countReq.query<{ __groupCount: number }>(countSql);
@@ -359,6 +397,7 @@ export async function POST(req: NextRequest) {
       const groupExpr = groupingFields[groupLevel].expression;
       const groupField = groupingFields[groupLevel].field;
       const groupSql = `
+        ${sqlPrefix}
         SELECT
           ${groupExpr} AS [${groupField}],
           COUNT(1) AS __childCount,
@@ -370,7 +409,7 @@ export async function POST(req: NextRequest) {
           AVG(od.CustomerDiscount)   AS CustomerDiscount,
           AVG(od.TelmacoDiscount)    AS TelmacoDiscount,
           AVG(od.Margin)             AS Margin
-        ${fromClause}
+        ${scopedFrom}
         ${groupWhere}
         GROUP BY ${groupExpr}
         ORDER BY ${groupExpr}
@@ -387,7 +426,7 @@ export async function POST(req: NextRequest) {
     const dataReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
     dataReq.input('__offset', sql.Int, offset);
     dataReq.input('__limit', sql.Int, pageSize);
-    const dataSql = `${selectClause} ${fromClause} ${appliedWhere} ${orderClause} ${paging}`;
+    const dataSql = `${sqlPrefix} ${selectClause} ${scopedFrom} ${appliedWhere} ${orderClause} ${paging}`;
     const dataRes = await dataReq.query<OfferDetailRow>(dataSql);
     const rows = dataRes.recordset ?? [];
     const fetched = rows.length;

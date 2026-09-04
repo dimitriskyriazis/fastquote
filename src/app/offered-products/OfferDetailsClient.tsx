@@ -148,6 +148,11 @@ const redCellStyle = { color: '#dc2626' } as const;
 export default function OfferDetailsClient() {
   const router = useRouter();
   const [pivotMode, setPivotMode] = useState(false);
+  // "Filter only last version": show only lines belonging to the last version of each offer.
+  // Applies to both the main grid (sent as requestPayload.latestVersionOnly) and the pivot
+  // summary (?latest=1). The refresh token bump makes AgGridAll refetch with the new payload.
+  const [latestVersionOnly, setLatestVersionOnly] = useState(false);
+  const [gridRefreshToken, setGridRefreshToken] = useState(0);
   const [options, setOptions] = useState<GroupOptions>({ brands: [], salesDivisions: [], markets: [], fwcProjects: [] });
   const [filters, setFilters] = useState<GroupFilters>(EMPTY_FILTERS);
   const [brandSearch, setBrandSearch] = useState('');
@@ -194,6 +199,15 @@ export default function OfferDetailsClient() {
     });
   }, []);
 
+  const toggleLatestVersionOnly = useCallback(() => {
+    setLatestVersionOnly(prev => !prev);
+    // Same render as the payload change, so AgGridAll's refresh effect already sees the new
+    // requestPayload when it refetches.
+    setGridRefreshToken(prev => prev + 1);
+  }, []);
+
+  const gridRequestPayload = useMemo(() => ({ latestVersionOnly }), [latestVersionOnly]);
+
   const handleFilterChange = useCallback((key: keyof GroupFilters, value: string) => {
     // Return the same object when nothing changed so the summary effect
     // doesn't refetch on every keystroke in the brand combobox.
@@ -204,7 +218,7 @@ export default function OfferDetailsClient() {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryData, setSummaryData] = useState<Record<string, unknown>[] | null>(null);
 
-  const fetchSummary = useCallback((currentFilters: GroupFilters) => {
+  const fetchSummary = useCallback((currentFilters: GroupFilters, latestOnly: boolean) => {
     setSummaryLoading(true);
     const qs = new URLSearchParams();
     if (currentFilters.BrandName)              qs.set('brand',    currentFilters.BrandName);
@@ -212,6 +226,7 @@ export default function OfferDetailsClient() {
     if (currentFilters.SalesMarket)            qs.set('market',   currentFilters.SalesMarket);
     if (currentFilters.ERPFWCProjectShortName) qs.set('fwc',      currentFilters.ERPFWCProjectShortName);
     if (currentFilters.includeTelquote === 'yes') qs.set('telquote', '1'); // else excluded (default)
+    if (latestOnly)                            qs.set('latest',   '1');
     void fetch(`/api/offered-products/summary${qs.toString() ? `?${qs}` : ''}`)
       .then(r => r.json())
       .then((data: { ok?: boolean; rows?: Record<string, unknown>[] }) => {
@@ -255,8 +270,8 @@ export default function OfferDetailsClient() {
         ? state.map((entry) => ({ ...entry }))
         : null;
     }
-    fetchSummary(filters);
-  }, [filters, pivotMode, fetchSummary]);
+    fetchSummary(filters, latestVersionOnly);
+  }, [filters, pivotMode, latestVersionOnly, fetchSummary]);
 
   // Re-apply the snapshotted pivot layout exactly when the refetched rows land (summaryData
   // changes) rather than on an arbitrary grid modelUpdated event — so a rearrangement the user
@@ -839,6 +854,27 @@ export default function OfferDetailsClient() {
     </button>
   );
 
+  const latestVersionButton = (
+    <button
+      type="button"
+      className={`${latestVersionOnly ? styles.groupBtnActive : styles.groupBtn} page-header-button`}
+      onClick={toggleLatestVersionOnly}
+      aria-pressed={latestVersionOnly}
+      title={latestVersionOnly
+        ? 'Showing products from the last version of each offer only'
+        : 'Show products from the last version of each offer only'}
+    >
+      Filter only last version
+    </button>
+  );
+
+  const afterSearchActions = (
+    <>
+      {pivotModeButton}
+      {latestVersionButton}
+    </>
+  );
+
   const headerActions = pivotMode ? (
     <div className={styles.headerActions}>
       {/* Brand — custom combobox */}
@@ -958,12 +994,14 @@ export default function OfferDetailsClient() {
 
   return (
     <main className={styles.page}>
-      <PageHeader title="Offered Products" afterSearchActions={pivotModeButton} rightActions={headerActions}>
+      <PageHeader title="Offered Products" afterSearchActions={afterSearchActions} rightActions={headerActions}>
         <GridQuickSearchProvider>
           <div className={`${styles.gridFrame} fq-grid-panel`} style={pivotMode ? { display: 'none' } : undefined}>
             <AgGridAll
               endpoint="/api/offered-products"
               columnDefs={columnDefs}
+              requestPayload={gridRequestPayload}
+              refreshToken={gridRefreshToken}
               rowGroupPanelShow="never"
               rowSelection="multiple"
               rowMultiSelectWithClick

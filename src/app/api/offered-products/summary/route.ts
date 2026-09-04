@@ -24,6 +24,33 @@ const fromClause = `
     LEFT JOIN dbo.FWCs fwc ON fwc.ID = o.ERPFWCProjectID
 `;
 
+// "Filter only last version" (latest=1): keep only the lines of the highest OfferVersion in each
+// offer's version group — same VersionTree / IsLatestVersion definition as /api/offers and
+// /api/offered-products, so the pivot and the main grid agree on which version is "last".
+const versionTreeCte = `
+  WITH VersionTree AS (
+    SELECT ID, ParentOfferID, ID AS RootOfferID
+    FROM dbo.Offer
+    WHERE ParentOfferID IS NULL
+    UNION ALL
+    SELECT vo.ID, vo.ParentOfferID, vt.RootOfferID
+    FROM dbo.Offer vo
+    INNER JOIN VersionTree vt ON vo.ParentOfferID = vt.ID
+  )
+`;
+
+const versionStatsJoin = `
+    LEFT JOIN VersionTree versionTree ON versionTree.ID = o.ID
+    LEFT JOIN (
+      SELECT vt.RootOfferID, MAX(vo.OfferVersion) AS MaxOfferVersion
+      FROM VersionTree vt
+      INNER JOIN dbo.Offer vo ON vo.ID = vt.ID
+      GROUP BY vt.RootOfferID
+    ) AS versionStats ON versionStats.RootOfferID = versionTree.RootOfferID
+`;
+
+const latestVersionFilter = 'o.OfferVersion = COALESCE(versionStats.MaxOfferVersion, o.OfferVersion)';
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -33,6 +60,8 @@ export async function GET(req: NextRequest) {
     const fwc      = searchParams.get('fwc')      ?? '';
     // TelQuote-imported offers are excluded by default; telquote=1 includes them.
     const includeTelquote = searchParams.get('telquote') === '1';
+    // latest=1 keeps only the last version of each offer (see versionTreeCte above).
+    const latestVersionOnly = searchParams.get('latest') === '1';
 
     const pool = await getPool();
 
@@ -42,7 +71,10 @@ export async function GET(req: NextRequest) {
     if (market)   filterClauses.push(`mkt.Name = @market`);
     if (fwc)      filterClauses.push(`fwc.ShortName = @fwc`);
     if (!includeTelquote) filterClauses.push(`ISNULL(o.FromTelquote, 0) = 0`);
+    if (latestVersionOnly) filterClauses.push(latestVersionFilter);
     const whereClause = `WHERE ${filterClauses.join(' AND ')}`;
+    const sqlPrefix = latestVersionOnly ? versionTreeCte : '';
+    const scopedFrom = latestVersionOnly ? `${fromClause} ${versionStatsJoin}` : fromClause;
 
     const dataReq = pool.request();
     if (brand)    dataReq.input('brand',    sql.NVarChar(500), brand);
@@ -56,6 +88,7 @@ export async function GET(req: NextRequest) {
     // margins, discounts) can't be pre-summed, so we deliberately do NOT aggregate
     // here. Dates are emitted as dd/mm/yyyy strings so they group cleanly by day.
     const dataSql = `
+      ${sqlPrefix}
       SELECT
         od.OfferID AS OfferID,
         o.OfferVersion AS OfferVersion,
@@ -96,7 +129,7 @@ export async function GET(req: NextRequest) {
         o.Probability AS Probability,
         CONVERT(varchar(10), od.CreatedOn, 103) AS CreatedOn,
         CONVERT(varchar(10), od.ModifiedOn, 103) AS ModifiedOn
-      ${fromClause}
+      ${scopedFrom}
       ${whereClause}
       ORDER BY o.ID DESC, od.ID
     `;
