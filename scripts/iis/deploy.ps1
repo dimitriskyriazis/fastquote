@@ -135,8 +135,17 @@ if (Test-Path $Dist) {
 # --- 4) Install + build ------------------------------------------------------
 # npm ci, not npm install: the lockfile is authoritative, so prod can never silently
 # re-resolve a dependency (the caret range on next admits a newer minor than the lock).
-npm ci
-if ($LASTEXITCODE -ne 0) { Fail-WithRollback 'npm ci failed.' }
+# Skipped when package-lock.json is identical to the commit that is live right now: the
+# existing node_modules already matches it, and a clean reinstall is the slowest step of
+# the deploy. Any git error makes $LockChanged true, so the safe path is the default.
+git diff --quiet $PreSha HEAD -- package-lock.json
+$LockChanged = ($LASTEXITCODE -ne 0)
+if ($LockChanged -or -not (Test-Path (Join-Path $AppRoot 'node_modules'))) {
+  npm ci
+  if ($LASTEXITCODE -ne 0) { Fail-WithRollback 'npm ci failed.' }
+} else {
+  Write-Host 'package-lock.json unchanged since the live commit - keeping node_modules.' -ForegroundColor DarkGray
+}
 
 npm run build
 if ($LASTEXITCODE -ne 0) { Fail-WithRollback 'next build failed.' }

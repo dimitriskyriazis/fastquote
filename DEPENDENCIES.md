@@ -59,7 +59,7 @@ cp package.json package-lock.json /some/scratch/ && cd /some/scratch
 node -e "const p=require('./package.json'); delete p.overrides; \
   require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"
 npm install --package-lock-only --ignore-scripts
-npm audit
+npm audit --fetch-timeout=60000
 ```
 
 Diff the resolved versions against the real lockfile. Anything that resolves identically
@@ -68,3 +68,10 @@ with the override removed is inert. Re-run this whenever the override block is t
 
 Capture `npm audit --json` as a baseline *before* any dependency change, so a new advisory
 can be told apart from one the change introduced.
+
+Installs never audit: the repo `.npmrc` sets `audit=false` because the registry's bulk
+advisory endpoint frequently hangs from the office network, and npm waits its full 300 s
+`fetch-timeout` before falling back to the legacy endpoint (measured 2026-09-04: a 22 s
+`npm ci` took 5 minutes, on prod and on a dev PC alike). Run `npm audit` deliberately and
+pass `--fetch-timeout=60000` so a hung request costs a minute, not five; "audit endpoint
+returned an error" means both endpoints timed out, so retry later.
