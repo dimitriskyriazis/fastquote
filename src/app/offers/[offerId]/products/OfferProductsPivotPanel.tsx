@@ -10,12 +10,12 @@ import type {
   ColDef,
   GridApi,
   GridReadyEvent,
-  IAggFuncParams,
   RowClassParams,
   ValueFormatterParams,
   ValueSetterParams,
 } from 'ag-grid-community';
 import {
+  CellApiModule,
   ClientSideRowModelModule,
   ColumnApiModule,
   ColumnAutoSizeModule,
@@ -52,6 +52,7 @@ import gridStyles from '../../../components/AgGridAll.module.css';
 import panelStyles from '../OfferProductsPanel.module.css';
 import { getUserNumberLocale } from '../../../../lib/localeNumber';
 import { floorTo } from '../offerProductsUtils';
+import { type ForeignCostTotals, foreignCostAggFunc, sumWithoutOptions } from './pivotAggregation';
 
 type RowData = Record<string, unknown>;
 
@@ -122,12 +123,8 @@ const numericFieldValueGetter = (field: string) => (params: { data?: RowData | n
   return toFiniteNumber((data as Record<string, unknown>)[field]);
 };
 
-// "Total Cost (Other Currency)" is NetCostOtherCurrency x Quantity summed per group.
-// Values are per-currency maps so a brand costed in one foreign currency shows a single
-// amount, while a group that mixes currencies lists each one instead of adding unlike
-// currencies together.
-type ForeignCostTotals = Record<string, number>;
-
+// "Total Cost (Other Currency)" is NetCostOtherCurrency x Quantity summed per group as a
+// per-currency map (see ForeignCostTotals in pivotAggregation.ts).
 const FOREIGN_COST_AGG_FUNC = 'foreignCostSum';
 
 const foreignCostValueGetter = (params: { data?: RowData | null }): ForeignCostTotals | null => {
@@ -139,19 +136,6 @@ const foreignCostValueGetter = (params: { data?: RowData | null }): ForeignCostT
   if (unitCost == null || unitCost === 0) return null;
   const quantity = toFiniteNumber(data.Quantity) ?? 0;
   return { [currency]: unitCost * quantity };
-};
-
-const foreignCostAggFunc = (params: IAggFuncParams<RowData, ForeignCostTotals | null>): ForeignCostTotals | null => {
-  let merged: ForeignCostTotals | null = null;
-  for (const value of params.values) {
-    if (!value || typeof value !== 'object') continue;
-    for (const [currency, amount] of Object.entries(value)) {
-      if (!Number.isFinite(amount)) continue;
-      if (!merged) merged = {};
-      merged[currency] = (merged[currency] ?? 0) + amount;
-    }
-  }
-  return merged;
 };
 
 const foreignCostTotal = (value: unknown): number => {
@@ -169,7 +153,10 @@ const foreignCostValueFormatter = ({ value }: ValueFormatterParams<RowData, unkn
 };
 
 // Stable reference: a new aggFuncs object on every render would reset the grid layout.
-const PIVOT_AGG_FUNCS = { [FOREIGN_COST_AGG_FUNC]: foreignCostAggFunc };
+// `sum` deliberately overrides AG Grid's built-in so every summed column (the presets'
+// Total List/Net/Cost/Gross Profit/Qty/hours and anything the user drags into Values)
+// leaves option lines out, matching the totals bar and the main grid's category totals.
+const PIVOT_AGG_FUNCS = { sum: sumWithoutOptions, [FOREIGN_COST_AGG_FUNC]: foreignCostAggFunc };
 
 // In pivot mode a column is displayed iff it is an active value column, so visibility is
 // driven through aggFunc; `hide` covers the brandPartNo layout (plain row grouping).
@@ -180,6 +167,7 @@ const foreignCostColumnState = (visible: boolean): Partial<ColumnState> => ({
 
 if (!(globalThis as unknown as { __AG_GRID_PIVOT_MODULES_REGISTERED__?: boolean }).__AG_GRID_PIVOT_MODULES_REGISTERED__) {
   ModuleRegistry.registerModules([
+    CellApiModule,
     ClientSideRowModelModule,
     RowGroupingModule,
     RowGroupingPanelModule,
