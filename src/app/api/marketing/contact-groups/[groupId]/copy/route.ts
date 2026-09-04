@@ -30,7 +30,7 @@ export async function POST(
     const origReq = pool.request();
     origReq.input("groupId", sql.Int, groupId);
     const origResult = await origReq.query(`
-      SELECT Description, SalesDivisionID, SalespersonID, GroupImportance, Note, Enabled
+      SELECT Description, SalesDivisionID, SalespersonID, ResponsiblePersonID, GroupImportance, Note, Enabled
       FROM dbo.ContactGroups WHERE ID = @groupId
     `);
     if (!origResult.recordset || origResult.recordset.length === 0) {
@@ -44,14 +44,15 @@ export async function POST(
     createReq.input("description", sql.NVarChar(sql.MAX), `${(orig.Description as string) ?? ''} (Copy)`);
     createReq.input("salesDivisionId", sql.Int, orig.SalesDivisionID as number | null);
     createReq.input("salespersonId", sql.NVarChar(450), orig.SalespersonID as string | null);
+    createReq.input("responsiblePersonId", sql.Int, (orig.ResponsiblePersonID as number | null) ?? null);
     createReq.input("groupImportance", sql.NVarChar(255), orig.GroupImportance as string | null);
     createReq.input("note", sql.NVarChar(sql.MAX), orig.Note as string | null);
     createReq.input("enabled", sql.Bit, orig.Enabled ? 1 : 0);
     createReq.input("totalCount", sql.Int, 0);
     const createResult = await createReq.query<{ ID: number }>(`
-      INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, GroupImportance, Note, Enabled, TotalCount)
+      INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, ResponsiblePersonID, GroupImportance, Note, Enabled, TotalCount)
       OUTPUT INSERTED.ID
-      VALUES (@description, @salesDivisionId, @salespersonId, @groupImportance, @note, @enabled, @totalCount)
+      VALUES (@description, @salesDivisionId, @salespersonId, @responsiblePersonId, @groupImportance, @note, @enabled, @totalCount)
     `);
 
     const newGroupId = createResult.recordset?.[0]?.ID;

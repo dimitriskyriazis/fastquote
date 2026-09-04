@@ -255,6 +255,31 @@ export async function PATCH(
   }
 }
 
+type DeletedMemberRow = {
+  ContactGroupListID: number;
+  ContactID: number;
+  ContactGroupID: number;
+  Importance: string | null;
+  Note: string | null;
+  LastName: string | null;
+  FirstName: string | null;
+  CustomerName: string | null;
+};
+
+// SQL Server caps a statement at 2100 parameters; a header select-all can hand
+// us far more membership IDs than that in one request.
+const DELETE_BATCH_SIZE = 1000;
+
+function formatMemberName(row: DeletedMemberRow): string | null {
+  const name = [row.LastName, row.FirstName]
+    .map((value) => (value ?? "").trim())
+    .filter((value) => value.length > 0)
+    .join(" ");
+  const customer = (row.CustomerName ?? "").trim();
+  if (name && customer) return `${name} (${customer})`;
+  return name || customer || null;
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ groupId: string }> },
@@ -274,38 +299,70 @@ export async function DELETE(
 
     const body = (await req.json().catch(() => null)) as { ContactGroupListIDs?: Array<number | string> } | null;
     const rawIds = Array.isArray(body?.ContactGroupListIDs) ? body.ContactGroupListIDs : [];
-    const ids = rawIds
-      .map((v) => (typeof v === "number" ? v : Number.parseInt(String(v), 10)))
-      .filter((v) => Number.isFinite(v));
+    const ids = Array.from(new Set(
+      rawIds
+        .map((v) => (typeof v === "number" ? v : Number.parseInt(String(v), 10)))
+        .filter((v) => Number.isFinite(v)),
+    ));
 
     if (ids.length === 0) {
       return NextResponse.json({ ok: false, error: "No IDs provided" }, { status: 400 });
     }
 
     const pool = await getPool();
-    const request = pool.request();
-    ids.forEach((id, idx) => request.input(`id${idx}`, sql.Int, id));
-    const deleteResult = await request.query<{ ID: number }>(`
-      DELETE FROM dbo.ContactsGroupLists
-      OUTPUT DELETED.ID
-      WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
-    `);
+    const deletedRows: DeletedMemberRow[] = [];
+    for (let offset = 0; offset < ids.length; offset += DELETE_BATCH_SIZE) {
+      const batch = ids.slice(offset, offset + DELETE_BATCH_SIZE);
+      const request = pool.request();
+      request.input("groupId", sql.Int, groupId);
+      batch.forEach((id, idx) => request.input(`id${idx}`, sql.Int, id));
+      // Scoped to the group in the URL: a membership ID that belongs to another
+      // group is ignored, not deleted. The join runs on the OUTPUT rows so the
+      // audit trail names the member and the Undo payload carries the
+      // Importance/Note the restore route has to put back.
+      const result = await request.query<DeletedMemberRow>(`
+        DECLARE @deleted TABLE (
+          ContactGroupListID INT,
+          ContactID INT,
+          ContactGroupID INT,
+          Importance NVARCHAR(MAX),
+          Note NVARCHAR(MAX)
+        );
+        DELETE FROM dbo.ContactsGroupLists
+        OUTPUT DELETED.ID, DELETED.ContactID, DELETED.ContactGroupID, DELETED.Importance, DELETED.Note
+        INTO @deleted (ContactGroupListID, ContactID, ContactGroupID, Importance, Note)
+        WHERE ContactGroupID = @groupId
+          AND ID IN (${batch.map((_, idx) => `@id${idx}`).join(", ")});
+        SELECT
+          d.ContactGroupListID,
+          d.ContactID,
+          d.ContactGroupID,
+          d.Importance,
+          d.Note,
+          c.LastName,
+          c.FirstName,
+          cust.Name AS CustomerName
+        FROM @deleted d
+        LEFT JOIN dbo.Contacts c ON c.ID = d.ContactID
+        LEFT JOIN dbo.Customers cust ON cust.ID = c.CustomerID;
+      `);
+      deletedRows.push(...(result.recordset ?? []));
+    }
 
-    const deletedRows = (deleteResult.recordset ?? []).map((row) => ({
-      id: row.ID,
-      name: null,
-    }));
     logDeleteAuditDetails({
       endpoint: '/api/marketing/contact-groups/[groupId]/contacts',
       requestId,
       userId: auditUserId,
       targetEntity: 'contactGroupMembers',
       requestedIds: ids,
-      deletedRows,
+      deletedRows: deletedRows.map((row) => ({
+        id: row.ContactGroupListID,
+        name: formatMemberName(row),
+      })),
       message: `Contacts removed from contact group ID ${groupId}`,
     });
 
-    return NextResponse.json({ ok: true, deleted: ids.length });
+    return NextResponse.json({ ok: true, deleted: deletedRows.length, deletedRows });
   } catch (err) {
     console.error(err);
     const message = err instanceof Error ? err.message : "Server error";

@@ -40,7 +40,7 @@ export const getContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> |
   return nodes.slice();
 };
 
-const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
+export const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
   if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
   const state = api.getServerSideSelectionState();
   return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
@@ -172,6 +172,10 @@ type GridRowDeletionLabel = string | ((context: GridRowDeletionLabelContext) => 
 
 type GridRowDeletionConfig<RowData> = {
   endpoint: string;
+  /** Verb for the menu items and the default confirm title/message. Defaults to
+   *  "Delete"; pass e.g. "Remove" when the rows are memberships rather than the
+   *  records themselves. */
+  actionVerb?: string;
   resolveRowId: (row: RowData | null | undefined) => number | null;
   resolveRowLabel: (row: RowData | null | undefined, fallback: string) => string;
   resolveMultiRowLabel?: (rows: RowData[], fallback: string) => string;
@@ -202,6 +206,12 @@ type GridRowDeletionConfig<RowData> = {
 
 export class GridRowDeletion<RowData> {
   constructor(private readonly config: GridRowDeletionConfig<RowData>) {}
+
+  private get verb() {
+    const raw = this.config.actionVerb;
+    const normalized = typeof raw === 'string' ? raw.trim() : '';
+    return normalized.length > 0 ? normalized : 'Delete';
+  }
 
   private getRowTypeLabel(row: RowData | null | undefined) {
     const resolved = this.config.resolveRowTypeLabel?.(row);
@@ -240,7 +250,7 @@ export class GridRowDeletion<RowData> {
     if (typeof this.config.confirmMessage === 'function') {
       return this.config.confirmMessage(typeLabel, rowLabel);
     }
-    return `Delete ${typeLabel} ${rowLabel}? This action cannot be undone.`;
+    return `${this.verb} ${typeLabel} ${rowLabel}? This action cannot be undone.`;
   }
 
   private buildPayload(ids: number[]) {
@@ -316,7 +326,7 @@ export class GridRowDeletion<RowData> {
       typeLabel,
       rowLabel,
     };
-    const defaultTitle = `Delete ${typeLabel}`;
+    const defaultTitle = `${this.verb} ${typeLabel}`;
     const title = this.resolveLabel(this.config.confirmTitle, defaultTitle, labelContext);
     const confirmLabel = this.resolveLabel(
       this.config.confirmConfirmLabel,
@@ -430,6 +440,49 @@ export class GridRowDeletion<RowData> {
     }
   }
 
+  /**
+   * Header-button entry point: act on whatever the grid has selected. With the
+   * server-side select-all active (and dataEndpoint/idField configured) that is
+   * every filtered row minus the user's deselections, enumerated from the
+   * server; otherwise it is the ticked rows. The selection is read before the
+   * first await so a cleanup deselectAll cannot widen the target set.
+   */
+  public async deleteSelected(api: GridApi<RowData> | null) {
+    if (!api) return;
+    const isSelectAll = hasServerSideSelectAll(api);
+    if (isSelectAll && typeof this.config.dataEndpoint === 'string' && typeof this.config.idField === 'string') {
+      await this.deleteAllFiltered(api);
+      return;
+    }
+    let selectedNodes: Array<RowNode<RowData>> = [];
+    if (isSelectAll && typeof api.forEachNode === 'function') {
+      const deselectedIds = getServerSideDeselectedRowIds(api);
+      const loadedNodes: Array<RowNode<RowData>> = [];
+      api.forEachNode((node) => {
+        if (!node?.data) return;
+        if (deselectedIds.size > 0 && node.id != null && deselectedIds.has(String(node.id))) return;
+        loadedNodes.push(node as RowNode<RowData>);
+      });
+      selectedNodes = loadedNodes;
+    } else if (typeof api.getSelectedNodes === 'function') {
+      selectedNodes = api.getSelectedNodes() as Array<RowNode<RowData>>;
+    }
+    const entries = selectedNodes
+      .map((node) => {
+        const data = node?.data ?? null;
+        if (!data) return null;
+        const id = this.config.resolveRowId(data);
+        if (id == null) return null;
+        return { row: data, id };
+      })
+      .filter((entry): entry is { row: NonNullable<RowData>; id: number } => entry != null);
+    if (entries.length === 0) {
+      showToastMessage('Select at least one row first', 'error');
+      return;
+    }
+    await this.deleteRows(entries.map((entry) => entry.row), entries.map((entry) => entry.id), api);
+  }
+
   public getContextMenuItems(params: GetContextMenuItemsParams<RowData>) {
     const baseItems: Array<MenuItemDef<RowData> | DefaultMenuItem | string> =
       Array.isArray(params.defaultItems) ? [...params.defaultItems] : [];
@@ -447,7 +500,7 @@ export class GridRowDeletion<RowData> {
         }
         const typeLabel = this.getMultiRowTypeLabel([rowData]);
         const deleteAllItem: MenuItemDef<RowData> = {
-          name: `Delete all ${typeLabel}`,
+          name: `${this.verb} all ${typeLabel}`,
           icon: deleteRecordMenuIcon,
           action: () => {
             void this.deleteAllFiltered(params.api ?? null);
@@ -501,8 +554,8 @@ export class GridRowDeletion<RowData> {
         baseItems.push('separator');
       }
       const deleteLabel = targetEntries.length > 1
-        ? `Delete ${this.getMultiRowTypeLabel(rows)}`
-        : `Delete ${this.getRowTypeLabel(rows[0])}`;
+        ? `${this.verb} ${this.getMultiRowTypeLabel(rows)}`
+        : `${this.verb} ${this.getRowTypeLabel(rows[0])}`;
       const deleteItem: MenuItemDef<RowData> = {
         name: deleteLabel,
         icon: deleteRecordMenuIcon,

@@ -11,6 +11,7 @@ type RestoreRow = {
   Description?: string | null;
   SalesDivisionID?: number | null;
   SalespersonID?: number | null;
+  ResponsiblePersonID?: number | null;
   GroupImportance?: string | null;
   Note?: string | null;
   Enabled?: boolean | number | null;
@@ -38,14 +39,15 @@ export async function POST(req: NextRequest) {
       request.input("Description", sql.NVarChar(sql.MAX), row.Description ?? null);
       request.input("SalesDivisionID", sql.Int, row.SalesDivisionID ?? null);
       request.input("SalespersonID", sql.Int, row.SalespersonID ?? null);
+      request.input("ResponsiblePersonID", sql.Int, row.ResponsiblePersonID ?? null);
       request.input("GroupImportance", sql.NVarChar(255), row.GroupImportance ?? null);
       request.input("Note", sql.NVarChar(sql.MAX), row.Note ?? null);
       request.input("Enabled", sql.Bit, row.Enabled ? 1 : 0);
 
       const result = await request.query<{ ID: number }>(`
-        INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, GroupImportance, Note, Enabled, TotalCount)
+        INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, ResponsiblePersonID, GroupImportance, Note, Enabled, TotalCount)
         OUTPUT INSERTED.ID
-        VALUES (@Description, @SalesDivisionID, @SalespersonID, @GroupImportance, @Note, @Enabled, 0)
+        VALUES (@Description, @SalesDivisionID, @SalespersonID, @ResponsiblePersonID, @GroupImportance, @Note, @Enabled, 0)
       `);
       const insertedId = result.recordset?.[0]?.ID;
       if (insertedId != null) {

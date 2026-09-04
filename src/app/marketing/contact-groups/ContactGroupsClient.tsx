@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import React, { useMemo, useCallback, useState, useRef } from 'react';
+import React, { useMemo, useCallback, useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
@@ -45,6 +45,8 @@ type GroupRow = {
   Description: string | null;
   Division: string | null;
   GroupImportance: string | null;
+  ResponsiblePersonID: number | null;
+  Responsible: string | null;
   Note: string | null;
   Enabled: boolean | number | null;
   TotalCount: number | null;
@@ -72,6 +74,7 @@ const GROUP_FIELD_LABELS: Record<string, string> = {
   Description: "Description",
   Division: "Division",
   GroupImportance: "Group Importance",
+  Responsible: "Responsible",
   Note: "Note",
   Enabled: "Enabled",
 };
@@ -101,8 +104,30 @@ export default function ContactGroupsClient() {
   const router = useRouter();
   const routerRef = useRef(router);
   routerRef.current = router;
-  const { roles } = useAuditUser();
+  const { roles, users } = useAuditUser();
   const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
+  // Responsible is edited by display name (what the dropdown shows) but stored as
+  // ContactGroups.ResponsiblePersonID, so keep a label -> AspNetUsers.ID map. The
+  // /api/users list is already sorted by name; FullName is unique in practice, and if two
+  // accounts ever share one the first wins.
+  const responsibleUserIdByLabel = useMemo(() => {
+    const map = new Map<string, number>();
+    users.forEach((user) => {
+      const label = user.label.trim();
+      const id = Number.parseInt(user.id, 10);
+      if (!label || !Number.isFinite(id) || map.has(label)) return;
+      map.set(label, id);
+    });
+    return map;
+  }, [users]);
+  // The select editor reads its options through a ref (function-form cellEditorParams) so
+  // columnDefs keeps its identity when the user list arrives; same pattern as UsersClient.
+  const responsibleOptionsRef = useRef<string[]>([""]);
+  const responsibleUserIdByLabelRef = useRef(responsibleUserIdByLabel);
+  useEffect(() => {
+    responsibleUserIdByLabelRef.current = responsibleUserIdByLabel;
+    responsibleOptionsRef.current = ["", ...responsibleUserIdByLabel.keys()];
+  }, [responsibleUserIdByLabel]);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
   const [refreshToken, setRefreshToken] = useState(0);
   const gridApiRef = useRef<GridApi | null>(null);
@@ -209,6 +234,15 @@ export default function ContactGroupsClient() {
       { field: "Description", headerName: "Description", filter: "agTextColumnFilter", editable: canManage, width: 400 },
       { field: "Division", headerName: "Division", filter: "agTextColumnFilter", editable: canManage },
       { field: "GroupImportance", headerName: "Group Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
+      {
+        field: "Responsible",
+        headerName: "Responsible",
+        filter: "agTextColumnFilter",
+        editable: canManage,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: () => ({ values: responsibleOptionsRef.current }),
+        width: 180,
+      },
       { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: canManage, width: 400 },
       { field: "TotalCount", headerName: "Total Count", filter: "agNumberColumnFilter", editable: false },
       { field: "Importance1", headerName: "Imp. High", filter: "agNumberColumnFilter", editable: false },
@@ -237,6 +271,9 @@ export default function ContactGroupsClient() {
   );
 
   const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+    // Programmatic writes (undo, error reverts) arrive with source 'api' and must not fire
+    // a second PATCH or push a second undo entry.
+    if (event.source === "api") return;
     const field = event.colDef.field;
     if (!field || !(field in GROUP_FIELD_LABELS)) return;
     if (event.newValue === event.oldValue) return;
@@ -247,10 +284,54 @@ export default function ContactGroupsClient() {
     const label = GROUP_FIELD_LABELS[field] ?? field;
     const revertValue = () => {
       if (event.node) {
-        try { event.node.setDataValue(field, event.oldValue); return; } catch { /* noop */ }
+        try { event.node.setDataValue(field, event.oldValue, "api"); return; } catch { /* noop */ }
       }
       event.api.refreshCells({ force: true });
     };
+
+    if (field === "Responsible") {
+      // The cell holds the display name; the row is stored by AspNetUsers.ID, so map the
+      // chosen label back to an id and PATCH ResponsiblePersonID instead of the label.
+      const newLabel = normalizeTextValue(event.newValue);
+      const newPersonId = newLabel ? (responsibleUserIdByLabelRef.current.get(newLabel) ?? null) : null;
+      if (newLabel && newPersonId == null) {
+        showToastMessage(`Unknown user "${newLabel}".`, "error");
+        revertValue();
+        return;
+      }
+      const rowData = (event.data ?? {}) as Record<string, unknown>;
+      const oldPersonId = normalizeGroupId(rowData.ResponsiblePersonID ?? null);
+      const oldLabel = normalizeTextValue(event.oldValue) || null;
+      const patchResponsible = async (personId: number | null) => {
+        const res = await fetch("/api/marketing/contact-groups", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ updates: [{ ContactGroupID: groupId, field: "ResponsiblePersonID", value: personId }] }),
+        });
+        const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+        if (!res.ok || !payload?.ok) throw new Error(payload?.error ?? "Failed to update Responsible");
+      };
+      const submitResponsible = async () => {
+        try {
+          await patchResponsible(newPersonId);
+          rowData.ResponsiblePersonID = newPersonId;
+          pushCellEditUndo(pushUndo, performUndo, label, async () => {
+            await patchResponsible(oldPersonId);
+            rowData.ResponsiblePersonID = oldPersonId;
+            try { event.node?.setDataValue("Responsible", oldLabel, "api"); } catch { /* noop */ }
+            event.api?.refreshServerSide?.({ purge: false });
+          });
+          event.api?.refreshServerSide?.({ purge: false });
+        } catch (err) {
+          console.error("Failed to update Responsible", err);
+          showToastMessage("Unable to update Responsible. Please try again.", "error");
+          revertValue();
+        }
+      };
+      void submitResponsible();
+      return;
+    }
+
     const value = field === "Enabled"
       ? normalizeBoolean((event.data as Record<string, unknown>)?.[field] ?? event.newValue)
       : normalizeTextValue(event.newValue);

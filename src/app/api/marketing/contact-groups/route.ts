@@ -25,12 +25,18 @@ type GridRequest = {
   sortModel?: Array<{ colId: string; sort: "asc" | "desc" }>;
 };
 
+// Display name of the responsible user (dbo.AspNetUsers alias rp): FullName, falling
+// back to UserName for an account without one. Same expression the price-lists grid uses.
+const RESPONSIBLE_NAME_EXPRESSION = "COALESCE(NULLIF(LTRIM(RTRIM(rp.FullName)), ''), rp.UserName)";
+
 const COLUMN_EXPRESSIONS: Record<string, string> = {
   ContactGroupID: "cg.ID",
   Description: "cg.Description",
   Division: "sd.Name",
   GroupImportance: "cg.GroupImportance",
   SalespersonID: "cg.SalespersonID",
+  ResponsiblePersonID: "cg.ResponsiblePersonID",
+  Responsible: RESPONSIBLE_NAME_EXPRESSION,
   Note: "cg.Note",
   Enabled: "cg.Enabled",
   TotalCount: "(SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID)",
@@ -42,6 +48,7 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
 const QUICK_FILTER_COLUMNS = [
   { colId: "Description", expression: "cg.Description" },
   { colId: "Division", expression: "sd.Name" },
+  { colId: "Responsible", expression: RESPONSIBLE_NAME_EXPRESSION },
   { colId: "Note", expression: "cg.Note" },
 ];
 
@@ -179,6 +186,8 @@ export async function POST(req: NextRequest) {
         sd.Name AS Division,
         cg.GroupImportance,
         cg.SalespersonID,
+        cg.ResponsiblePersonID,
+        ${RESPONSIBLE_NAME_EXPRESSION} AS Responsible,
         cg.Note,
         cg.Enabled,
         (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID) AS TotalCount,
@@ -187,6 +196,7 @@ export async function POST(req: NextRequest) {
         (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID AND Importance = 'Low') AS Importance3
       FROM dbo.ContactGroups cg
       LEFT JOIN dbo.SalesDivision sd ON sd.ID = cg.SalesDivisionID
+      LEFT JOIN dbo.AspNetUsers rp ON rp.ID = cg.ResponsiblePersonID
     `;
 
     const pool = await getPool();
@@ -266,6 +276,20 @@ export async function PATCH(req: NextRequest) {
         const spId = normalizeTextValue(update.value);
         request.input("value", sql.NVarChar(450), spId || null);
         await request.query(`UPDATE dbo.ContactGroups SET SalespersonID = @value WHERE ID = @id`);
+      } else if (update.field === "ResponsiblePersonID") {
+        // Nullable pointer into dbo.AspNetUsers. Reject an unknown id here so the client
+        // gets a readable 400 instead of the FK violation surfacing as a 500.
+        const personId = normalizeId(update.value);
+        if (personId != null) {
+          const check = await pool.request()
+            .input("personId", sql.Int, personId)
+            .query<{ ID: number }>("SELECT TOP (1) ID FROM dbo.AspNetUsers WHERE ID = @personId");
+          if (!check.recordset?.length) {
+            return NextResponse.json({ ok: false, error: "Unknown responsible user" }, { status: 400 });
+          }
+        }
+        request.input("value", sql.Int, personId);
+        await request.query(`UPDATE dbo.ContactGroups SET ResponsiblePersonID = @value WHERE ID = @id`);
       } else if (update.field === "Division") {
         // Look up SalesDivisionID by name
         const divName = normalizeTextValue(update.value);
@@ -333,11 +357,11 @@ export async function DELETE(req: NextRequest) {
     ids.forEach((id, idx) => req3.input(`id${idx}`, sql.Int, id));
     const deleteResult = await req3.query(`
       DELETE FROM dbo.ContactGroups
-      OUTPUT DELETED.ID AS ContactGroupID, DELETED.Description, DELETED.SalesDivisionID, DELETED.SalespersonID, DELETED.GroupImportance, DELETED.Note, DELETED.Enabled
+      OUTPUT DELETED.ID AS ContactGroupID, DELETED.Description, DELETED.SalesDivisionID, DELETED.SalespersonID, DELETED.ResponsiblePersonID, DELETED.GroupImportance, DELETED.Note, DELETED.Enabled
       WHERE ID IN (${ids.map((_, idx) => `@id${idx}`).join(", ")})
     `);
 
-    type DeletedContactGroupRow = { ContactGroupID: number; Description: string | null; SalesDivisionID: number | null; SalespersonID: number | null; GroupImportance: string | null; Note: string | null; Enabled: boolean | null };
+    type DeletedContactGroupRow = { ContactGroupID: number; Description: string | null; SalesDivisionID: number | null; SalespersonID: number | null; ResponsiblePersonID: number | null; GroupImportance: string | null; Note: string | null; Enabled: boolean | null };
     const rawDeletedRows = (deleteResult.recordset ?? []) as DeletedContactGroupRow[];
     const auditRows = rawDeletedRows.map((row) => ({
       id: row.ContactGroupID,

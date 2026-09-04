@@ -32,11 +32,14 @@ export async function GET(
         sd.Name AS Division,
         cg.GroupImportance,
         cg.SalespersonID,
+        cg.ResponsiblePersonID,
+        COALESCE(NULLIF(LTRIM(RTRIM(rp.FullName)), ''), rp.UserName) AS Responsible,
         cg.Note,
         cg.Enabled,
         (SELECT COUNT(*) FROM dbo.ContactsGroupLists WHERE ContactGroupID = cg.ID) AS TotalCount
       FROM dbo.ContactGroups cg
       LEFT JOIN dbo.SalesDivision sd ON sd.ID = cg.SalesDivisionID
+      LEFT JOIN dbo.AspNetUsers rp ON rp.ID = cg.ResponsiblePersonID
       WHERE cg.ID = @groupId
     `);
 
@@ -100,6 +103,24 @@ export async function PATCH(
       request.input("value", sql.Bit, boolVal ? 1 : 0);
       await request.query(`UPDATE dbo.ContactGroups SET Enabled = @value WHERE ID = @groupId`);
       appliedAfter = boolVal;
+    } else if (field === "ResponsiblePersonID") {
+      // Nullable pointer into dbo.AspNetUsers; same validation as the grid PATCH.
+      const raw = value != null ? String(value).trim() : "";
+      const personId = raw ? Number.parseInt(raw, 10) : null;
+      if (personId != null && !Number.isFinite(personId)) {
+        return NextResponse.json({ ok: false, error: "Invalid responsible user" }, { status: 400 });
+      }
+      if (personId != null) {
+        const check = await pool.request()
+          .input("personId", sql.Int, personId)
+          .query<{ ID: number }>("SELECT TOP (1) ID FROM dbo.AspNetUsers WHERE ID = @personId");
+        if (!check.recordset?.length) {
+          return NextResponse.json({ ok: false, error: "Unknown responsible user" }, { status: 400 });
+        }
+      }
+      request.input("value", sql.Int, personId);
+      await request.query(`UPDATE dbo.ContactGroups SET ResponsiblePersonID = @value WHERE ID = @groupId`);
+      appliedAfter = personId;
     }
 
     logEditAuditDetails({

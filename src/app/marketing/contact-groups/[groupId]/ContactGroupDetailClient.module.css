@@ -80,3 +80,23 @@
   text-align: center;
   color: var(--text-tertiary, #888);
 }
+
+/* Scoped under .headerRow so these outrank the global .page-header-button
+   rules regardless of stylesheet load order. */
+.headerRow .dangerButton {
+  border-color: rgba(185, 28, 28, 0.35);
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.headerRow .dangerButton:hover:not(:disabled),
+.headerRow .dangerButton:focus-visible:not(:disabled) {
+  background-color: #fee2e2;
+}
+
+.headerRow .dangerButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}

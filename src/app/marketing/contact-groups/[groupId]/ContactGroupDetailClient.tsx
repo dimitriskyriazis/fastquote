@@ -1,12 +1,15 @@
 ﻿"use client";
 
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useRef } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import type { ColDef, CellValueChangedEvent } from 'ag-grid-community';
+import type { ColDef, CellValueChangedEvent, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { showToastMessage } from '../../../../lib/toast';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import { coerceRoles, roleHasPermission } from '../../../../lib/roles';
+import { GridRowDeletion, hasServerSideSelectAll } from '../../../../lib/gridRowDeletion';
+import { checkDeletePermissionForClient } from '../../../../lib/deletePermissions';
+import { useUndoStack } from '../../../hooks/useUndoStack';
 import LookupModal from '../../../components/LookupModal';
 import modalStyles from '../../../components/LookupModal.module.css';
 import { formatBooleanValue } from '../../../lib/formatBooleanValue';
@@ -17,6 +20,8 @@ const AgGridAll = dynamic(() => import('../../../components/AgGridAll'), {
   ssr: false,
   loading: () => <div className={styles.loading}>Loading contacts…</div>,
 });
+
+type RowData = Record<string, unknown>;
 
 type AvailableContact = {
   ContactID: number;
@@ -32,16 +37,40 @@ type Props = {
   description: string | null;
 };
 
+const readText = (value: unknown): string => {
+  if (value == null) return '';
+  return typeof value === 'string' ? value.trim() : String(value).trim();
+};
+
+// "Last First (Customer)" for confirm dialogs and toasts; falls back to the
+// helper's own "record #123" when the row has no usable name.
+const formatMemberLabel = (row: RowData | null | undefined, fallback: string): string => {
+  if (!row) return fallback;
+  const name = [readText(row.LastName), readText(row.FirstName)].filter((part) => part.length > 0).join(' ');
+  const customer = readText(row.CustomerName);
+  if (name && customer) return `${name} (${customer})`;
+  return name || customer || fallback;
+};
+
 export default function ContactGroupDetailClient({ groupId, description }: Props) {
   const { roles } = useAuditUser();
   const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
+  const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+  const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [selection, setSelection] = useState<{ count: number; selectAll: boolean }>({ count: 0, selectAll: false });
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AvailableContact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<Set<number>>(new Set());
   const [searching, setSearching] = useState(false);
   const [adding, setAdding] = useState(false);
+
+  const membersEndpoint = useMemo(
+    () => `/api/marketing/contact-groups/${encodeURIComponent(groupId)}/contacts`,
+    [groupId],
+  );
+  const restoreEndpoint = `${membersEndpoint}/restore`;
 
   const handleSearch = useCallback(async () => {
     const q = searchQuery.trim();
@@ -88,7 +117,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     }
     setAdding(true);
     try {
-      const res = await fetch(`/api/marketing/contact-groups/${encodeURIComponent(groupId)}/contacts/add`, {
+      const res = await fetch(`${membersEndpoint}/add`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contactIds: Array.from(selectedContactIds) }),
@@ -110,7 +139,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     } finally {
       setAdding(false);
     }
-  }, [groupId, selectedContactIds]);
+  }, [membersEndpoint, selectedContactIds]);
 
   const toggleContact = useCallback((contactId: number) => {
     setSelectedContactIds((prev) => {
@@ -120,6 +149,89 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
       return next;
     });
   }, []);
+
+  // Removing a member deletes the dbo.ContactsGroupLists row, never the contact.
+  // The same instance backs the header button and the right-click item, so both
+  // share the confirm dialog, the permission check and the Undo wiring.
+  const memberRowDeletion = useMemo(
+    () =>
+      new GridRowDeletion<RowData>({
+        endpoint: membersEndpoint,
+        dataEndpoint: membersEndpoint,
+        idField: 'ContactGroupListID',
+        actionVerb: 'Remove',
+        resolveRowId: (row) => {
+          const candidate = row?.ContactGroupListID;
+          return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : null;
+        },
+        resolveRowLabel: formatMemberLabel,
+        // With select-all active the helper has no row data, only an
+        // "N records" fallback; keep the count, swap the noun.
+        resolveMultiRowLabel: (rows, fallback) => {
+          const count = rows.length > 0 ? rows.length : Number.parseInt(fallback, 10);
+          return Number.isFinite(count) ? `${count} members` : fallback;
+        },
+        resolveRowTypeLabel: () => 'member',
+        buildPayload: (ids) => ({ ContactGroupListIDs: ids }),
+        confirmTitle: ({ isSingle }) => (isSingle ? 'Remove Member from Group' : 'Remove Members from Group'),
+        confirmMessage: (_typeLabel, label) => `Remove ${label} from this group? The contact record itself is not deleted.`,
+        confirmConfirmLabel: () => 'Remove',
+        confirmCancelLabel: () => 'Cancel',
+        successToastMessage: (_typeLabel, label) => `${label} removed from group`,
+        failureToastMessage: 'Unable to remove from group. Please try again.',
+        refreshHandler: (api) => {
+          if (api && typeof api.refreshServerSide === 'function') {
+            try { api.deselectAll?.(); } catch { /* noop */ }
+            try { api.refreshServerSide({ purge: true }); return; } catch { /* fall through */ }
+          }
+          setRefreshToken((prev) => prev + 1);
+        },
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageMarketing'),
+        restoreEndpoint,
+        // The toast's Undo goes through the page's undo stack so it and Ctrl+Z
+        // act on one entry instead of each restoring the rows.
+        onRequestUndo: () => { void performUndo(); },
+        onDeleteSuccess: (deletedRows, api) => {
+          if (deletedRows.length === 0) return;
+          pushUndo({
+            label: deletedRows.length === 1
+              ? 'Member removed from group'
+              : `${deletedRows.length} members removed from group`,
+            undo: async () => {
+              const res = await fetch(restoreEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rows: deletedRows }),
+              });
+              const result = (await res.json().catch(() => null)) as { ok?: boolean } | null;
+              if (!res.ok || !result?.ok) throw new Error('Failed to restore');
+              try { api?.refreshServerSide?.({ purge: true }); } catch { /* noop */ }
+            },
+          });
+        },
+      }),
+    [membersEndpoint, restoreEndpoint, roles, pushUndo, performUndo],
+  );
+
+  const getContextMenuItems = useCallback(
+    (params: GetContextMenuItemsParams<RowData>) => memberRowDeletion.getContextMenuItems(params),
+    [memberRowDeletion],
+  );
+
+  const handleGridReady = useCallback((api: GridApi<RowData>) => {
+    gridApiRef.current = api;
+  }, []);
+
+  const handleSelectionChanged = useCallback((rows: RowData[], api: GridApi<RowData>) => {
+    setSelection({ count: rows.length, selectAll: hasServerSideSelectAll(api) });
+  }, []);
+
+  const handleRemoveSelected = useCallback(() => {
+    void memberRowDeletion.deleteSelected(gridApiRef.current);
+  }, [memberRowDeletion]);
+
+  const hasSelection = selection.selectAll || selection.count > 0;
+  const removeLabel = selection.selectAll ? 'Remove All Selected' : `Remove Selected (${selection.count})`;
 
   const columnDefs = useMemo<ColDef[]>(() => [
     { field: "CustomerName", headerName: "Customer", filter: "agTextColumnFilter" },
@@ -163,7 +275,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
 
     const submit = async () => {
       try {
-        const res = await fetch(`/api/marketing/contact-groups/${encodeURIComponent(groupId)}/contacts`, {
+        const res = await fetch(membersEndpoint, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ updates: [{ ContactGroupListID: cglId, field, value: event.newValue }] }),
@@ -179,7 +291,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
       }
     };
     void submit();
-  }, [groupId]);
+  }, [membersEndpoint]);
 
   return (
     <>
@@ -190,30 +302,49 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
               <span aria-hidden="true">←</span>
               Back to Contact Groups
             </Link>
+            {canUndo && (
+              <button type="button" className="page-header-button" onClick={() => void performUndo()}>
+                ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+              </button>
+            )}
           </div>
           <h1 className={styles.heading}>
             {description || `Contact Group ${groupId}`} - Members
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
             {canManage && (
-              <button
-                type="button"
-                className="page-header-button"
-                onClick={() => setAddModalOpen(true)}
-              >
-                Add Customer
-              </button>
+              <>
+                <button
+                  type="button"
+                  className={`page-header-button ${styles.dangerButton}`}
+                  onClick={handleRemoveSelected}
+                  disabled={!hasSelection}
+                  title={hasSelection ? undefined : 'Tick one or more members in the grid first'}
+                >
+                  {removeLabel}
+                </button>
+                <button
+                  type="button"
+                  className="page-header-button"
+                  onClick={() => setAddModalOpen(true)}
+                >
+                  Add Customer
+                </button>
+              </>
             )}
           </div>
         </div>
 
         <div className={`${styles.gridFrame} fq-grid-panel`}>
           <AgGridAll
-            endpoint={`/api/marketing/contact-groups/${encodeURIComponent(groupId)}/contacts`}
+            endpoint={membersEndpoint}
             columnDefs={columnDefs}
             columnStateNamespace={`contact-group-members-${groupId}`}
             onCellValueChanged={handleCellEdit}
             getExportRowFilter={getExportRowFilter}
+            getContextMenuItems={getContextMenuItems}
+            onGridReady={handleGridReady}
+            onSelectionChanged={handleSelectionChanged}
             refreshToken={refreshToken}
             rowSelection="multiple"
             rowMultiSelectWithClick

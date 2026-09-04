@@ -10,6 +10,7 @@ type CreateGroupBody = {
   description?: string | null;
   salesDivisionId?: number | string | null;
   salespersonId?: string | null;
+  responsiblePersonId?: number | string | null;
   groupImportance?: string | null;
   note?: string | null;
   enabled?: boolean | number | null;
@@ -36,15 +37,18 @@ export async function POST(req: NextRequest) {
     request.input("description", sql.NVarChar(255), description);
     request.input("salesDivisionId", sql.Int, body.salesDivisionId != null ? Number(body.salesDivisionId) || null : null);
     request.input("salespersonId", sql.NVarChar(450), body.salespersonId || null);
+    const rawResponsible = body.responsiblePersonId != null ? String(body.responsiblePersonId).trim() : "";
+    const responsiblePersonId = rawResponsible ? Number.parseInt(rawResponsible, 10) : NaN;
+    request.input("responsiblePersonId", sql.Int, Number.isFinite(responsiblePersonId) ? responsiblePersonId : null);
     request.input("groupImportance", sql.NVarChar(255), body.groupImportance || null);
     request.input("note", sql.NVarChar(sql.MAX), body.note || null);
     const enabled = body.enabled === true || body.enabled === 1;
     request.input("enabled", sql.Bit, enabled ? 1 : 0);
 
     const result = await request.query<{ ID: number }>(`
-      INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, GroupImportance, Note, Enabled, TotalCount)
+      INSERT INTO dbo.ContactGroups (Description, SalesDivisionID, SalespersonID, ResponsiblePersonID, GroupImportance, Note, Enabled, TotalCount)
       OUTPUT INSERTED.ID
-      VALUES (@description, @salesDivisionId, @salespersonId, @groupImportance, @note, @enabled, 0)
+      VALUES (@description, @salesDivisionId, @salespersonId, @responsiblePersonId, @groupImportance, @note, @enabled, 0)
     `);
 
     const groupId = result.recordset?.[0]?.ID;
