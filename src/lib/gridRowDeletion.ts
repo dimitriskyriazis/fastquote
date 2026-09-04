@@ -40,7 +40,7 @@ export const getContextMenuSelectionSnapshot = <RowData>(api: GridApi<RowData> |
   return nodes.slice();
 };
 
-export const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
+const hasServerSideSelectAll = <RowData>(api: GridApi<RowData> | null) => {
   if (!api || typeof api.getServerSideSelectionState !== 'function') return false;
   const state = api.getServerSideSelectionState();
   return Boolean(state && 'selectAll' in state && Boolean((state as ServerSideRowSelectionState).selectAll));
@@ -438,49 +438,6 @@ export class GridRowDeletion<RowData> {
       console.error('Failed to fetch all filtered IDs for deletion', err);
       showToastMessage('Failed to load records. Please try again.', 'error');
     }
-  }
-
-  /**
-   * Header-button entry point: act on whatever the grid has selected. With the
-   * server-side select-all active (and dataEndpoint/idField configured) that is
-   * every filtered row minus the user's deselections, enumerated from the
-   * server; otherwise it is the ticked rows. The selection is read before the
-   * first await so a cleanup deselectAll cannot widen the target set.
-   */
-  public async deleteSelected(api: GridApi<RowData> | null) {
-    if (!api) return;
-    const isSelectAll = hasServerSideSelectAll(api);
-    if (isSelectAll && typeof this.config.dataEndpoint === 'string' && typeof this.config.idField === 'string') {
-      await this.deleteAllFiltered(api);
-      return;
-    }
-    let selectedNodes: Array<RowNode<RowData>> = [];
-    if (isSelectAll && typeof api.forEachNode === 'function') {
-      const deselectedIds = getServerSideDeselectedRowIds(api);
-      const loadedNodes: Array<RowNode<RowData>> = [];
-      api.forEachNode((node) => {
-        if (!node?.data) return;
-        if (deselectedIds.size > 0 && node.id != null && deselectedIds.has(String(node.id))) return;
-        loadedNodes.push(node as RowNode<RowData>);
-      });
-      selectedNodes = loadedNodes;
-    } else if (typeof api.getSelectedNodes === 'function') {
-      selectedNodes = api.getSelectedNodes() as Array<RowNode<RowData>>;
-    }
-    const entries = selectedNodes
-      .map((node) => {
-        const data = node?.data ?? null;
-        if (!data) return null;
-        const id = this.config.resolveRowId(data);
-        if (id == null) return null;
-        return { row: data, id };
-      })
-      .filter((entry): entry is { row: NonNullable<RowData>; id: number } => entry != null);
-    if (entries.length === 0) {
-      showToastMessage('Select at least one row first', 'error');
-      return;
-    }
-    await this.deleteRows(entries.map((entry) => entry.row), entries.map((entry) => entry.id), api);
   }
 
   public getContextMenuItems(params: GetContextMenuItemsParams<RowData>) {

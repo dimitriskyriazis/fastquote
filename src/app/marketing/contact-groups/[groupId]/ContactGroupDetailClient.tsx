@@ -1,13 +1,13 @@
 ﻿"use client";
 
-import React, { useMemo, useCallback, useState, useRef } from 'react';
+import React, { useMemo, useCallback, useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import type { ColDef, CellValueChangedEvent, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
+import type { ColDef, CellValueChangedEvent, GetContextMenuItemsParams } from 'ag-grid-community';
 import { showToastMessage } from '../../../../lib/toast';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import { coerceRoles, roleHasPermission } from '../../../../lib/roles';
-import { GridRowDeletion, hasServerSideSelectAll } from '../../../../lib/gridRowDeletion';
+import { GridRowDeletion } from '../../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../../lib/deletePermissions';
 import { useUndoStack } from '../../../hooks/useUndoStack';
 import LookupModal from '../../../components/LookupModal';
@@ -56,9 +56,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
   const { roles } = useAuditUser();
   const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
-  const gridApiRef = useRef<GridApi<RowData> | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [selection, setSelection] = useState<{ count: number; selectAll: boolean }>({ count: 0, selectAll: false });
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<AvailableContact[]>([]);
@@ -151,8 +149,8 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
   }, []);
 
   // Removing a member deletes the dbo.ContactsGroupLists row, never the contact.
-  // The same instance backs the header button and the right-click item, so both
-  // share the confirm dialog, the permission check and the Undo wiring.
+  // Wired into the grid's right-click menu; the helper supplies the confirm
+  // dialog, the permission check and the Undo wiring.
   const memberRowDeletion = useMemo(
     () =>
       new GridRowDeletion<RowData>({
@@ -217,21 +215,6 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     (params: GetContextMenuItemsParams<RowData>) => memberRowDeletion.getContextMenuItems(params),
     [memberRowDeletion],
   );
-
-  const handleGridReady = useCallback((api: GridApi<RowData>) => {
-    gridApiRef.current = api;
-  }, []);
-
-  const handleSelectionChanged = useCallback((rows: RowData[], api: GridApi<RowData>) => {
-    setSelection({ count: rows.length, selectAll: hasServerSideSelectAll(api) });
-  }, []);
-
-  const handleRemoveSelected = useCallback(() => {
-    void memberRowDeletion.deleteSelected(gridApiRef.current);
-  }, [memberRowDeletion]);
-
-  const hasSelection = selection.selectAll || selection.count > 0;
-  const removeLabel = selection.selectAll ? 'Remove All Selected' : `Remove Selected (${selection.count})`;
 
   const columnDefs = useMemo<ColDef[]>(() => [
     { field: "CustomerName", headerName: "Customer", filter: "agTextColumnFilter" },
@@ -313,24 +296,13 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
           </h1>
           <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
             {canManage && (
-              <>
-                <button
-                  type="button"
-                  className={`page-header-button ${styles.dangerButton}`}
-                  onClick={handleRemoveSelected}
-                  disabled={!hasSelection}
-                  title={hasSelection ? undefined : 'Tick one or more members in the grid first'}
-                >
-                  {removeLabel}
-                </button>
-                <button
-                  type="button"
-                  className="page-header-button"
-                  onClick={() => setAddModalOpen(true)}
-                >
-                  Add Customer
-                </button>
-              </>
+              <button
+                type="button"
+                className="page-header-button"
+                onClick={() => setAddModalOpen(true)}
+              >
+                Add Contact
+              </button>
             )}
           </div>
         </div>
@@ -343,8 +315,6 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
             onCellValueChanged={handleCellEdit}
             getExportRowFilter={getExportRowFilter}
             getContextMenuItems={getContextMenuItems}
-            onGridReady={handleGridReady}
-            onSelectionChanged={handleSelectionChanged}
             refreshToken={refreshToken}
             rowSelection="multiple"
             rowMultiSelectWithClick
@@ -355,7 +325,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
 
       <LookupModal
         open={addModalOpen}
-        title="Add Customer to Group"
+        title="Add Contact to Group"
         onClose={() => {
           setAddModalOpen(false);
           setSearchResults([]);
