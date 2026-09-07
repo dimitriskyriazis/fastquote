@@ -25,6 +25,15 @@ const eslintConfig = [
     },
   },
   {
+    // The user guide generator (docs/user-guide) is a standalone CommonJS Node
+    // package with its own package.json and node_modules; it is never bundled
+    // by Next, so require() is the only import form available there.
+    files: ["docs/user-guide/**/*.js"],
+    rules: {
+      "@typescript-eslint/no-require-imports": "off",
+    },
+  },
+  {
     // .cjs is CommonJS by definition, so require() is the only import form
     // available there. Node tooling and the one-off DB scripts under
     // scripts/sql use it; the TS import rule does not apply to them.

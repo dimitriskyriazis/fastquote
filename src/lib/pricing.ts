@@ -332,7 +332,9 @@ export const deriveWithoutListPrice = (
  * On a ListPrice edit both toggle variants preserve Margin; they differ in what
  * stays fixed: Keep Net holds the net prices (sacred sell/cost), so the discount
  * percentages float; Keep Margin holds the discount percentages, so the net
- * prices rescale with the list price.
+ * prices rescale with the list price. A blank net with a blank Customer
+ * Discount (a bare list price typed on an otherwise unpriced row) sells at
+ * list: NP = LP, CD = 0. The cost side never gets that default.
  *
  * Keep Margin necessarily recomputes CD + NP on a cost-side edit: holding LP and
  * the margin while the cost moves forces the sell price (and therefore the
@@ -388,6 +390,15 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
   // from its discount. Under Keep Margin this same fallback also protects a
   // freshly-typed Net price/cost on a just-inserted row (whose discounts are
   // still a stale 0) from being overwritten.
+  //
+  // Sell side only: a Net Unit Price that can't be held AND has no Customer
+  // Discount to derive from (both NULL, e.g. a freshly created printable
+  // comment, whose pricing columns all start blank) is a line sold at list.
+  // Derive it at 0% so typing a List Price fills the Net Unit Price with the
+  // same figure instead of leaving it blank (which reads as a 100% giveaway),
+  // and store the 0 so the row states what it did. The cost side gets no such
+  // default: a blank Telmaco Discount means the cost is unknown, not that it
+  // equals the list price.
   if (p.listPrice) {
     if (!hasValidLp) return null;
 
@@ -398,13 +409,13 @@ const resolveSingleFieldEdit = (input: PricingInput): ResolvedPricing | null => 
 
     const newNp = holdNpAbsolute
       ? np
-      : cd != null ? roundTo(lp * (1 - percentageToFactor(cd + acdValue))) : np;
+      : roundTo(lp * (1 - percentageToFactor((cd ?? 0) + acdValue)));
     const newTc = holdTcAbsolute
       ? tc
       : td != null ? roundTo(lp * (1 - percentageToFactor(td))) : tc;
     const newCd = holdNpAbsolute
       ? (newNp != null ? roundTo((1 - newNp / lp) * 100 - acdValue) : cd)
-      : cd;
+      : (cd ?? 0);
     const newTd = holdTcAbsolute
       ? (newTc != null ? roundTo((1 - newTc / lp) * 100) : td)
       : td;

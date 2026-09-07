@@ -284,13 +284,18 @@ const flagMissingListPriceDiscount = (
 // Surface an honest 100% so the cell formats and flags red. Display-only: returned
 // by the valueGetter, never written to the field, so it is not persisted or
 // exported as real data.
+//
+// Unlike the missing-list flag above, printable comments count as priced rows
+// here: a comment carrying a list price and no net is given away just the same,
+// whereas a net-only comment is a legitimate ad-hoc line rather than an anomaly.
 const FULL_DISCOUNT_NO_NET_FLAG = 100;
 
 const flagFullDiscountNoNet = (
   data: Record<string, unknown> | null | undefined,
 ): number | null => {
   if (!data) return null;
-  const isPricedRow = isOfferProductProduct(data) || resolveOfferProductRowType(data) === 'printable-service';
+  const rowType = resolveOfferProductRowType(data);
+  const isPricedRow = rowType === 'product' || rowType === 'printable-service' || rowType === 'printable-comment';
   if (!isPricedRow) return null;
   // Respect an explicitly entered discount — only flag rows that are otherwise blank.
   const storedDiscount = coerceNumber((data as { CustomerDiscount?: unknown }).CustomerDiscount);

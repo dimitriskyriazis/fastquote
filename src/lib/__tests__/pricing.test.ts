@@ -911,6 +911,79 @@ describe('resolvePricing — single-field edit cascade', () => {
       expect(r.netCost).toBe(200);          // derived from TD=0
       expect(r.telmacoDiscount).toBe(0);    // unchanged
     });
+
+    it('blank row (NP and CD both empty): sells at list → NP = LP, CD = 0, cost side untouched', () => {
+      // Repro: a freshly created printable comment (every pricing column NULL);
+      // the user types a List Price and nothing else. The net must follow the
+      // list price rather than stay blank: a blank net next to a list price
+      // reads as a 100% giveaway.
+      const input: PricingInput = {
+        listPrice: 100,
+        customerDiscount: null,
+        telmacoDiscount: null,
+        netUnitPrice: null,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(100);
+      expect(r.customerDiscount).toBe(0);
+      // No Telmaco Discount to derive a cost from → the cost stays unknown.
+      expect(r.netCost).toBeNull();
+      expect(r.telmacoDiscount).toBeNull();
+      expect(r.margin).toBeNull();
+    });
+
+    it('blank NP and CD with an Additional Customer Discount: NP = LP less the ACD only', () => {
+      const input: PricingInput = {
+        listPrice: 100,
+        customerDiscount: null,
+        telmacoDiscount: null,
+        netUnitPrice: null,
+        netCost: null,
+        margin: null,
+        additionalCustomerDiscount: 5,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(95);
+      expect(r.customerDiscount).toBe(0);
+      expect(r.additionalCustomerDiscount).toBe(5);
+    });
+
+    it('blank NP and CD under Keep Margin: same fill (there is nothing to hold)', () => {
+      const input: PricingInput = {
+        listPrice: 100,
+        customerDiscount: null,
+        telmacoDiscount: null,
+        netUnitPrice: null,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+        holdMarginOnCostChange: true,
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(100);
+      expect(r.customerDiscount).toBe(0);
+    });
+
+    it('explicit free line (NP = 0, CD = 100%): a List Price edit keeps it free', () => {
+      // The user typed 0 in Net Unit Price (→ CD 100%). Changing the list price
+      // afterwards must not resurrect a net price.
+      const input: PricingInput = {
+        listPrice: 120,
+        customerDiscount: 100,
+        telmacoDiscount: null,
+        netUnitPrice: 0,
+        netCost: null,
+        margin: null,
+        provided: { ...noProvided, listPrice: true },
+      };
+      const r = resolvePricing(input)!;
+      expect(r.netUnitPrice).toBe(0);
+      expect(r.customerDiscount).toBe(100);
+    });
   });
 });
 
