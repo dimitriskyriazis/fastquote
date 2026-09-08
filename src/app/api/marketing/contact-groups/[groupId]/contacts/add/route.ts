@@ -19,7 +19,7 @@ export async function POST(
   const requestId = await getRequestId(req);
   const auditUserId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, "manageMarketing");
+    const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
 
     const { groupId: rawId } = await params;

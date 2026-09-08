@@ -74,10 +74,12 @@ const readContactId = (row: RowData | undefined): number | null => {
 
 export default function ContactGroupDetailClient({ groupId, description }: Props) {
   const { roles } = useAuditUser();
-  const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
-  // Contact columns follow the contacts grid's permission, not the marketing
-  // one: the PATCH they hit is /api/customer-contacts.
-  const canEditContacts = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageCustomersContacts'), [roles]);
+  // Everything on this page (membership Importance/Note, adding and removing
+  // members, the contact-record email columns) is open to
+  // manageCustomersContacts, the permission the mail-list pages and the
+  // contacts grid use, so Simple Users can work here. Managing the groups
+  // themselves (create/rename/delete) stays manageMarketing on the list page.
+  const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageCustomersContacts'), [roles]);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
 
   // Email-status dropdown values come from dbo.EmailStatuses via the contacts
@@ -106,8 +108,8 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     }
   }, []);
   useEffect(() => {
-    if (canEditContacts) void refreshStatusValues();
-  }, [canEditContacts, refreshStatusValues]);
+    if (canManage) void refreshStatusValues();
+  }, [canManage, refreshStatusValues]);
   // Re-pull the list whenever a status editor opens so a status added in the
   // meantime is available on the next open without a page reload.
   const handleCellEditingStarted = useCallback((event: CellEditingStartedEvent<RowData>) => {
@@ -242,7 +244,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
           }
           setRefreshToken((prev) => prev + 1);
         },
-        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageMarketing'),
+        canDelete: (count) => checkDeletePermissionForClient(roles, count, 'generic', 'manageCustomersContacts'),
         restoreEndpoint,
         // The toast's Undo goes through the page's undo stack so it and Ctrl+Z
         // act on one entry instead of each restoring the rows.
@@ -281,16 +283,16 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Position", headerName: "Position", filter: "agTextColumnFilter" },
     // Contact-record columns (CONTACT_FIELD_LABELS): an edit PATCHes the contact.
-    { field: "Email", headerName: "Email", filter: "agTextColumnFilter", editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP },
+    { field: "Email", headerName: "Email", filter: "agTextColumnFilter", editable: canManage, headerTooltip: CONTACT_FIELD_TOOLTIP },
     {
       field: "EmailStatus", headerName: "Email Status", filter: "agTextColumnFilter",
-      editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP,
+      editable: canManage, headerTooltip: CONTACT_FIELD_TOOLTIP,
       cellEditor: "agSelectCellEditor", cellEditorParams: () => ({ values: statusValuesRef.current }),
     },
-    { field: "SecondEmail", headerName: "Second Email", filter: "agTextColumnFilter", editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP },
+    { field: "SecondEmail", headerName: "Second Email", filter: "agTextColumnFilter", editable: canManage, headerTooltip: CONTACT_FIELD_TOOLTIP },
     {
       field: "SecondEmailStatus", headerName: "Second Email Status", filter: "agTextColumnFilter",
-      editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP,
+      editable: canManage, headerTooltip: CONTACT_FIELD_TOOLTIP,
       cellEditor: "agSelectCellEditor", cellEditorParams: () => ({ values: statusValuesRef.current }),
     },
     { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
@@ -315,7 +317,7 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
         valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
       },
     },
-  ], [canManage, canEditContacts]);
+  ], [canManage]);
 
   const getExportRowFilter = useMemo(() => createMailListExportRowFilter(), []);
 

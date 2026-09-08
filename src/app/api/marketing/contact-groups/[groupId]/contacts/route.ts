@@ -8,6 +8,7 @@ import {
   QueryParam,
 } from "../../../../../../lib/gridFilters";
 import { requirePermission } from "../../../../../../lib/authz";
+import { checkDeletePermission } from "../../../../../../lib/deletePermissions";
 import { KnownFilterModel } from "../../../../../../lib/filterTypes";
 import { processFilter } from "../../../../../../lib/filterProcessing";
 import { resolveAuditUserId } from "../../../../../../lib/auditTrail";
@@ -201,7 +202,10 @@ export async function PATCH(
   const requestId = await getRequestId(req);
   const auditUserId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, "manageMarketing");
+    // Membership edits are open to the same permission as the mail-list pages
+    // and the contacts grid; only managing the groups themselves stays
+    // manageMarketing.
+    const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
 
     await params;
@@ -299,7 +303,7 @@ export async function DELETE(
   const requestId = await getRequestId(req);
   const auditUserId = resolveAuditUserId(req);
   try {
-    const auth = await requirePermission(req, "manageMarketing");
+    const auth = await requirePermission(req, "manageCustomersContacts");
     if (!auth.ok) return auth.response;
 
     const { groupId: rawId } = await params;
@@ -318,6 +322,14 @@ export async function DELETE(
 
     if (ids.length === 0) {
       return NextResponse.json({ ok: false, error: "No IDs provided" }, { status: 400 });
+    }
+
+    // Same bulk-removal ceiling the grid applies client-side (generic: more
+    // than 25 needs dangerousOps, more than 50 criticalOps), enforced here so
+    // the API cannot be used to skip it.
+    const deleteCheck = checkDeletePermission(auth.roles, ids.length, 'generic', null);
+    if (!deleteCheck.allowed) {
+      return NextResponse.json({ ok: false, error: deleteCheck.reason }, { status: 403 });
     }
 
     const pool = await getPool();
