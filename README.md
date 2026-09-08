@@ -199,4 +199,3 @@ Production runs as a PM2 process (`ecosystem.config.cjs`) listening on 127.0.0.1
 - AG Grid requires an enterprise licence for grouping, pivoting, filtering, and export features.
 - `/api/realtime` uses Server-Sent Events, so no WebSocket infrastructure is needed, but the reverse proxy must allow long-lived HTTP connections.
 - Never run `npm audit fix --force`; it downgrades Next.js. See `DEPENDENCIES.md` for the overrides and why they exist.
-- The user guide is generated. Edit `docs/user-guide/content` and rebuild rather than editing the .docx by hand.
