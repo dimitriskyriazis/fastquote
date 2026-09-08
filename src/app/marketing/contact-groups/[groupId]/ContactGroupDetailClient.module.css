@@ -11,39 +11,8 @@
   overflow-x: hidden;
 }
 
-.headerRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 0;
-}
-
-.heading {
-  margin: 0;
-  font-size: var(--page-heading-font-size);
-  font-weight: var(--page-heading-font-weight);
-  letter-spacing: var(--page-heading-letter-spacing);
-  text-align: center;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.headerSide {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.headerSideStart {
-  justify-content: flex-start;
-}
-
-.headerSideEnd {
-  justify-content: flex-end;
-}
-
 .backLink {
+  white-space: nowrap;
   border: 1px solid rgba(15, 23, 42, 0.15);
   background-color: #e5e7eb;
   color: #0f172a;

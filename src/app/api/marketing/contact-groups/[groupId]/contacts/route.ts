@@ -31,6 +31,12 @@ const COLUMN_EXPRESSIONS: Record<string, string> = {
   FirstName: "c.FirstName",
   Position: "c.Position",
   Email: "c.Email",
+  // Status names come from dbo.EmailStatuses (two joins: primary and second
+  // address). These, like Email/SecondEmail, are contact-record columns: the
+  // members grid edits them through /api/customer-contacts, not this route.
+  EmailStatus: "es1.Name",
+  SecondEmail: "c.SecondEmail",
+  SecondEmailStatus: "es2.Name",
   Fax: "c.Fax",
   Importance: "cgl.Importance",
   Note: "cgl.Note",
@@ -143,6 +149,9 @@ export async function POST(
         c.FirstName,
         c.Position,
         c.Email,
+        es1.Name AS EmailStatus,
+        c.SecondEmail,
+        es2.Name AS SecondEmailStatus,
         c.Fax,
         cgl.Importance,
         cgl.Note,
@@ -151,6 +160,8 @@ export async function POST(
       FROM dbo.ContactsGroupLists cgl
       INNER JOIN dbo.Contacts c ON c.ID = cgl.ContactID
       LEFT JOIN dbo.Titles t ON t.ID = c.TitleID
+      LEFT JOIN dbo.EmailStatuses es1 ON es1.ID = c.EmailStatusID
+      LEFT JOIN dbo.EmailStatuses es2 ON es2.ID = c.SecondEmailStatusID
       LEFT JOIN dbo.Customers cust ON cust.ID = c.CustomerID
       ${combinedWhere}
       ${orderClause}

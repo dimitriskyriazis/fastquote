@@ -1,16 +1,18 @@
 ﻿"use client";
 
-import React, { useMemo, useCallback, useState } from 'react';
+import React, { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import type { ColDef, CellValueChangedEvent, GetContextMenuItemsParams } from 'ag-grid-community';
+import type { ColDef, CellEditingStartedEvent, CellValueChangedEvent, GetContextMenuItemsParams, GridApi } from 'ag-grid-community';
 import { showToastMessage } from '../../../../lib/toast';
 import { useAuditUser } from '../../../components/AuditUserProvider';
 import { coerceRoles, roleHasPermission } from '../../../../lib/roles';
 import { GridRowDeletion } from '../../../../lib/gridRowDeletion';
 import { checkDeletePermissionForClient } from '../../../../lib/deletePermissions';
 import { useUndoStack } from '../../../hooks/useUndoStack';
+import { pushCellEditUndo, makePatternAUndoFn } from '../../../../lib/undoHelpers';
 import LookupModal from '../../../components/LookupModal';
+import PageHeader from '../../../components/PageHeader';
 import modalStyles from '../../../components/LookupModal.module.css';
 import { formatBooleanValue } from '../../../lib/formatBooleanValue';
 import { createMailListExportRowFilter } from '../../mailListExportFilter';
@@ -52,10 +54,66 @@ const formatMemberLabel = (row: RowData | null | undefined, fallback: string): s
   return name || customer || fallback;
 };
 
+// Columns that live on dbo.Contacts rather than on the membership row. Edits to
+// them go through the contacts endpoint so the change lands on the contact
+// itself, and therefore everywhere the contact appears, not on this group only.
+const CONTACTS_ENDPOINT = '/api/customer-contacts';
+const CONTACT_FIELD_LABELS: Record<string, string> = {
+  Email: 'Email',
+  EmailStatus: 'Email status',
+  SecondEmail: 'Second email',
+  SecondEmailStatus: 'Second email status',
+};
+const CONTACT_FIELD_TOOLTIP = 'Stored on the contact record. Editing it here updates the contact everywhere.';
+const STATUS_FIELDS = new Set(['EmailStatus', 'SecondEmailStatus']);
+
+const readContactId = (row: RowData | undefined): number | null => {
+  const candidate = row?.ContactID;
+  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : null;
+};
+
 export default function ContactGroupDetailClient({ groupId, description }: Props) {
   const { roles } = useAuditUser();
   const canManage = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageMarketing'), [roles]);
+  // Contact columns follow the contacts grid's permission, not the marketing
+  // one: the PATCH they hit is /api/customer-contacts.
+  const canEditContacts = useMemo(() => roleHasPermission(coerceRoles([...roles]), 'manageCustomersContacts'), [roles]);
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
+
+  // Email-status dropdown values come from dbo.EmailStatuses via the contacts
+  // lookups endpoint. Held in a ref that cellEditorParams reads lazily, so the
+  // memoised column defs keep their identity and saved layouts survive.
+  const statusValuesRef = useRef<string[]>(['']);
+  const statusLookupInFlightRef = useRef(false);
+  const refreshStatusValues = useCallback(async () => {
+    if (statusLookupInFlightRef.current) return;
+    statusLookupInFlightRef.current = true;
+    try {
+      const res = await fetch(`${CONTACTS_ENDPOINT}?mode=lookups`, { cache: 'no-store' });
+      const payload = (await res.json().catch(() => null)) as
+        | { ok?: boolean; lookups?: { statuses?: unknown } }
+        | null;
+      const statuses = payload?.lookups?.statuses;
+      if (!res.ok || !payload?.ok || !Array.isArray(statuses)) return;
+      const unique = new Set(
+        statuses.map((entry) => (typeof entry === 'string' ? entry.trim() : '')).filter(Boolean),
+      );
+      statusValuesRef.current = ['', ...Array.from(unique)];
+    } catch (err) {
+      console.error('Failed to load email statuses', err);
+    } finally {
+      statusLookupInFlightRef.current = false;
+    }
+  }, []);
+  useEffect(() => {
+    if (canEditContacts) void refreshStatusValues();
+  }, [canEditContacts, refreshStatusValues]);
+  // Re-pull the list whenever a status editor opens so a status added in the
+  // meantime is available on the next open without a page reload.
+  const handleCellEditingStarted = useCallback((event: CellEditingStartedEvent<RowData>) => {
+    const field = event.colDef.field;
+    if (field && STATUS_FIELDS.has(field)) void refreshStatusValues();
+  }, [refreshStatusValues]);
   const [refreshToken, setRefreshToken] = useState(0);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -222,7 +280,19 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
     { field: "LastName", headerName: "Last Name", filter: "agTextColumnFilter" },
     { field: "FirstName", headerName: "First Name", filter: "agTextColumnFilter" },
     { field: "Position", headerName: "Position", filter: "agTextColumnFilter" },
-    { field: "Email", headerName: "Email", filter: "agTextColumnFilter" },
+    // Contact-record columns (CONTACT_FIELD_LABELS): an edit PATCHes the contact.
+    { field: "Email", headerName: "Email", filter: "agTextColumnFilter", editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP },
+    {
+      field: "EmailStatus", headerName: "Email Status", filter: "agTextColumnFilter",
+      editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP,
+      cellEditor: "agSelectCellEditor", cellEditorParams: () => ({ values: statusValuesRef.current }),
+    },
+    { field: "SecondEmail", headerName: "Second Email", filter: "agTextColumnFilter", editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP },
+    {
+      field: "SecondEmailStatus", headerName: "Second Email Status", filter: "agTextColumnFilter",
+      editable: canEditContacts, headerTooltip: CONTACT_FIELD_TOOLTIP,
+      cellEditor: "agSelectCellEditor", cellEditorParams: () => ({ values: statusValuesRef.current }),
+    },
     { field: "Importance", headerName: "Importance", filter: "agTextColumnFilter", editable: canManage, cellEditor: "agSelectCellEditor", cellEditorParams: { values: ["", "High", "Med", "Low"] } },
     { field: "Note", headerName: "Note", filter: "agTextColumnFilter", editable: canManage },
     // A member whose customer has been retired stays visible here — this is the
@@ -245,16 +315,88 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
         valueFormatter: (params: { value?: unknown }) => formatBooleanValue(params.value),
       },
     },
-  ], [canManage]);
+  ], [canManage, canEditContacts]);
 
   const getExportRowFilter = useMemo(() => createMailListExportRowFilter(), []);
 
-  const handleCellEdit = useCallback((event: CellValueChangedEvent<Record<string, unknown>>) => {
+  // Preset filters, the Offers-list way: once AgGridAll has restored any
+  // persisted filters, default Customer Enabled and Contact Enabled to Yes for
+  // whichever of the two the user has not filtered. Both are guarded columns in
+  // AgGridAll, so at their default they do not count as active filters, and the
+  // header's "Clear filters" puts them back to Yes instead of wiping them.
+  const defaultFiltersAppliedRef = useRef(false);
+  const handleGridReady = useCallback((api: GridApi<RowData>) => {
+    if (!api || defaultFiltersAppliedRef.current) return;
+    const existing = api.getFilterModel() as Record<string, unknown> | null;
+    const model: Record<string, unknown> = existing && typeof existing === 'object' ? { ...existing } : {};
+    let changed = false;
+    for (const key of ['CustomerEnabled', 'ContactEnabled']) {
+      if (key in model) continue;
+      model[key] = { filterType: 'set', values: ['true'] };
+      changed = true;
+    }
+    if (changed) api.setFilterModel(model);
+    defaultFiltersAppliedRef.current = true;
+  }, []);
+
+  const handleCellEdit = useCallback((event: CellValueChangedEvent<RowData>) => {
     const field = event.colDef.field;
     if (!field) return;
+    // Undo/redo and the failure revert below write back with source 'api'; that
+    // write must not count as a fresh edit or it would PATCH a second time.
+    if (event.source === 'api') return;
     if (event.newValue === event.oldValue) return;
-    const cglId = event.data?.ContactGroupListID as number | undefined;
-    if (cglId == null) return;
+
+    const revert = () => {
+      if (event.node) {
+        try {
+          event.node.setDataValue(field, event.oldValue, 'api');
+          return;
+        } catch { /* noop */ }
+      }
+      event.api.refreshCells({ force: true });
+    };
+
+    // Email / status columns belong to the contact: PATCH dbo.Contacts through
+    // the contacts endpoint (status names resolve to EmailStatusID there) and
+    // offer the same toast Undo the contacts grid does.
+    if (field in CONTACT_FIELD_LABELS) {
+      const contactId = readContactId(event.data);
+      if (contactId == null) return;
+      const label = CONTACT_FIELD_LABELS[field];
+      const value = event.newValue == null ? '' : String(event.newValue).trim();
+      const submit = async () => {
+        try {
+          const res = await fetch(CONTACTS_ENDPOINT, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: [{ ContactID: contactId, field, value }] }),
+          });
+          const payload = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+          if (!res.ok || !payload?.ok) throw new Error(payload?.error ?? `Failed to update ${label}`);
+          pushCellEditUndo(pushUndo, performUndo, label, makePatternAUndoFn({
+            endpoint: CONTACTS_ENDPOINT,
+            idField: 'ContactID',
+            entityId: contactId,
+            field,
+            oldValue: event.oldValue,
+            node: event.node,
+            gridApi: event.api,
+          }));
+          event.api.refreshServerSide?.({ purge: false });
+        } catch (err) {
+          console.error(`Failed to update ${label}`, err);
+          showToastMessage(`Unable to update ${label}. Please try again.`, 'error');
+          revert();
+        }
+      };
+      void submit();
+      return;
+    }
+
+    // Importance / Note live on the membership row (dbo.ContactsGroupLists).
+    const cglId = event.data?.ContactGroupListID;
+    if (typeof cglId !== 'number' || !Number.isFinite(cglId)) return;
 
     const submit = async () => {
       try {
@@ -266,36 +408,38 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
         const payload = (await res.json().catch(() => null)) as { ok?: boolean } | null;
         if (!res.ok || !payload?.ok) {
           showToastMessage('Failed to update', 'error');
-          if (event.node) event.node.setDataValue(field, event.oldValue);
+          revert();
         }
       } catch {
         showToastMessage('Failed to update', 'error');
-        if (event.node) event.node.setDataValue(field, event.oldValue);
+        revert();
       }
     };
     void submit();
-  }, [membersEndpoint]);
+  }, [membersEndpoint, pushUndo, performUndo]);
 
   return (
     <>
       <main className={styles.page}>
-        <div className={styles.headerRow}>
-          <div className={`${styles.headerSide} ${styles.headerSideStart}`}>
-            <Link href="/marketing/contact-groups" className={`${styles.backLink} page-header-button`}>
-              <span aria-hidden="true">←</span>
-              Back to Contact Groups
-            </Link>
-            {canUndo && (
-              <button type="button" className="page-header-button" onClick={() => void performUndo()}>
-                ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
-              </button>
-            )}
-          </div>
-          <h1 className={styles.heading}>
-            {description || `Contact Group ${groupId}`} - Members
-          </h1>
-          <div className={`${styles.headerSide} ${styles.headerSideEnd}`}>
-            {canManage && (
+        {/* PageHeader supplies the slot AgGridAll's active-filters indicator
+            ("Showing N rows with M filters ×") portals into, as on Offers. */}
+        <PageHeader
+          title={`${description || `Contact Group ${groupId}`} - Members`}
+          leftActions={
+            <>
+              <Link href="/marketing/contact-groups" className={`${styles.backLink} page-header-button`}>
+                <span aria-hidden="true">←</span>
+                Back to Contact Groups
+              </Link>
+              {canUndo && (
+                <button type="button" className="page-header-button" onClick={() => void performUndo()}>
+                  ↩ Undo{lastLabel ? `: ${lastLabel}` : ''}
+                </button>
+              )}
+            </>
+          }
+          rightActions={
+            canManage ? (
               <button
                 type="button"
                 className="page-header-button"
@@ -303,24 +447,26 @@ export default function ContactGroupDetailClient({ groupId, description }: Props
               >
                 Add Contact
               </button>
-            )}
+            ) : null
+          }
+        >
+          <div className={`${styles.gridFrame} fq-grid-panel`}>
+            <AgGridAll
+              endpoint={membersEndpoint}
+              columnDefs={columnDefs}
+              columnStateNamespace={`contact-group-members-${groupId}`}
+              onGridReady={handleGridReady}
+              onCellValueChanged={handleCellEdit}
+              onCellEditingStarted={handleCellEditingStarted}
+              getExportRowFilter={getExportRowFilter}
+              getContextMenuItems={getContextMenuItems}
+              refreshToken={refreshToken}
+              rowSelection="multiple"
+              rowMultiSelectWithClick
+              rowDeselection
+            />
           </div>
-        </div>
-
-        <div className={`${styles.gridFrame} fq-grid-panel`}>
-          <AgGridAll
-            endpoint={membersEndpoint}
-            columnDefs={columnDefs}
-            columnStateNamespace={`contact-group-members-${groupId}`}
-            onCellValueChanged={handleCellEdit}
-            getExportRowFilter={getExportRowFilter}
-            getContextMenuItems={getContextMenuItems}
-            refreshToken={refreshToken}
-            rowSelection="multiple"
-            rowMultiSelectWithClick
-            rowDeselection
-          />
-        </div>
+        </PageHeader>
       </main>
 
       <LookupModal

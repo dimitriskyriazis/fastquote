@@ -2,6 +2,7 @@
 
 import React, { useMemo, useCallback, useState, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import type {
   ColDef,
@@ -81,7 +82,35 @@ function normalizeAssignedContextMenuItems(
   });
 }
 
+const EYE_ICON = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>';
+const NEW_TAB_ICON = '<span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg></span>';
+
+// Same "View Members" entry the Contact Groups list offers: opens the group's
+// members page (/marketing/contact-groups/[id]) in place or in a new tab.
+function buildViewMembersMenuItem(
+  groupId: number,
+  navigate: (href: string) => void,
+): MenuItemDef<RowData, unknown> {
+  const href = `/marketing/contact-groups/${encodeURIComponent(String(groupId))}`;
+  return {
+    name: 'View Members',
+    icon: EYE_ICON,
+    action: () => { navigate(href); },
+    subMenu: [
+      { name: 'Open', icon: EYE_ICON, action: () => { navigate(href); } },
+      {
+        name: 'Open in new tab',
+        icon: NEW_TAB_ICON,
+        action: () => { window.open(href, '_blank', 'noopener,noreferrer'); },
+      },
+    ],
+  };
+}
+
 export default function MailContactGroupsClient({ mailId, description }: Props) {
+  const router = useRouter();
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [refreshToken, setRefreshToken] = useState(0);
   const topGridApiRef = useRef<GridApi | null>(null);
   const bottomGridApiRef = useRef<GridApi | null>(null);
@@ -203,7 +232,13 @@ export default function MailContactGroupsClient({ mailId, description }: Props) 
       items.push('separator');
       items.push('export');
 
-      return normalizeAssignedContextMenuItems(items);
+      const normalized = normalizeAssignedContextMenuItems(items);
+      if (clickedRow?.ContactGroupID == null) return normalized;
+      return [
+        buildViewMembersMenuItem(clickedRow.ContactGroupID, (href) => { routerRef.current.push(href); }),
+        'separator',
+        ...normalized,
+      ];
     },
     [handleRemoveGroups],
   );

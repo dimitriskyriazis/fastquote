@@ -134,7 +134,7 @@ import { DdMmYyyyDateFilter } from './dateFilterDdMmYyyy';
 const ACTION_MENU_SELECTOR = `[${ACTION_MENU_TRIGGER_ATTRIBUTE}], [${ACTION_MENU_PANEL_ATTRIBUTE}]`;
 const PRESERVE_SELECTION_SELECTOR = '[data-fastquote-keep-selection="true"]';
 const GRID_ROW_HEIGHT = 32;
-const IGNORED_FILTER_COLS = new Set(['Enabled', 'CustomerEnabled', 'IsParent', 'FromTelquote']);
+const IGNORED_FILTER_COLS = new Set(['Enabled', 'CustomerEnabled', 'ContactEnabled', 'IsParent', 'FromTelquote']);
 
 // Default filter state per guarded col. A guarded col is excluded from the
 // active-filter count only when it matches this default; any deviation
@@ -146,6 +146,10 @@ type GuardedDefault = { mustBeMissing: true } | { values: string[] };
 const GUARDED_FILTER_DEFAULTS: Record<string, GuardedDefault> = {
   Enabled: { values: ['true'] },
   CustomerEnabled: { values: ['true'] },
+  // Contact-group members grid: the contact's own Enabled flag, named apart
+  // from the membership row. Defaults to Yes there (see ContactGroupDetailClient
+  // handleGridReady), so only No, or Yes+No, counts as an active filter.
+  ContactEnabled: { values: ['true'] },
   IsParent: { mustBeMissing: true },
   // Offers list defaults to non-TelQuote ('No'). Only Yes, or Yes+No, counts as
   // an active filter (mirrors the OffersClient default — see handleGridReady).
