@@ -7,6 +7,7 @@ import type { OfferPdfData, OfferProductRow, PdfLang, PdfOrientation, PdfPrintSe
 import { parsePdfProductColumnsParam } from '../../../../../lib/pdfColumns';
 import { normalizeOfferLanguage, offerLanguageToPdfLang } from '../../../../../lib/offerLanguage';
 import { computeDisplayOrderingMap } from '../../../../../lib/offerItemNumbering';
+import { normalizeContactName } from '../../../../../lib/offerContactName';
 
 // SQL Server DECIMAL columns may surface as a number or a string depending on the
 // driver; accept both and fall back to null.
@@ -55,6 +56,7 @@ type OfferHeaderRow = {
   CustomerEmail: string | null;
   CustomerTaxID: string | null;
   CustomerTaxOffice: string | null;
+  ContactID: number | null;
   ContactFullName: string | null;
   ApprovalUserId: number | null;
   SalesPersonNameEN: string | null;
@@ -175,6 +177,7 @@ export async function GET(
             CASE WHEN cnt.FirstName IS NOT NULL AND cnt.LastName IS NOT NULL THEN ' ' ELSE '' END,
             ISNULL(cnt.LastName, '')
           ))) AS ContactFullName,
+          o.ContactID,
           o.ApprovalUserId,
           sales.FullName AS SalesPersonNameEN,
           sales.FullNameGR AS SalesPersonNameGR,
@@ -204,6 +207,18 @@ export async function GET(
 
     if (header.IsTelvin && header.ApprovalUserId === TELVIN_CEO_USER_ID) {
       header.ApprovalUserSignTitle = TELVIN_CEO_SIGN_TITLE;
+    }
+
+    // Offer.OfferContact is a snapshot of the contact's name taken when the
+    // contact was selected, so it goes stale when the contact is renamed. The
+    // Contacts row is the source of truth: print the live name and refresh the
+    // snapshot so the offers grid catches up too. The snapshot is only kept
+    // when no contact resolves (legacy text-only offers, deleted contact).
+    const liveContactName = header.ContactID != null ? normalizeContactName(header.ContactFullName) : '';
+    const snapshotContactName = normalizeContactName(header.OfferContact);
+    const refreshOfferContact = liveContactName !== '' && liveContactName !== snapshotContactName;
+    if (refreshOfferContact) {
+      header.OfferContact = liveContactName;
     }
 
     const offerLanguage = normalizeOfferLanguage(header.OfferLanguage);
@@ -279,21 +294,28 @@ export async function GET(
       return depth > max ? depth : max;
     }, 0);
 
-    await pool
+    const printSettingsRequest = pool
       .request()
       .input('offerId2', sql.Int, numericId)
       .input('noOfLevels', sql.Int, noOfLevels)
       .input('printProducts', sql.Bit, printProducts)
       .input('printCategories', sql.Bit, printCategories)
       .input('printSubCategories', sql.Bit, printSubCategories)
-      .input('printSubSubCategories', sql.Bit, printSubSubCategories)
-      .query(`
+      .input('printSubSubCategories', sql.Bit, printSubSubCategories);
+    // Refresh the OfferContact snapshot alongside the print settings when the
+    // linked contact's live name has moved on (see liveContactName above).
+    let offerContactSetClause = '';
+    if (refreshOfferContact) {
+      printSettingsRequest.input('offerContact', sql.NVarChar(500), liveContactName.slice(0, 500));
+      offerContactSetClause = ', OfferContact = @offerContact';
+    }
+    await printSettingsRequest.query(`
         UPDATE dbo.Offer
         SET NoOfLevels = @noOfLevels,
             PrintProducts = @printProducts,
             PrintCategories = @printCategories,
             PrintSubCategories = @printSubCategories,
-            PrintSubSubCategories = @printSubSubCategories
+            PrintSubSubCategories = @printSubSubCategories${offerContactSetClause}
         WHERE ID = @offerId2
       `);
 

@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
   // uploads reach /api/price-lists/import intact.
   experimental: {
     proxyClientMaxBodySize: '500mb',
+    // Next 16.3 enables the persistent Turbopack build cache by default. It is version-keyed and
+    // never pruned (.next grew to ~4.9 GB in the 16.3 rehearsal) and the prod deploy has no reap
+    // step, so keep the 16.2 behaviour of a fresh build until one exists.
+    turbopackFileSystemCacheForBuild: false,
   },
   async headers() {
     return [

@@ -30,6 +30,7 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
+import { MAX_MERGE_SECONDARIES } from "./merge/productMergeTypes";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
   ssr: false,
@@ -169,6 +170,15 @@ const enhanceDescriptionMenuIcon = `
 
 const fixCapitalisationMenuIcon = enhanceDescriptionMenuIcon;
 
+const mergeMenuIcon = `
+  <span class="fastquote-menu-icon" aria-hidden="true" style="display:flex;align-items:center;justify-content:center;">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 3v5a4 4 0 0 0 4 4h2a4 4 0 0 1 4 4v5" />
+      <path d="M17 3v5a4 4 0 0 1-4 4h-2a4 4 0 0 0-4 4v5" />
+    </svg>
+  </span>
+`;
+
 export default function ProductsClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -176,6 +186,12 @@ export default function ProductsClient() {
   const { roles } = useAuditUser();
   const canUseAiFeatures = useMemo(
     () => roleHasPermission(coerceRoles([...roles]), "manageBrandsSuppliers"),
+    [roles],
+  );
+  // Administrator + Developer only. Hiding the entry point is convenience; the
+  // /api/products/merge routes enforce the same permission server-side.
+  const canMergeProducts = useMemo(
+    () => roleHasPermission(coerceRoles([...roles]), "mergeProducts"),
     [roles],
   );
   const { pushUndo, performUndo, canUndo, lastLabel } = useUndoStack();
@@ -544,6 +560,31 @@ export default function ProductsClient() {
         .map((p) => normalizeProductId(p.ProductID))
         .filter((id): id is number => id !== null);
 
+      // --- Merge duplicates ---
+      // The right-clicked row is the survivor; every OTHER ticked row is folded
+      // into it. Selection comes from the snapshot AgGridAll captured on
+      // right-click, because it deselects the grid before running an action.
+      // "Select all" under the server-side model means every row matching the
+      // filter, which is never a deliberate merge gesture: hide the item.
+      if (canMergeProducts && !isSelectAllActive) {
+        const secondaryIds = Array.from(new Set(targetIds)).filter((id) => id !== productId);
+        if (secondaryIds.length > 0) {
+          const withinLimit = secondaryIds.length <= MAX_MERGE_SECONDARIES;
+          const mergeItem: MenuItemDef<Record<string, unknown>> = {
+            name: withinLimit
+              ? `Merge ${secondaryIds.length + 1} products into "${resolveProductLabel(rowData, `#${productId}`)}"`
+              : `Too many selected to merge (${secondaryIds.length + 1}, limit ${MAX_MERGE_SECONDARIES + 1})`,
+            icon: mergeMenuIcon,
+            disabled: !withinLimit,
+            action: () => {
+              if (!withinLimit) return;
+              router.push(`/products/merge?primary=${productId}&secondary=${secondaryIds.join(",")}`);
+            },
+          };
+          items.unshift(mergeItem, "separator");
+        }
+      }
+
       if (canUseAiFeatures) {
         const webLinkItem = buildAddWebLinksMenuItem({
           targetProducts,
@@ -838,7 +879,7 @@ export default function ProductsClient() {
 
       return items;
     },
-    [canUseAiFeatures, fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, isFixingCapitalisation, pushUndo, productRowDeletion, router],
+    [canUseAiFeatures, canMergeProducts, fetchAllFilteredProductIds, isAddingWebLinks, isEnhancingDescriptions, isFixingCapitalisation, pushUndo, productRowDeletion, router],
   );
 
   const openAddProduct = useCallback(() => {

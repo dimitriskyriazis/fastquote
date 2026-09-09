@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { DEFAULT_PDF_PRODUCT_COLUMNS, type PdfProductColumn } from './pdfColumns';
 import { SERVICE_QUANTITY_DECIMALS } from './offerProductRows';
+import { resolveOfferContactName } from './offerContactName';
 
 export type PdfLang = 'el' | 'en';
 export type PdfOrientation = 'portrait' | 'landscape';
@@ -541,7 +542,9 @@ function getOfferMeta(data: OfferPdfData, lang: PdfLang) {
     refNo,
     date: formatDate(data.offerDate) || '-',
     customerName,
-    attn: str(data.offerContact) || str(data.contactFullName),
+    // The live Contacts name wins over the OfferContact snapshot so a contact
+    // renamed after the offer was created still prints correctly.
+    attn: resolveOfferContactName(data.contactFullName, data.offerContact),
   };
 }
 

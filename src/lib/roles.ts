@@ -40,6 +40,11 @@ export type Permission =
   // and falls through to `default: return false` — landing on Administrator +
   // Developer only.
   | 'mergeCustomers'
+  // Merging duplicate products repoints offer lines and price-list rows onto a
+  // survivor, may swap the survivor's brand + part number with a loser's, and
+  // disables the losers. Same shape as mergeCustomers: no case in the switch, so
+  // it falls through to Administrator + Developer only.
+  | 'mergeProducts'
   | 'manageMarketing';
 
 export const APP_ROLE_ORDER: readonly AppRole[] = [
