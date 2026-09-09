@@ -1017,6 +1017,50 @@ const insertPriceListItem = async (
   `);
 };
 
+// Append mode: the row's product is already on the target price list, so its
+// price and other per-list fields are refreshed in place instead of inserting
+// a second row for the same (PriceListID, ProductID) pair.
+const updatePriceListItem = async (
+  transaction: TransactionLike,
+  priceListItemId: number,
+  priceListId: number,
+  row: ParsedPriceListRow,
+  auditUserId: string | null,
+) => {
+  const request = createRequest(transaction);
+  request.input("PriceListItemID", sql.Int, priceListItemId);
+  request.input("PriceListID", sql.Int, priceListId);
+  const listPrice = row.listPrice == null ? undefined : Number(row.listPrice);
+  const costPrice = row.costPrice == null ? undefined : Number(row.costPrice);
+  const servicePriceGR = row.servicePriceGR == null ? undefined : Number(row.servicePriceGR);
+  const servicePriceOutGR = row.servicePriceOutGR == null ? undefined : Number(row.servicePriceOutGR);
+  const decimalType = getDecimalType();
+  request.input("ListPrice", decimalType, listPrice);
+  request.input("CostPrice", decimalType, costPrice);
+  request.input("ServicePriceGR", decimalType, servicePriceGR ?? null);
+  request.input("ServicePriceOutGR", decimalType, servicePriceOutGR ?? null);
+  request.input("ServiceType", sql.NVarChar(20), row.serviceType ?? null);
+  request.input("Warning", sql.NVarChar(1000), row.warning);
+  request.input("MOQ", sql.Int, row.moq ?? null);
+  request.input("ModifiedBy", sql.NVarChar(450), auditUserId);
+
+  await request.query(`
+    UPDATE dbo.PriceListItems
+    SET ListPrice = @ListPrice,
+        CostPrice = @CostPrice,
+        ServicePriceGR = @ServicePriceGR,
+        ServicePriceOutGR = @ServicePriceOutGR,
+        ServiceType = @ServiceType,
+        Warning = @Warning,
+        MOQ = @MOQ,
+        Enabled = 1,
+        ModifiedOn = SYSUTCDATETIME(),
+        ModifiedBy = @ModifiedBy
+    WHERE ID = @PriceListItemID
+      AND PriceListID = @PriceListID
+  `);
+};
+
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/price-lists/import');
   const requestId = await getRequestId(req);
@@ -1174,10 +1218,14 @@ export async function POST(req: NextRequest) {
 
     // In append mode, override brandId from the target pricelist so all downstream
     // lookups (brand pattern, existing products) operate against the correct brand.
-    // Also load the set of existing ProductIDs in that pricelist so we can skip
-    // duplicates instead of failing on the unique constraint.
+    // Also load the existing PriceListItems in that pricelist, keyed by ProductID,
+    // so a row whose product is already on this list updates that row's price
+    // instead of failing on the unique constraint.
     let appendModeName: string | null = null;
-    const existingPriceListProductIds = new Set<number>();
+    const existingPriceListItemsByProductId = new Map<
+      number,
+      { itemId: number; listPrice: number | null; costPrice: number | null }
+    >();
     if (isAppendMode && appendToPriceListId != null) {
       const headerReq = pool.request();
       headerReq.input("PLId_append", sql.Int, appendToPriceListId);
@@ -1208,11 +1256,24 @@ export async function POST(req: NextRequest) {
 
       const itemsReq = pool.request();
       itemsReq.input("PLId_items", sql.Int, appendToPriceListId);
-      const itemsRes = await itemsReq.query<{ ProductID: number }>(`
-        SELECT ProductID FROM dbo.PriceListItems WHERE PriceListID = @PLId_items
+      const itemsRes = await itemsReq.query<{
+        ID: number;
+        ProductID: number;
+        ListPrice: number | null;
+        CostPrice: number | null;
+      }>(`
+        SELECT ID, ProductID, ListPrice, CostPrice
+        FROM dbo.PriceListItems
+        WHERE PriceListID = @PLId_items
       `);
       for (const r of itemsRes.recordset ?? []) {
-        if (r.ProductID != null) existingPriceListProductIds.add(r.ProductID);
+        if (r.ProductID != null) {
+          existingPriceListItemsByProductId.set(r.ProductID, {
+            itemId: r.ID,
+            listPrice: r.ListPrice,
+            costPrice: r.CostPrice,
+          });
+        }
       }
     }
 
@@ -1880,22 +1941,18 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        if (isAppendMode && existingPriceListProductIds.has(productId)) {
-          skippedRows += 1;
-          skippedRowDetails.push({
-            partNumber: row.partNumber,
-            modelNumber: row.modelNumber,
-            description: row.description,
-            listPrice: row.listPrice,
-            reason: "Already in price list",
-          });
-          continue;
-        }
+        // When the product is already on the target price list (append mode
+        // only), its row is updated in place below instead of a new one being
+        // inserted, so the old price used for the diff below is that row's own
+        // price rather than another price list's.
+        const appendExistingItem = existingPriceListItemsByProductId.get(productId);
 
         if (isExistingProduct) {
           matchedProductCount += 1;
 
-          const oldPrice = previousPriceMap.get(productId!);
+          const oldPrice = appendExistingItem
+            ? { listPrice: appendExistingItem.listPrice, costPrice: appendExistingItem.costPrice }
+            : previousPriceMap.get(productId!);
           if (oldPrice) {
             const listChanged = oldPrice.listPrice != null && row.listPrice != null && oldPrice.listPrice !== row.listPrice;
             const costChanged = oldPrice.costPrice != null && row.costPrice != null && oldPrice.costPrice !== row.costPrice;
@@ -2012,7 +2069,11 @@ export async function POST(req: NextRequest) {
           if (!byModelNumber.has(modelKey)) byModelNumber.set(modelKey, productRecord);
         }
 
-        await insertPriceListItem(transaction, priceListId, productId, row, auditUserId);
+        if (appendExistingItem) {
+          await updatePriceListItem(transaction, appendExistingItem.itemId, priceListId, row, auditUserId);
+        } else {
+          await insertPriceListItem(transaction, priceListId, productId, row, auditUserId);
+        }
         seenProducts.add(productId);
 
         // Track this product's effective description for all-caps detection

@@ -15,6 +15,7 @@ import {
 } from "../../../lib/gridFilters";
 import {clearPartModelNumberUpper} from "../../../lib/partModelNumber";
 import { collateSearch } from "../../../lib/textSearch";
+import { priceListInEffectSql } from "../../../lib/priceListSql";
 import { KnownFilterModel, TextCondition, isCompoundFilter } from "../../../lib/filterTypes";
 import { processFilter } from "../../../lib/filterProcessing";
 import { normalizeId } from '../../../lib/normalize';
@@ -49,6 +50,16 @@ type ProductRow = {
   WebLink: string | null;
   Origin: string | null;
   Enabled: boolean | number | null;
+  // From the price OUTER APPLY (see priceListApply in POST): the product's
+  // current (or, failing that, latest) price-list price and the fields
+  // resolvePriceListStatus needs to colour the List Price cell.
+  PriceListID: number | null;
+  PriceListName: string | null;
+  ListPrice: number | null;
+  PriceListValidFromDate: Date | string | null;
+  PriceListValidToDate: Date | string | null;
+  PriceListEnabled: boolean | number | null;
+  __rn?: number;
 };
 
 
@@ -71,6 +82,17 @@ const QUICK_FILTER_COLUMNS = Object.entries(COLUMN_EXPRESSIONS).map(([colId, exp
   colId,
   expression,
 }));
+// List Price / Price List columns resolve through the `price` OUTER APPLY
+// (priceListApply below). They are filterable and sortable, but deliberately
+// not quick-filter columns: a quick search must not force the per-product price
+// lookup across the whole catalogue.
+const PRICE_COLUMN_EXPRESSIONS: Record<string, string> = {
+  ListPrice: "price.ListPrice",
+  PriceListName: "price.PriceListName",
+};
+const resolveColumnExpression = (col: string): string =>
+  COLUMN_EXPRESSIONS[col] ?? PRICE_COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+const referencesPriceColumns = (sqlFragment: string): boolean => sqlFragment.includes("price.");
 // Ordering on the clustered key only. The previous default sorted by
 // dbo.Brands.Name first, whose leading key lives in a JOINED table, so no index
 // could serve it: every row had to be filtered and then sorted before the first
@@ -128,7 +150,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 
   Object.entries(typedFilterModel).forEach(([col, fm], idx) => {
     const pBase = `${col}_${idx}`;
-    const columnExpression = COLUMN_EXPRESSIONS[col] ?? `[${col}]`;
+    const columnExpression = resolveColumnExpression(col);
     const isPartNumber = col === "PartNumber";
     const isModelNumber = col === "ModelNumber";
     const isDescription = col === "Description";
@@ -254,7 +276,7 @@ function buildWhereAndParams(filterModel: GridRequest["filterModel"]) {
 function buildOrder(sortModel: GridRequest["sortModel"]) {
   if (!sortModel || sortModel.length === 0) return "";
   const parts = sortModel.map((s) => {
-    const expression = COLUMN_EXPRESSIONS[s.colId] ?? `[${s.colId}]`;
+    const expression = resolveColumnExpression(s.colId);
     return `${expression} ${s.sort.toUpperCase()}`;
   });
   const hasProductId = sortModel.some((s) => s.colId === "ProductID");
@@ -396,7 +418,7 @@ export async function POST(req: NextRequest) {
     const pageSize = Math.max(1, Math.min(1000, endRow - startRow));
     const offset = startRow;
 
-    const select = `
+    const baseSelect = `
       SELECT
         dbo.Products.ID AS ProductID,
         dbo.Brands.ID AS BrandID,
@@ -413,6 +435,15 @@ export async function POST(req: NextRequest) {
         dbo.Products.Origin,
         dbo.Products.Enabled
     `;
+    const priceColumns = `
+        price.PriceListID,
+        price.PriceListName,
+        price.ListPrice,
+        price.PriceListValidFromDate,
+        price.PriceListValidToDate,
+        price.PriceListEnabled
+    `;
+    const select = `${baseSelect}, ${priceColumns}`;
 
     const from = `
     FROM            
@@ -423,6 +454,38 @@ export async function POST(req: NextRequest) {
       dbo.Products ON dbo.Brands.ID = dbo.Products.BrandID ON dbo.ProductTypes.ID = dbo.Products.TypeID ON dbo.ProductCategories.ID = dbo.Products.CategoryID ON 
       dbo.ProductSubCategories.ID = dbo.Products.SubCategoryID
     `;
+
+    // One price per product for the List Price / Price List columns. Lists
+    // currently in effect win (the same predicate the offer grids price with);
+    // a product with none falls back to its most recently valid list, so the
+    // cell still shows the last known price and the client colours it
+    // expired/disabled via resolvePriceListStatus. Each evaluation is one seek
+    // on IX_PriceListItems_ProductID; dataSql below keeps it to the paged rows
+    // unless a price column drives the filter or sort, in which case every
+    // candidate row has to be priced (~2s for the whole catalogue sorted by
+    // List Price), which is also why these columns stay out of the quick filter.
+    const priceListApplyFor = (productIdExpr: string) => `
+      OUTER APPLY (
+        SELECT TOP (1)
+          pli.PriceListID,
+          pl.Name AS PriceListName,
+          pli.ListPrice,
+          pl.ValidFromDate AS PriceListValidFromDate,
+          pl.ValidToDate AS PriceListValidToDate,
+          pl.Enabled AS PriceListEnabled
+        FROM dbo.PriceListItems pli
+          INNER JOIN dbo.PriceLists pl ON pli.PriceListID = pl.ID
+        WHERE pli.ProductID = ${productIdExpr}
+        ORDER BY
+          CASE WHEN ${priceListInEffectSql("pl")} THEN 0 ELSE 1 END,
+          CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN 0 ELSE 1 END,
+          CASE WHEN pl.ValidToDate IS NULL OR pl.ValidToDate >= SYSUTCDATETIME() THEN pl.ValidToDate END ASC,
+          pl.ValidToDate DESC,
+          pl.ValidFromDate DESC,
+          pli.ID DESC
+      ) price
+    `;
+    const fromWithPrice = `${from} ${priceListApplyFor("dbo.Products.ID")}`;
 
     const { where, params: whereParams } = buildWhereAndParams(requestPayload.filterModel);
     const quickFilterClause = buildQuickFilterClause(requestPayload.quickFilterText, QUICK_FILTER_COLUMNS);
@@ -453,11 +516,13 @@ export async function POST(req: NextRequest) {
 
     if (groupingField && groupLevel < 1) {
       const groupWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
+      // Only pay for the price lookup when a price column is actually filtered.
+      const groupFrom = referencesPriceColumns(groupWhere) ? fromWithPrice : from;
 
       const countReq = bindParams(pool.request(), [...combinedParams, ...parentFilter.params]);
       const countSql = `
         SELECT COUNT(DISTINCT ${groupingField.expression}) AS __groupCount
-        ${from}
+        ${groupFrom}
         ${groupWhere}
       `;
       const countRes = await countReq.query<{ __groupCount: number }>(countSql);
@@ -468,7 +533,7 @@ export async function POST(req: NextRequest) {
       groupReq.input("__limit", sql.Int, pageSize);
       const groupSql = `
         SELECT DISTINCT ${groupingField.expression} AS GroupValue
-        ${from}
+        ${groupFrom}
         ${groupWhere}
         ORDER BY ${groupingField.expression}
         ${paging}
@@ -489,7 +554,29 @@ export async function POST(req: NextRequest) {
 
     const appliedWhere = combineWhereClauses(combinedWhere, parentFilter.clause);
     const appliedParams = [...combinedParams, ...parentFilter.params];
-    const dataSql = `${select} ${from} ${appliedWhere} ${orderClause} ${paging}`;
+    // Page first, then price only the paged rows. Putting the price APPLY in the
+    // main FROM for every request let the optimizer price the whole catalogue
+    // before sorting on some shapes (the new-product highlight order went from
+    // 70ms to 2.9s), so the split is explicit: the APPLY joins the base FROM
+    // only when a price column takes part in the filter or sort, where every
+    // candidate row has to be priced anyway.
+    const priceDrivesQuery = referencesPriceColumns(appliedWhere) || referencesPriceColumns(orderClause);
+    const dataSql = priceDrivesQuery
+      ? `${select} ${fromWithPrice} ${appliedWhere} ${orderClause} ${paging}`
+      : `
+        WITH PagedBase AS (
+          ${baseSelect},
+            ROW_NUMBER() OVER (${orderClause}) AS __rn
+          ${from}
+          ${appliedWhere}
+          ${orderClause}
+          ${paging}
+        )
+        SELECT PagedBase.*, ${priceColumns}
+        FROM PagedBase
+        ${priceListApplyFor("PagedBase.ProductID")}
+        ORDER BY PagedBase.__rn
+      `;
 
     const dataReq = bindParams(pool.request(), appliedParams);
     dataReq.input("__offset", sql.Int, offset);
@@ -499,7 +586,11 @@ export async function POST(req: NextRequest) {
     }
     const dataRes = await dataReq.query<ProductRow>(dataSql);
 
-    const rows = dataRes.recordset ?? [];
+    // __rn only exists on the paged-first shape; either way it is not a column.
+    const rows = (dataRes.recordset ?? []).map(({ __rn, ...row }) => {
+      void __rn;
+      return row;
+    });
     // No COUNT_BIG(1) OVER(): that windowed count forced the entire filtered
     // ~56k-row set to materialize on every catalog load/filter/sort. Instead
     // infer end-of-data the way the add-products grid does — a full page means

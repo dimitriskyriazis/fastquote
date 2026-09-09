@@ -30,6 +30,9 @@ import PageHeader from "../components/PageHeader";
 import { GridQuickSearchProvider } from "../components/GridQuickSearchProvider";
 import { formatBooleanValue } from "../lib/formatBooleanValue";
 import { normalizeBoolean } from "../../lib/normalizeBoolean";
+import { resolvePriceListStatus } from "../../lib/priceListStatus";
+import { getUserNumberLocale } from "../../lib/localeNumber";
+import { formatDateUK } from "../lib/formatDateTime";
 import { MAX_MERGE_SECONDARIES } from "./merge/productMergeTypes";
 
 const AgGridAll = dynamic(() => import("../components/AgGridAll"), {
@@ -60,6 +63,60 @@ const addWebLinkMenuIcon = `
     </svg>
   </span>
 `;
+
+const listPriceFormatter = new Intl.NumberFormat(getUserNumberLocale(), {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const formatListPrice = (value: unknown): string => {
+  if (value == null) return "";
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return `${listPriceFormatter.format(num)} €`;
+};
+
+type PriceListStatusRow = Record<string, unknown> | null | undefined;
+
+// Colours the List Price cell by the validity of the price list the price came
+// from (green active / yellow expiring / red expired or disabled / blue not yet
+// started). The class names are shared with the price-lists page Valid To cell
+// on purpose: AgGridAll.module.css excludes .pl-valid-to--* from its
+// selected-row repaint, so the colour survives selection. Base colours live in
+// ProductsClient.module.css.
+const listPriceStatusClassRules = {
+  "pl-valid-to--active": (params: { data?: PriceListStatusRow }) =>
+    resolvePriceListStatus(params.data) === "active",
+  "pl-valid-to--expiring": (params: { data?: PriceListStatusRow }) =>
+    resolvePriceListStatus(params.data) === "expiring",
+  "pl-valid-to--expired": (params: { data?: PriceListStatusRow }) =>
+    resolvePriceListStatus(params.data) === "expired",
+  "pl-valid-to--future": (params: { data?: PriceListStatusRow }) =>
+    resolvePriceListStatus(params.data) === "future",
+};
+
+// Tooltip for the List Price / Price List cells: which list the price is from
+// and why the cell has its colour.
+const describePriceListStatus = (row: PriceListStatusRow): string => {
+  if (!row || row.PriceListID == null) return "";
+  const rawName = typeof row.PriceListName === "string" ? row.PriceListName.trim() : "";
+  const name = rawName.length > 0 ? rawName : "Price list";
+  const validFrom = row.PriceListValidFromDate ? formatDateUK(row.PriceListValidFromDate) : "";
+  const validTo = row.PriceListValidToDate ? formatDateUK(row.PriceListValidToDate) : "";
+  const disabled = row.PriceListEnabled === false || row.PriceListEnabled === 0;
+  switch (resolvePriceListStatus(row)) {
+    case "active":
+      return validTo ? `${name}: valid until ${validTo}` : `${name}: valid, no end date`;
+    case "expiring":
+      return `${name}: expires on ${validTo}`;
+    case "expired":
+      return disabled ? `${name}: price list disabled` : `${name}: expired on ${validTo}`;
+    case "future":
+      return `${name}: starts on ${validFrom}`;
+    default:
+      return name;
+  }
+};
 
 const HISTORY_BACK_HREF = "/products";
 const HISTORY_BACK_LABEL = "products";
@@ -360,6 +417,23 @@ export default function ProductsClient() {
       filter: "agTextColumnFilter",
       editable: true,
       valueParser: (params) => normalizeEditableValue(params.newValue),
+    },
+    {
+      field: "ListPrice",
+      headerName: "List Price",
+      filter: "agNumberColumnFilter",
+      type: "numericColumn",
+      width: 130,
+      valueFormatter: (params) => formatListPrice(params.value),
+      cellClassRules: listPriceStatusClassRules,
+      tooltipValueGetter: (params) => describePriceListStatus(params.data as PriceListStatusRow),
+    },
+    {
+      field: "PriceListName",
+      headerName: "Price List",
+      filter: "agTextColumnFilter",
+      width: 200,
+      tooltipValueGetter: (params) => describePriceListStatus(params.data as PriceListStatusRow),
     },
     {
       field: "Category",

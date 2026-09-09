@@ -126,3 +126,23 @@
 .gridFrame :global(.ag-theme-quartz .ag-cell) {
   transition: background-color 140ms ease;
 }
+
+/* List Price cell coloured by the validity of the price list the price came
+   from, same palette as the offer-products List Price cell and the price-lists
+   Valid To cell. The .pl-valid-to--* classes are toggled by
+   listPriceStatusClassRules in ProductsClient.tsx. Specificity (0,5,0) beats
+   the zebra/hover rules above (0,4,0); AgGridAll.module.css excludes these
+   classes from its selected-row repaint, so the colour also survives selection. */
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--active) {
+  background: #b7ffcf !important;
+}
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--expiring) {
+  background: #fff8a5 !important;
+}
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--expired) {
+  background: #ffcfcf !important;
+}
+/* Scheduled list (future Valid From): blue, not in effect yet. */
+.gridFrame :global(.ag-theme-quartz .ag-row .ag-cell.pl-valid-to--future) {
+  background: #cfe2ff !important;
+}
