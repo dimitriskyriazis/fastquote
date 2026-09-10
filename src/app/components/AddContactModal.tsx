@@ -11,6 +11,8 @@ import {
 } from '../customer-contacts/contactModalHelpers';
 import { showToastMessage } from '../../lib/toast';
 import type { DropdownOption } from '../../lib/dropdownOptions';
+import { useDuplicateCheck } from '../lib/useDuplicateCheck';
+import DuplicateWarning from './DuplicateWarning';
 
 type ContactLookupsResponse = {
   ok?: boolean;
@@ -60,6 +62,15 @@ export default function AddContactModal({
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('contact');
+
+  useEffect(() => {
+    if (open) {
+      checkDuplicates({ firstName: form.firstName, lastName: form.lastName, customerId });
+    } else {
+      clearDuplicates();
+    }
+  }, [open, form.firstName, form.lastName, customerId, checkDuplicates, clearDuplicates]);
 
   const [titles, setTitles] = useState<DropdownOption[]>([]);
   const [statuses, setStatuses] = useState<string[]>([]);
@@ -184,6 +195,9 @@ export default function AddContactModal({
             required
             onChange={(event) => setField('firstName', event.target.value)}
           />
+        </div>
+        <div className={styles.fieldFull}>
+          <DuplicateWarning warnings={duplicateWarnings} />
         </div>
         <div className={styles.fieldHalf}>
           <label className={styles.fieldLabel} htmlFor="add-contact-position">Position</label>

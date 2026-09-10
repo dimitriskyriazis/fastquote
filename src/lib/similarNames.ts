@@ -1,5 +1,7 @@
 /**
- * "Similar name" warnings for the create forms: customer, supplier, brand.
+ * "Similar name" warnings for the create forms: customer, supplier, brand, and
+ * contact (indexed as 'FirstName LastName', so a swapped pair of fields, a
+ * Latin spelling of a Greek name and a typo are all handled by the same rules).
  *
  * This answers a different question from lib/customerDuplicates. That module
  * asks which EXISTING records duplicate each other; this one asks whether the
@@ -27,6 +29,7 @@ import {
   norm,
   tokens,
   tokensMatch,
+  translit,
   translitTokens,
 } from './customerDuplicates';
 
@@ -37,6 +40,9 @@ export type NameEntry = {
   brandName?: string | null;
   taxId?: string | null;
   enabled?: boolean | null;
+  /** Contacts only: the customer the contact belongs to. */
+  customerId?: number | null;
+  customerName?: string | null;
 };
 
 export type SimilarName = {
@@ -44,6 +50,8 @@ export type SimilarName = {
   name: string;
   taxId: string | null;
   enabled: boolean | null;
+  customerId: number | null;
+  customerName: string | null;
   /**
    * Set when the match came through the entry's official-name column rather
    * than its name, so the warning can say why '102 FM' is similar to 'ΕΡΤ ΑΕ'.
@@ -54,16 +62,25 @@ export type SimilarName = {
 };
 
 export type FindOptions = {
-  /** Most matches to return; the best-scoring ones win. */
+  /** Most matches to return; the best-scoring ones win. Infinity for all. */
   limit?: number;
   /** Lowest score worth showing. */
   minScore?: number;
+};
+
+export type SimilarNameSearch = {
+  /** The best matches, at most `limit` of them. */
+  matches: SimilarName[];
+  /** How many entries matched before the limit was applied. */
+  total: number;
 };
 
 export type SimilarNameIndex = {
   /** How many entries were indexed (rows with an empty name are skipped). */
   size: number;
   find: (needle: string, options?: FindOptions) => SimilarName[];
+  /** Like find, but also says how many matches the limit hid. */
+  search: (needle: string, options?: FindOptions) => SimilarNameSearch;
 };
 
 /**
@@ -87,6 +104,19 @@ const DEFAULT_LIMIT = 10;
 const SQUASHED_MATCH_SCORE = 0.95;
 
 /**
+ * A match through the official-name column is one step removed: the entry is
+ * called something else. Scores through it are scaled down so that, for the
+ * same words, a customer actually NAMED that way ranks first. Measured case:
+ * typing 'ΕΡΤ' found 30 regional radio stations whose official name is
+ * 'ΕΡΤ Α.Ε' at 1.0, and the customer named 'ΕΡΤ Α.Ε.' (also 1.0) fell outside
+ * the ten rows shown because it lost the alphabetical tie-break to 'ΕΡΑ ...'.
+ * At 0.9 the stations still show, after every name that contains 'ΕΡΤ' plus
+ * one other word (those land between 0.90 and 0.95), which is the order a
+ * person would put them in.
+ */
+const OFFICIAL_NAME_FACTOR = 0.9;
+
+/**
  * Below this, a Greek/Latin spelling match is treated as coincidence. Mirrors
  * the transliteration floor in customerDuplicates.scoreSignature.
  */
@@ -104,6 +134,14 @@ const TRANSLIT_MAX_SCORE = 0.88;
 const MAX_TYPO_EDITS = 1;
 
 /**
+ * A word matched with a typo counts a little less than the same word matched
+ * exactly, so that 'Κυριαζής Κυριαζής' outranks 'Κυριάκης Κυριάκης' when
+ * 'Κυριαζής' is typed. Without this both scored 1.0 and sorted alphabetically.
+ * Scaled by the share of the matched words that needed the typo budget.
+ */
+const NEAR_MISS_PENALTY = 0.1;
+
+/**
  * A word this short cannot be the only thing two names share. 'PA' is rare as
  * a word, and it is what 'P.A. Solutions' and 'ΔΗ.ΡΑ.Λ' have in common once
  * initials are rejoined and homoglyphs folded.
@@ -115,18 +153,20 @@ const MIN_ALONE_LENGTH = 3;
  * customers carry 'UK' or 'USA') but name a place or a corporate structure,
  * not a company. They still count towards the overlap of two names; they just
  * cannot be the ONLY thing two names have in common. 'MediaKind UK' must not
- * offer 'Ikegami Electronics UK Ltd'. Run through norm() so the Latin entries
- * compare against homoglyph-folded tokens.
+ * offer 'Ikegami Electronics UK Ltd'. Kept in both spellings the index uses:
+ * run through norm() (Latin folded into Greek homoglyphs) for the plain path,
+ * and through translit() (Greek turned into Latin) for the transliterated
+ * path. A set built for one path never matches words from the other.
  */
-const WEAK_ALONE = new Set(
-  [
-    'UK', 'USA', 'US', 'GB', 'EU', 'UAE', 'EUROPE', 'EUROPEAN', 'INTERNATIONAL',
-    'GLOBAL', 'WORLDWIDE', 'GROUP', 'HOLDING', 'HOLDINGS', 'HELLAS', 'HELLENIC',
-    'GREECE', 'GREEK', 'CYPRUS', 'ATHENS',
-    'ΕΛΛΑΣ', 'ΕΛΛΑΔΑ', 'ΕΛΛΑΔΟΣ', 'ΕΛΛΗΝΙΚΗ', 'ΕΛΛΗΝΙΚΟ', 'ΕΛΛΗΝΙΚΟΣ', 'ΚΥΠΡΟΣ',
-    'ΚΥΠΡΟΥ', 'ΑΘΗΝΑ', 'ΑΘΗΝΩΝ', 'ΘΕΣΣΑΛΟΝΙΚΗ', 'ΘΕΣΣΑΛΟΝΙΚΗΣ', 'ΒΟΡΕΙΟΥ',
-  ].map(norm),
-);
+const WEAK_ALONE_WORDS = [
+  'UK', 'USA', 'US', 'GB', 'EU', 'UAE', 'EUROPE', 'EUROPEAN', 'INTERNATIONAL',
+  'GLOBAL', 'WORLDWIDE', 'GROUP', 'HOLDING', 'HOLDINGS', 'HELLAS', 'HELLENIC',
+  'GREECE', 'GREEK', 'CYPRUS', 'ATHENS',
+  'ΕΛΛΑΣ', 'ΕΛΛΑΔΑ', 'ΕΛΛΑΔΟΣ', 'ΕΛΛΗΝΙΚΗ', 'ΕΛΛΗΝΙΚΟ', 'ΕΛΛΗΝΙΚΟΣ', 'ΚΥΠΡΟΣ',
+  'ΚΥΠΡΟΥ', 'ΑΘΗΝΑ', 'ΑΘΗΝΩΝ', 'ΘΕΣΣΑΛΟΝΙΚΗ', 'ΘΕΣΣΑΛΟΝΙΚΗΣ', 'ΒΟΡΕΙΟΥ',
+];
+const WEAK_ALONE = new Set(WEAK_ALONE_WORDS.map(norm));
+const WEAK_ALONE_TRANSLIT = new Set(WEAK_ALONE_WORDS.map(translit));
 
 type Indexed = {
   entry: NameEntry;
@@ -223,8 +263,18 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
    * evidence. One shared word is enough when it is the whole of both names
    * ('Alpha' against 'Alpha SA'), or when it is a real, distinctive word: long
    * enough, not a place or a legal structure, and rare. One shared COMMON word
-   * with more on either side is not: 2,911 customers have a one-word name, and
-   * 'Alpha' is contained in every longer name that reuses the word.
+   * with more on the NEEDLE side is not: typing 'Alpha Bank' is not a warning
+   * about the one-word customer 'Alpha', nor about the other 44 names that
+   * reuse the word.
+   *
+   * The other way round, one shared word that is the whole of what was typed,
+   * is enough even when the word is common, as long as it is exact and a real
+   * word (same length and place/structure tests as above). This is a warning
+   * shown while typing: someone who has typed 'ANTENNA' should see 'Antenna
+   * TV' and 'ANTENNA Internet S.A.' now, not only the three one-word Antenna
+   * customers. Before this rule the answer depended on how many customers
+   * carried the word: 'Vodafone' (7 of them) listed every Vodafone office,
+   * 'ANTENNA' (19) and 'ΕΡΤ' (41) listed almost nothing.
    *
    * A lone near-miss is only enough when it is the whole of both names
    * ('Telmako' against 'TELMACO AE'). Under a longer name it is not: on the
@@ -237,13 +287,15 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
     needleSize: number,
     entrySize: number,
     rarity: (token: string) => number,
+    weak: ReadonlySet<string>,
   ): boolean => {
     if (pairs.length >= 2) return true;
     if (pairs.length !== 1) return false;
     if (needleSize === 1 && entrySize === 1) return true;
     const [a, b] = pairs[0];
     if (a !== b) return false;
-    if (b.length < MIN_ALONE_LENGTH || WEAK_ALONE.has(b)) return false;
+    if (b.length < MIN_ALONE_LENGTH || weak.has(b)) return false;
+    if (needleSize === 1) return true;
     return rarity(b) <= RARE_TOKEN_MAX_DF;
   };
 
@@ -260,7 +312,7 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
   const overlap = (needle: ReadonlySet<string>, entry: ReadonlySet<string>): number => {
     if (!needle.size || !entry.size) return 0;
     const pairs = pairTokens(needle, entry);
-    if (!carriesEvidence(pairs, needle.size, entry.size, df)) return 0;
+    if (!carriesEvidence(pairs, needle.size, entry.size, df, WEAK_ALONE)) return 0;
 
     const matchedNeedle = new Set(pairs.map(([a]) => a));
     let shared = 0;
@@ -272,7 +324,8 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
 
     const containment = Math.max(shared / needleTotal, shared / entryTotal);
     const weightedJaccard = shared / (needleTotal + entryTotal - shared);
-    return 0.85 * containment + 0.15 * weightedJaccard;
+    const nearMisses = pairs.filter(([a, b]) => a !== b).length;
+    return (0.85 * containment + 0.15 * weightedJaccard) * (1 - (NEAR_MISS_PENALTY * nearMisses) / pairs.length);
   };
 
   /**
@@ -283,8 +336,12 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
   const translitOverlap = (needle: ReadonlySet<string>, entry: ReadonlySet<string>): number => {
     if (!needle.size || !entry.size) return 0;
     const pairs = pairTokens(needle, entry);
-    if (!carriesEvidence(pairs, needle.size, entry.size, translitDf)) return 0;
+    if (!carriesEvidence(pairs, needle.size, entry.size, translitDf, WEAK_ALONE_TRANSLIT)) return 0;
     const j = jaccard(needle, entry);
+    // Everything typed is in the entry ('Kyriazis' against 'Δημήτρης
+    // Κυριαζής'): enough on its own, as it is for the plain path. Otherwise the
+    // two names must mostly agree.
+    if (pairs.length === needle.size) return Math.min(TRANSLIT_MAX_SCORE, 0.85 + 0.15 * j);
     return j >= TRANSLIT_MIN_JACCARD ? Math.min(TRANSLIT_MAX_SCORE, j) : 0;
   };
 
@@ -299,12 +356,12 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
     return variants;
   };
 
-  const find = (needle: string, options: FindOptions = {}): SimilarName[] => {
+  const search = (needle: string, options: FindOptions = {}): SimilarNameSearch => {
     const limit = options.limit ?? DEFAULT_LIMIT;
     const minScore = options.minScore ?? SIMILAR_NAME_THRESHOLD;
 
     const needleNorm = norm(needle);
-    if (!needleNorm) return [];
+    if (!needleNorm) return { matches: [], total: 0 };
     const needleTokens = tokens(needle);
     const needleSquashed = Array.from(needleTokens).join('');
     const needleTranslit = translitTokens(needle);
@@ -334,7 +391,7 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
         score = needleSquashed && item.squashed === needleSquashed ? SQUASHED_MATCH_SCORE : 0;
         score = Math.max(score, overlap(needleTokens, item.nameTokens));
         if (item.brandTokens.size) {
-          const viaOfficialName = overlap(needleTokens, item.brandTokens);
+          const viaOfficialName = OFFICIAL_NAME_FACTOR * overlap(needleTokens, item.brandTokens);
           if (viaOfficialName > score) {
             score = viaOfficialName;
             officialName = item.entry.brandName ?? null;
@@ -352,6 +409,8 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
         name: item.entry.name ?? '',
         taxId: item.entry.taxId ?? null,
         enabled: item.entry.enabled ?? null,
+        customerId: item.entry.customerId ?? null,
+        customerName: item.entry.customerName ?? null,
         officialName,
         score,
       });
@@ -363,8 +422,10 @@ export const buildSimilarNameIndex = (entries: readonly NameEntry[]): SimilarNam
       || Number(b.enabled !== false) - Number(a.enabled !== false)
       || a.name.localeCompare(b.name),
     );
-    return results.slice(0, limit);
+    return { matches: results.slice(0, limit), total: results.length };
   };
 
-  return { size: total, find };
+  const find = (needle: string, options?: FindOptions): SimilarName[] => search(needle, options).matches;
+
+  return { size: total, find, search };
 };

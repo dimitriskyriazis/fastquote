@@ -49,6 +49,17 @@ const base: NameEntry[] = [
   entry('Δήμος Θηβαίων'),
   entry('Panasonic Technics'),
   entry('Old Telmaco Branch', { enabled: false }),
+  entry('Antenna TV'),
+  entry('ANTENNA TV ΑΕ Θεσσαλονίκη'),
+  entry('Antenna Internet S.A.'),
+  entry('ΑΝΤΕΝΝΑ 4'),
+  entry('Antenna Ltd - Κύπρος', { brandName: 'ANTENNA LTD' }),
+  entry('ΕΡΤ Α.Ε.'),
+  entry('ΕΡΤ Group'),
+  entry('ΕΡΤ ΑΕ - Ραδιομέγαρο', { brandName: 'Ελληνική Ραδιοφωνία Τηλεόραση ΑΕ' }),
+  entry('Υπουργείο Οικονομικών (πρώην ΕΡΤ Α.Ε.)'),
+  ...Array.from({ length: 12 }, (_, i) => entry(`ΕΡΑ Σταθμός ${i + 1}`, { brandName: 'ΕΡΤ Α.Ε' })),
+  ...filler('Antenna', 12),
   ...filler('Media', 20),
   ...filler('Alpha', 12),
   ...filler('Hellas', 40),
@@ -111,8 +122,10 @@ describe('find: exact and near-exact', () => {
     expect(names('PA Solutions')[0]).toBe('P.A. SOLUTIONS LTD');
   });
 
-  it('forgives one typo when the word is the whole of both names', () => {
+  it('forgives one typo when the word is the whole of both names, at a small discount', () => {
     expect(names('Telmako')).toContain('Telmaco SA');
+    const typo = index.find('Telmako').find((m) => m.name === 'Telmaco SA');
+    expect(typo?.score).toBeCloseTo(0.9, 5);
   });
 
   it('does not let a lone near-miss carry a match under a longer name', () => {
@@ -137,6 +150,54 @@ describe('find: the official-name column', () => {
     const [top] = index.find('MediaKind');
     expect(top.name).toBe('MediaKind');
     expect(top.officialName).toBeNull();
+  });
+});
+
+describe('find: one common word that is the whole of what was typed', () => {
+  // 'Antenna' is in 17 names here, 'ΕΡΤ' in 16 (counting official names), so
+  // neither passes the rarity test. Both are still the whole of the typed name.
+  it("lists the multi-word Antenna customers for 'ANTENNA', one-word names first", () => {
+    expect(names('ANTENNA')[0]).toBe('ΑΝΤΕΝΝΑ 4');
+    const all = index.search('ANTENNA', { limit: Number.POSITIVE_INFINITY });
+    const result = all.matches.map((m) => m.name);
+    expect(result).toContain('Antenna TV');
+    expect(result).toContain('Antenna Internet S.A.');
+    expect(result).toContain('ANTENNA TV ΑΕ Θεσσαλονίκη');
+    expect(result).toContain('Antenna Ltd - Κύπρος');
+    expect(all.total).toBe(17);
+  });
+
+  it("puts the customer named 'ΕΡΤ Α.Ε.' first for 'ΕΡΤ', ahead of official-name matches", () => {
+    const result = names('ΕΡΤ');
+    expect(result[0]).toBe('ΕΡΤ Α.Ε.');
+    expect(result.indexOf('ΕΡΤ Group')).toBeLessThan(result.indexOf('ΕΡΑ Σταθμός 1'));
+    expect(result.indexOf('ΕΡΤ ΑΕ - Ραδιομέγαρο')).toBeLessThan(result.indexOf('ΕΡΑ Σταθμός 1'));
+    expect(result).toHaveLength(10);
+    expect(index.search('ΕΡΤ').total).toBe(17); // 16 through the name, '102 FM' through its official name
+  });
+
+  it('scores a match through the official name below the same match on the name', () => {
+    const station = index.find('ΕΡΤ ΑΕ').find((m) => m.name === 'ΕΡΑ Σταθμός 1');
+    expect(station?.officialName).toBe('ΕΡΤ Α.Ε');
+    expect(station?.score).toBeCloseTo(0.9, 5);
+    expect(index.find('ΕΡΤ ΑΕ')[0]).toMatchObject({ name: 'ΕΡΤ Α.Ε.', score: 1, officialName: null });
+  });
+
+  it('lists every name that reuses a common one-word needle', () => {
+    const result = index.search('Alpha', { limit: Number.POSITIVE_INFINITY }).matches.map((m) => m.name);
+    expect(result[0]).toBe('Alpha');
+    expect(result).toContain('Alpha Bank');
+    expect(result).toContain('Alpha Filler 1');
+  });
+
+  it('still refuses a place or structure word, or a two-letter word, on its own', () => {
+    expect(names('Hellas')).not.toContain('Hellas Filler 1');
+    expect(names('UK')).toEqual([]);
+    expect(names('PA')).toEqual([]);
+  });
+
+  it('still requires the lone word to be exact, not a typo, under a longer name', () => {
+    expect(names('Telmako')).not.toContain('Telmaco International Ltd');
   });
 });
 
@@ -196,6 +257,13 @@ describe('find: output shape', () => {
     expect(result[dead].enabled).toBe(false);
   });
 
+  it('reports how many matches the limit hid', () => {
+    const found = index.search('Media Filler', { limit: 3 });
+    expect(found.matches).toHaveLength(3);
+    expect(found.total).toBeGreaterThanOrEqual(20);
+    expect(index.search('Nothing Like This Anywhere')).toEqual({ matches: [], total: 0 });
+  });
+
   it('honours limit and minScore', () => {
     expect(index.find('Media Filler', { limit: 3 })).toHaveLength(3);
     expect(index.find('MediaKind UK', { minScore: 0.99 }).map((m) => m.name)).toEqual([]);
@@ -208,5 +276,66 @@ describe('find: output shape', () => {
         expect(match.score).toBeGreaterThanOrEqual(SIMILAR_NAME_THRESHOLD);
       }
     }
+  });
+});
+
+describe('find: contacts indexed as first name plus last name', () => {
+  const contacts = buildSimilarNameIndex([
+    entry('Δημήτρης Κυριαζής', { customerId: 1, customerName: 'ΤΕΛΜΑΚΟ ΑΕ' }),
+    entry('Βασίλης Κυριαζής', { customerId: 1, customerName: 'ΤΕΛΜΑΚΟ ΑΕ' }),
+    entry('Γιάννης Κυριαζής', { customerId: 2, customerName: 'ΓΕΣ/ΔΕΠΛΗ', enabled: false }),
+    entry('Κυριάκης Κυριάκης', { customerId: 4, customerName: 'ΔΕΠΑΧ' }),
+    entry('Δημήτρης Παπαδόπουλος', { customerId: 3, customerName: 'Star Channel' }),
+    entry('Γενικός Διευθυντής', { customerId: 3, customerName: 'Star Channel' }),
+    entry('- -'),
+    ...Array.from({ length: 12 }, (_, i) => entry(`Δημήτρης Επώνυμο${i + 1}`)),
+    ...Array.from({ length: 12 }, (_, i) => entry(`Όνομα${i + 1} Παπαδόπουλος`)),
+  ]);
+  const found = (needle: string) => contacts.find(needle).map((m) => m.name);
+
+  it('skips placeholder rows', () => {
+    expect(contacts.size).toBe(30);
+  });
+
+  it('matches regardless of which field the surname was typed into', () => {
+    const [top] = contacts.find('Κυριαζής Δημήτρης');
+    expect(top.name).toBe('Δημήτρης Κυριαζής');
+    expect(top.score).toBe(1);
+    expect(top.customerId).toBe(1);
+    expect(top.customerName).toBe('ΤΕΛΜΑΚΟ ΑΕ');
+  });
+
+  it('matches a Greek contact typed in Latin letters', () => {
+    expect(found('Dimitris Kyriazis')).toContain('Δημήτρης Κυριαζής');
+    expect(found('Kiriazis Dimitris')).toContain('Δημήτρης Κυριαζής');
+  });
+
+  it('lists everyone with the surname when it is typed in Latin letters', () => {
+    const result = found('Kyriazis');
+    expect(result).toContain('Δημήτρης Κυριαζής');
+    expect(result).toContain('Βασίλης Κυριαζής');
+    expect(result).not.toContain('Κυριάκης Κυριάκης');
+  });
+
+  it('does not offer people who only share a common first name', () => {
+    expect(found('Δημήτρης Παπαδόπουλος')).not.toContain('Δημήτρης Κυριαζής');
+    expect(found('Δημήτρης Κυριαζής')).not.toContain('Δημήτρης Παπαδόπουλος');
+  });
+
+  it('lists everyone with the surname when only the surname has been typed', () => {
+    const result = found('Κυριαζής');
+    expect(result).toHaveLength(4);
+    expect(result.indexOf('Γιάννης Κυριαζής')).toBe(2); // disabled, after the live ones
+    expect(result[3]).toBe('Κυριάκης Κυριάκης'); // one letter off, so after every real Κυριαζής
+    expect(found('Παπαδόπουλος')).toHaveLength(10);
+    expect(contacts.search('Παπαδόπουλος').total).toBe(13);
+  });
+
+  it('treats a first-name initial as no first name', () => {
+    expect(found('Δ. Κυριαζής')).toContain('Δημήτρης Κυριαζής');
+  });
+
+  it('finds role placeholders that are used as contacts', () => {
+    expect(found('Διευθυντής Γενικός')[0]).toBe('Γενικός Διευθυντής');
   });
 });

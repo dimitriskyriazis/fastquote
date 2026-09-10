@@ -254,11 +254,15 @@ export default function ContactsClient({
 
   useEffect(() => {
     if (isAddContactOpen) {
-      checkDuplicates({ firstName: contactForm.firstName, lastName: contactForm.lastName });
+      checkDuplicates({
+        firstName: contactForm.firstName,
+        lastName: contactForm.lastName,
+        customerId: contactForm.customerId,
+      });
     } else {
       clearDuplicates();
     }
-  }, [contactForm.firstName, contactForm.lastName, isAddContactOpen, checkDuplicates, clearDuplicates]);
+  }, [contactForm.firstName, contactForm.lastName, contactForm.customerId, isAddContactOpen, checkDuplicates, clearDuplicates]);
 
   useEffect(() => { setStatusDropdownValues(buildStatusDropdownValues(statuses)); }, [statuses, buildStatusDropdownValues]);
   useEffect(() => { setImportanceDropdownValues(buildImportanceDropdownValues(importances)); }, [importances, buildImportanceDropdownValues]);

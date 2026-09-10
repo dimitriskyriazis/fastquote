@@ -2,8 +2,8 @@
  * Per-table cache of the similar-name index behind /api/duplicates.
  *
  * Building an index means reading every row of the table (11,814 customers,
- * 543 brands, 51 suppliers) and normalising each name: on the order of 100 ms
- * for customers. The create forms ask for a check at every pause in typing, so
+ * 24,553 contacts, 543 brands, 51 suppliers) and normalising each name: on the
+ * order of 100 ms for customers. The create forms ask for a check at every pause in typing, so
  * that cannot be repeated per request. But a check that misses a customer
  * created ten seconds ago is exactly the failure this warning exists to
  * prevent, so a plain TTL is not good enough either.
@@ -23,9 +23,10 @@ import {
   type NameEntry,
   type SimilarName,
   type SimilarNameIndex,
+  type SimilarNameSearch,
 } from './similarNames';
 
-export type NameEntity = 'customer' | 'supplier' | 'brand';
+export type NameEntity = 'customer' | 'supplier' | 'brand' | 'contact';
 
 type Source = {
   /** Every row, shaped as a NameEntry. */
@@ -54,6 +55,21 @@ const SOURCES: Record<NameEntity, Source> = {
            FROM dbo.Brands`,
     fingerprint: `SELECT COUNT(*) AS n, CHECKSUM_AGG(CHECKSUM(ID, Name, Enabled)) AS ck
                   FROM dbo.Brands`,
+  },
+  // A contact is indexed under 'FirstName LastName' as one name, so the two
+  // fields are compared as a bag of words and it does not matter which one the
+  // user typed a surname into. The customer's name rides along for display and
+  // is part of the fingerprint, so a customer rename refreshes it (the join
+  // costs about 20 ms over 24,553 rows).
+  contact: {
+    load: `SELECT c.ID AS id, c.FirstName + N' ' + c.LastName AS name, c.Enabled AS enabled,
+                  c.CustomerID AS customerId, cu.Name AS customerName
+           FROM dbo.Contacts c
+           LEFT JOIN dbo.Customers cu ON cu.ID = c.CustomerID`,
+    fingerprint: `SELECT COUNT(*) AS n,
+                         CHECKSUM_AGG(CHECKSUM(c.ID, c.FirstName, c.LastName, c.CustomerID, c.Enabled, cu.Name)) AS ck
+                  FROM dbo.Contacts c
+                  LEFT JOIN dbo.Customers cu ON cu.ID = c.CustomerID`,
   },
 };
 
@@ -102,6 +118,13 @@ export const findSimilarNames = async (
   needle: string,
   options?: FindOptions,
 ): Promise<SimilarName[]> => (await getSimilarNameIndex(entity)).find(needle, options);
+
+/** findSimilarNames plus the number of matches the limit hid. */
+export const searchSimilarNames = async (
+  entity: NameEntity,
+  needle: string,
+  options?: FindOptions,
+): Promise<SimilarNameSearch> => (await getSimilarNameIndex(entity)).search(needle, options);
 
 /** Forget every cached index. The next check rebuilds from the database. */
 export const invalidateSimilarNameIndexes = (): void => {

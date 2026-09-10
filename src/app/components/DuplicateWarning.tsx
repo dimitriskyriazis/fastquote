@@ -30,7 +30,11 @@ export default function DuplicateWarning({ warnings }: Props) {
         <div key={group.type} className={styles.warningGroup}>
           <div className={styles.warningHeader}>
             <WarningIcon />
-            {group.label} ({group.matches.length})
+            {group.label} (
+            {group.total != null && group.total > group.matches.length
+              ? `showing ${group.matches.length} of ${group.total}`
+              : group.matches.length}
+            )
           </div>
           <ul className={styles.matchList}>
             {group.matches.map((match) => (
@@ -38,6 +42,13 @@ export default function DuplicateWarning({ warnings }: Props) {
                 <span className={styles.matchName}>{match.name}</span>
                 {match.officialName ? (
                   <span className={styles.matchDetail}> (official name: {match.officialName})</span>
+                ) : null}
+                {match.customerName ? (
+                  <span className={styles.matchDetail}>
+                    {" "}({match.customerName}{match.sameCustomer ? ", this customer" : ""})
+                  </span>
+                ) : match.sameCustomer ? (
+                  <span className={styles.matchDetail}> (this customer)</span>
                 ) : null}
                 {match.disabled ? (
                   <span className={styles.matchDetail}> (disabled)</span>

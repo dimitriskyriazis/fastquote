@@ -5,14 +5,8 @@ import { getPool } from "../../../lib/sql";
 import { getRequestId } from "../../../lib/requestId";
 import { handleApiError } from "../../../lib/errorHandler";
 import {clearPartModelNumberUpper} from "../../../lib/partModelNumber";
-import { SEARCH_COLLATION } from "../../../lib/textSearch";
-import { findSimilarNames } from "../../../lib/similarNameIndexCache";
+import { searchSimilarNames } from "../../../lib/similarNameIndexCache";
 import type { SimilarName } from "../../../lib/similarNames";
-
-// Duplicate detection is deliberately fuzzy: creating "Ελλας ΑΕ" when "Ελλάς ΑΕ"
-// already exists is exactly the collision we want to warn about, but the database
-// collation is accent-sensitive so those two never matched.
-const AI = `COLLATE ${SEARCH_COLLATION}`;
 
 type DuplicateMatch = {
   id: number;
@@ -23,19 +17,27 @@ type DuplicateMatch = {
   disabled?: boolean;
   /** Customers: the official name the match was made on, when not the name itself. */
   officialName?: string | null;
+  /** Contacts: the customer the existing contact belongs to. */
+  customerName?: string | null;
+  /** Contacts: the existing contact belongs to the customer selected in the form. */
+  sameCustomer?: boolean;
 };
 
 type WarningGroup = {
   type: string;
   label: string;
   matches: DuplicateMatch[];
+  /** How many records matched when more than `matches` could be shown. */
+  total?: number;
 };
 
-// Name similarity for customers, suppliers and brands is scored in memory by
-// lib/similarNames against an index of the whole table (lib/similarNameIndexCache
-// keeps it fresh). It used to be a SQL LIKE / SOUNDEX / DIFFERENCE query capped
-// at TOP 50 with no ORDER BY, which for Greek names, where SOUNDEX is blind,
-// returned 50 arbitrary customers; see the header of lib/similarNames.
+// Name similarity for customers, suppliers, brands and contacts is scored in
+// memory by lib/similarNames against an index of the whole table
+// (lib/similarNameIndexCache keeps it fresh). It used to be a SQL LIKE /
+// SOUNDEX / DIFFERENCE query capped at TOP 50 with no ORDER BY, which for
+// Greek names, where SOUNDEX is blind, returned 50 arbitrary customers; see the
+// header of lib/similarNames. The contact check used to LIKE against
+// dbo.CustomerContacts, a table that does not exist, so it never warned at all.
 const toNameMatch = (match: SimilarName): DuplicateMatch => ({
   id: match.id,
   name: match.name,
@@ -43,6 +45,16 @@ const toNameMatch = (match: SimilarName): DuplicateMatch => ({
   disabled: match.enabled === false,
   officialName: match.officialName,
 });
+
+const nameWarning = (label: string, found: { matches: SimilarName[]; total: number }): WarningGroup => ({
+  type: "name",
+  label,
+  matches: found.matches.map(toNameMatch),
+  total: found.total,
+});
+
+/** Most contacts to list; the rest are reported through `total`. */
+const CONTACT_LIMIT = 10;
 
 export async function POST(req: NextRequest) {
   logRequest(req, '/api/duplicates');
@@ -58,6 +70,7 @@ export async function POST(req: NextRequest) {
       partNumber?: string;
       modelNumber?: string;
       brandId?: string;
+      customerId?: string;
     };
 
     const entity = body.entity;
@@ -90,10 +103,8 @@ export async function POST(req: NextRequest) {
       }
 
       if (name && name.length >= 2) {
-        const matches = await findSimilarNames("customer", name);
-        if (matches.length > 0) {
-          warnings.push({ type: "name", label: "Similar Name", matches: matches.map(toNameMatch) });
-        }
+        const found = await searchSimilarNames("customer", name);
+        if (found.matches.length > 0) warnings.push(nameWarning("Similar Name", found));
       }
     }
 
@@ -119,10 +130,8 @@ export async function POST(req: NextRequest) {
       }
 
       if (name && name.length >= 2) {
-        const matches = await findSimilarNames("supplier", name);
-        if (matches.length > 0) {
-          warnings.push({ type: "name", label: "Similar Name", matches: matches.map(toNameMatch) });
-        }
+        const found = await searchSimilarNames("supplier", name);
+        if (found.matches.length > 0) warnings.push(nameWarning("Similar Name", found));
       }
     }
 
@@ -130,47 +139,43 @@ export async function POST(req: NextRequest) {
       const name = body.name?.trim();
 
       if (name && name.length >= 2) {
-        const matches = await findSimilarNames("brand", name);
-        if (matches.length > 0) {
-          warnings.push({ type: "name", label: "Similar Name", matches: matches.map(toNameMatch) });
-        }
+        const found = await searchSimilarNames("brand", name);
+        if (found.matches.length > 0) warnings.push(nameWarning("Similar Name", found));
       }
     }
 
     if (entity === "contact") {
-      const firstName = body.firstName?.trim();
-      const lastName = body.lastName?.trim();
+      const firstName = body.firstName?.trim() ?? "";
+      const lastName = body.lastName?.trim() ?? "";
+      const customerId = body.customerId ? parseInt(body.customerId, 10) : NaN;
+      // Both fields as one name: the index compares words, so it does not
+      // matter which field a surname was typed into, and a surname alone
+      // already lists everyone who carries it.
+      const typed = `${firstName} ${lastName}`.trim();
 
-      if (firstName && firstName.length >= 2 && lastName && lastName.length >= 2) {
-        const result = await pool.request()
-          .input("firstName", sql.NVarChar(120), `%${firstName}%`)
-          .input("lastName", sql.NVarChar(120), `%${lastName}%`)
-          .query<{ ContactID: number; FirstName: string | null; LastName: string | null }>(
-            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE FirstName ${AI} LIKE @firstName AND LastName ${AI} LIKE @lastName`
-          );
-        if (result.recordset.length > 0) {
+      if (typed.length >= 2) {
+        const found = await searchSimilarNames("contact", typed, { limit: Number.POSITIVE_INFINITY });
+        // The same person at the customer being edited is the likeliest
+        // duplicate, so among equal scores those come first (sort is stable,
+        // so the index's live-before-disabled order is kept otherwise).
+        const ranked = found.matches
+          .map((match) => ({
+            match,
+            sameCustomer: Number.isFinite(customerId) && match.customerId === customerId,
+          }))
+          .sort((a, b) => b.match.score - a.match.score || Number(b.sameCustomer) - Number(a.sameCustomer))
+          .slice(0, CONTACT_LIMIT);
+        if (ranked.length > 0) {
           warnings.push({
             type: "name",
             label: "Similar Name",
-            matches: result.recordset.map((r) => ({
-              id: r.ContactID,
-              name: [r.FirstName, r.LastName].filter(Boolean).join(" "),
-            })),
-          });
-        }
-      } else if (lastName && lastName.length >= 2) {
-        const result = await pool.request()
-          .input("lastName", sql.NVarChar(120), `%${lastName}%`)
-          .query<{ ContactID: number; FirstName: string | null; LastName: string | null }>(
-            `SELECT TOP 10 ContactID, FirstName, LastName FROM dbo.CustomerContacts WHERE LastName ${AI} LIKE @lastName`
-          );
-        if (result.recordset.length > 0) {
-          warnings.push({
-            type: "name",
-            label: "Similar Last Name",
-            matches: result.recordset.map((r) => ({
-              id: r.ContactID,
-              name: [r.FirstName, r.LastName].filter(Boolean).join(" "),
+            total: found.total,
+            matches: ranked.map(({ match, sameCustomer }) => ({
+              id: match.id,
+              name: match.name,
+              disabled: match.enabled === false,
+              customerName: match.customerName,
+              sameCustomer,
             })),
           });
         }

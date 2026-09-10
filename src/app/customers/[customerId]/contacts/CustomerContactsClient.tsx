@@ -21,6 +21,8 @@ import { showToastMessage } from "../../../../lib/toast";
 import { useUndoStack } from "../../../hooks/useUndoStack";
 import { pushCellEditUndo, makePatternAUndoFn } from "../../../../lib/undoHelpers";
 import { useAddModal } from "../../../lib/useAddModal";
+import { useDuplicateCheck } from "../../../lib/useDuplicateCheck";
+import DuplicateWarning from "../../../components/DuplicateWarning";
 import type { DropdownOption } from "../../../../lib/dropdownOptions";
 import type { CustomerDropdownOption } from "../CustomerBasicDataTypes";
 import {
@@ -195,6 +197,15 @@ export default function CustomerContactsClient({ customerId, customerName, statu
     setSaving: setContactSaving,
     setError: setContactError,
   } = useAddModal<ContactFormValues>(() => ({ ...EMPTY_CONTACT_FORM, customerId }));
+  const { warnings: duplicateWarnings, check: checkDuplicates, clear: clearDuplicates } = useDuplicateCheck('contact');
+
+  useEffect(() => {
+    if (isAddContactOpen) {
+      checkDuplicates({ firstName: contactForm.firstName, lastName: contactForm.lastName, customerId });
+    } else {
+      clearDuplicates();
+    }
+  }, [contactForm.firstName, contactForm.lastName, customerId, isAddContactOpen, checkDuplicates, clearDuplicates]);
 
   const openAddContact = useCallback(() => {
     rawOpenAddContact();
@@ -786,6 +797,9 @@ export default function CustomerContactsClient({ customerId, customerName, statu
               required
               onChange={(event) => setContactField("firstName", event.target.value)}
             />
+          </div>
+          <div className={`${styles.contactModalField} ${styles.contactModalFieldFull}`}>
+            <DuplicateWarning warnings={duplicateWarnings} />
           </div>
           <div className={styles.contactModalField}>
             <label className={styles.fieldLabel} htmlFor="contact-position">

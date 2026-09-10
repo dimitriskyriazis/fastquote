@@ -10,12 +10,18 @@ export type DuplicateMatch = {
   disabled?: boolean;
   /** Customers: the official name the match was made on, when not the name itself. */
   officialName?: string | null;
+  /** Contacts: the customer the existing contact belongs to. */
+  customerName?: string | null;
+  /** Contacts: the existing contact belongs to the customer selected in the form. */
+  sameCustomer?: boolean;
 };
 
 export type DuplicateWarningGroup = {
   type: string;
   label: string;
   matches: DuplicateMatch[];
+  /** How many records matched when more than `matches` could be shown. */
+  total?: number;
 };
 
 type CheckParams = Record<string, string | undefined>;
